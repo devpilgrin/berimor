@@ -20,7 +20,7 @@ members = [
 version = "0.0.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/REPLACE_ORG/berimor"
+repository = "https://github.com/devpilgrin/berimor"
 
 # Общие зависимости фиксируются здесь, чтобы версии не расходились между крейтами.
 # Тяжёлые зависимости (wasmtime, rusqlite, tokio, reqwest) добавляются в конкретный
