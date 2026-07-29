@@ -1,6 +1,6 @@
 //! `berimor-executors` — ToolOnly, StructuredLLM, CodeAct, AgentStep.
 //!
-//! Источник: `arch/executors.md`. Каждый модуль — реализация
+//! Источник: `docs/arch/executors.md`. Каждый модуль — реализация
 //! `berimor_types::executor::Executor` для одного из четырёх исполнителей
 //! (`executors.md` §1). Ни один не пишет в состояние напрямую — только
 //! через `berimor-mediation`.

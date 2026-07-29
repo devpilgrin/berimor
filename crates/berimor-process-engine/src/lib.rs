@@ -1,7 +1,7 @@
 //! `berimor-process-engine` — детерминированный остов: граф шагов,
 //! иммутабельное состояние, восстановление из журнала.
 //!
-//! Источник: `arch/process-engine.md`. ROADMAP: P1–P8.
+//! Источник: `docs/arch/process-engine.md`. ROADMAP: P1–P8.
 
 use berimor_types::{
     event::ProcessInstanceId,

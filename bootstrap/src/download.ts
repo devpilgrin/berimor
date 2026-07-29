@@ -1,7 +1,7 @@
 /**
  * Скачивание платформенного артефакта с GitHub Releases доверенного репозитория.
  *
- * Источник: arch/deployment.md §2–3, ADR-0017, ADR-0018. ROADMAP: D3.
+ * Источник: docs/arch/deployment.md §2–3, ADR-0017, ADR-0018. ROADMAP: D3.
  */
 
 export async function downloadAsset(assetName: string, destPath: string): Promise<void> {

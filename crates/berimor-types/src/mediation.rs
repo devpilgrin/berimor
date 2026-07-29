@@ -1,6 +1,6 @@
 //! Стадии Mediation и исходы валидации.
 //!
-//! Источник: `arch/mediation.md` §2 («Поток»), §5 («Повторы и эскалация»).
+//! Источник: `docs/arch/mediation.md` §2 («Поток»), §5 («Повторы и эскалация»).
 //! ROADMAP: M2–M6.
 
 use serde::{Deserialize, Serialize};

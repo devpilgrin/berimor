@@ -1,5 +1,5 @@
 {
-  "$comment": "Дословный пример контракта из arch/mediation.md §3. ROADMAP: M1, M3.",
+  "$comment": "Дословный пример контракта из docs/arch/mediation.md §3. ROADMAP: M1, M3.",
   "name": "ClassificationOut",
   "schema_version": 1,
   "deny_unknown_fields": true,

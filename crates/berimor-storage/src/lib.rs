@@ -1,6 +1,6 @@
 //! `berimor-storage` — единый встраиваемый движок хранения.
 //!
-//! Источник: `arch/stack.md` §3, `arch/memory-model.md`, ADR-0021: события,
+//! Источник: `docs/arch/stack.md` §3, `docs/arch/memory-model.md`, ADR-0021: события,
 //! снапшоты, полнотекст (FTS5), векторы (sqlite-vec) и граф сущностей — в
 //! одном файле SQLite, а не в четырёх разных хранилищах.
 //!

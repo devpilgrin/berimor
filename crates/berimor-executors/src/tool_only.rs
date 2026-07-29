@@ -1,3 +1,3 @@
 //! ToolOnly — шаг без семантики: чтение/запись/вызов внешней системы, без модели.
 //!
-//! Источник: `arch/executors.md` §2. ROADMAP: E1.
+//! Источник: `docs/arch/executors.md` §2. ROADMAP: E1.

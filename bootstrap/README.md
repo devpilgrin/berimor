@@ -1,6 +1,6 @@
 # bootstrap
 
-npm-пакет установщика Berimor — см. `arch/deployment.md` §2–3, ADR-0025.
+npm-пакет установщика Berimor — см. `docs/arch/deployment.md` §2–3, ADR-0025.
 
 ## Локальная разработка
 

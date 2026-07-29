@@ -1,6 +1,6 @@
 //! `berimor-capability` — deny-статика, jail, сетевой гейт, подтверждения, ACL плагинов.
 //!
-//! Источник: `arch/security-model.md` §2 (L3), §3, §4. ROADMAP: F5, S1–S6.
+//! Источник: `docs/arch/security-model.md` §2 (L3), §3, §4. ROADMAP: F5, S1–S6.
 
 use berimor_types::capability::{CapabilityDecision, ConfirmationMode, ProposedAction};
 

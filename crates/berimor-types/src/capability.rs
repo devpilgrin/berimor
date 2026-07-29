@@ -1,6 +1,6 @@
 //! Capability-решения: подтверждения, запреты, границы.
 //!
-//! Источник: `arch/security-model.md` §2 (L3), §3 («Режимы подтверждений»).
+//! Источник: `docs/arch/security-model.md` §2 (L3), §3 («Режимы подтверждений»).
 //! ROADMAP: S1–S6.
 
 use serde::{Deserialize, Serialize};

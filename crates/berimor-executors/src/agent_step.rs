@@ -1,3 +1,3 @@
 //! AgentStep — свободный цикл «рассуждение → действие → наблюдение», выделенный случай.
 //!
-//! Источник: `arch/executors.md` §5. ROADMAP: E9.
+//! Источник: `docs/arch/executors.md` §5. ROADMAP: E9.

@@ -1,6 +1,6 @@
 //! Границы между Executors, Mediation и Model Pool.
 //!
-//! Источник: `arch/executors.md` §1, `arch/mediation.md` §1.
+//! Источник: `docs/arch/executors.md` §1, `docs/arch/mediation.md` §1.
 //! ROADMAP: E1, E2, E6–E9.
 
 use crate::{

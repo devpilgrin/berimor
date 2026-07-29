@@ -1,6 +1,6 @@
 //! `berimor-mediation` — parse → schema → policy → commit.
 //!
-//! Источник: `arch/mediation.md`. ROADMAP: M1–M7.
+//! Источник: `docs/arch/mediation.md`. ROADMAP: M1–M7.
 
 use berimor_types::{contract::Contract, mediation::MediationOutcome, step::Patch};
 

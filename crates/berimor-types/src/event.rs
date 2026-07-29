@@ -1,6 +1,6 @@
 //! Событие и снапшот журнала.
 //!
-//! Источник: `arch/process-engine.md` §3 («Состояние»), `arch/views/data-architecture.md` §1.
+//! Источник: `docs/arch/process-engine.md` §3 («Состояние»), `docs/arch/views/data-architecture.md` §1.
 //! ROADMAP: F1, F2.
 
 use serde::{Deserialize, Serialize};
