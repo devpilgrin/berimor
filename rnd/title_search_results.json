@@ -1,0 +1,1578 @@
+[
+  {
+    "query": "Plan-and-Execute Agents",
+    "id": "2203.08975v2",
+    "title": "A Survey of Multi-Agent Deep Reinforcement Learning with Communication",
+    "abstract": "Communication is an effective mechanism for coordinating the behaviors of multiple agents, broadening their views of the environment, and to support their collaborations. In the field of multi-agent deep reinforcement learning (MADRL), agents can improve the overall learning performance and achieve their objectives by communication. Agents can communicate various types of messages, either to all agents or to specific agent groups, or conditioned on specific constraints. With the growing body of research work in MADRL with communication (Comm-MADRL), there is a lack of a systematic and structural approach to distinguish and classify existing Comm-MADRL approaches. In this paper, we survey recent works in the Comm-MADRL field and consider various aspects of communication that can play a role in designing and developing multi-agent reinforcement learning systems. With these aspects in mind, we propose 9 dimensions along which Comm-MADRL approaches can be analyzed, developed, and compared. By projecting existing works into the multi-dimensional space, we discover interesting trends. We also propose some novel directions for designing future Comm-MADRL systems through exploring possible combinations of the dimensions.",
+    "published": "2022-03-16",
+    "authors": [
+      "Changxi Zhu",
+      "Mehdi Dastani",
+      "Shihan Wang"
+    ],
+    "categories": [
+      "cs.MA",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2203.08975v2",
+    "url": "https://arxiv.org/abs/2203.08975v2"
+  },
+  {
+    "query": "Plan-and-Execute Agents",
+    "id": "2305.09349v1",
+    "title": "Establishing Shared Query Understanding in an Open Multi-Agent System",
+    "abstract": "We propose a method that allows to develop shared understanding between two agents for the purpose of performing a task that requires cooperation. Our method focuses on efficiently establishing successful task-oriented communication in an open multi-agent system, where the agents do not know anything about each other and can only communicate via grounded interaction. The method aims to assist researchers that work on human-machine interaction or scenarios that require a human-in-the-loop, by defining interaction restrictions and efficiency metrics. To that end, we point out the challenges and limitations of such a (diverse) setup, while also restrictions and requirements which aim to ensure that high task performance truthfully reflects the extent to which the agents correctly understand each other. Furthermore, we demonstrate a use-case where our method can be applied for the task of cooperative query answering. We design the experiments by modifying an established ontology alignment benchmark. In this example, the agents want to query each other, while representing different databases, defined in their own ontologies that contain different and incomplete knowledge. Grounded interaction here has the form of examples that consists of common instances, for which the agents are expected to have similar knowledge. Our experiments demonstrate successful communication establishment under the required restrictions, and compare different agent policies that aim to solve the task in an efficient manner.",
+    "published": "2023-05-16",
+    "authors": [
+      "Nikolaos Kondylidis",
+      "Ilaria Tiddi",
+      "Annette ten Teije"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.HC",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2305.09349v1",
+    "url": "https://arxiv.org/abs/2305.09349v1"
+  },
+  {
+    "query": "Plan-and-Execute Agents",
+    "id": "2511.02841v2",
+    "title": "AI Agents with Decentralized Identifiers and Verifiable Credentials",
+    "abstract": "A fundamental limitation of current LLM-based AI agents is their inability to build differentiated trust among each other at the onset of an agent-to-agent dialogue. However, autonomous and interoperable trust establishment becomes essential once agents start to operate beyond isolated environments and engage in dialogues across individual or organizational boundaries. A promising way to fill this gap in Agentic AI is to equip agents with long-lived digital identities and introduce tamper-proof and flexible identity-bound attestations of agents, provisioned by commonly trusted third parties and designed for cross-domain verifiability. This article presents a conceptual framework and a prototypical multi-agent system, where each agent is endowed with a self-sovereign digital identity. It combines a unique and ledger-anchored W3C Decentralized Identifier (DID) of an agent with a set of third-party issued W3C Verifiable Credentials (VCs). This enables agents at the start of a dialog to prove ownership of their self-controlled DIDs for authentication purposes and to establish various cross-domain trust relationships through the spontaneous exchange of their self-hosted DID-bound VCs. A comprehensive evaluation of the prototypical implementation demonstrates technical feasibility but also reveals limitations once an agent's LLM is in sole charge to control the respective security procedures.",
+    "published": "2025-10-01",
+    "authors": [
+      "Sandro Rodriguez Garzon",
+      "Awid Vaziry",
+      "Enis Mert Kuzu",
+      "Dennis Enrique Gehrmann",
+      "Buse Varkan",
+      "Alexander Gaballa",
+      "Axel Küpper"
+    ],
+    "categories": [
+      "cs.CR",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2511.02841v2",
+    "url": "https://arxiv.org/abs/2511.02841v2"
+  },
+  {
+    "query": "Plan-and-Execute Agents",
+    "id": "2602.15006v2",
+    "title": "Distributed Quantum Gaussian Processes for Multi-Agent Systems",
+    "abstract": "Gaussian Processes (GPs) are a powerful tool for probabilistic modeling, but their performance is often constrained in complex, large-scale real-world domains due to the limited expressivity of classical kernels. Quantum computing offers the potential to overcome this limitation by embedding data into exponentially large Hilbert spaces, capturing complex correlations that remain inaccessible to classical computing approaches. In this paper, we propose a Distributed Quantum Gaussian Process (DQGP) method in a multi-agent setting to enhance modeling capabilities and scalability. To address the challenging non-Euclidean optimization problem, we develop a Distributed consensus Riemannian Alternating Direction Method of Multipliers (DR-ADMM) algorithm that aggregates local agent models into a global model. We evaluate the efficacy of our method through numerical experiments conducted on a quantum simulator in classical hardware. We use real-world, non-stationary elevation datasets of NASA's Shuttle Radar Topography Mission and synthetic datasets generated by Quantum Gaussian Processes. Beyond modeling advantages, our framework highlights potential computational speedups that quantum hardware may provide, particularly in Gaussian processes and distributed optimization.",
+    "published": "2026-02-16",
+    "authors": [
+      "Meet Gandhi",
+      "George P. Kontoudis"
+    ],
+    "categories": [
+      "cs.MA",
+      "cs.LG",
+      "math.DG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2602.15006v2",
+    "url": "https://arxiv.org/abs/2602.15006v2"
+  },
+  {
+    "query": "Plan-and-Execute Agents",
+    "id": "2112.03763v2",
+    "title": "Creating Multimodal Interactive Agents with Imitation and Self-Supervised Learning",
+    "abstract": "A common vision from science fiction is that robots will one day inhabit our physical spaces, sense the world as we do, assist our physical labours, and communicate with us through natural language. Here we study how to design artificial agents that can interact naturally with humans using the simplification of a virtual environment. We show that imitation learning of human-human interactions in a simulated world, in conjunction with self-supervised learning, is sufficient to produce a multimodal interactive agent, which we call MIA, that successfully interacts with non-adversarial humans 75% of the time. We further identify architectural and algorithmic techniques that improve performance, such as hierarchical action selection. Altogether, our results demonstrate that imitation of multi-modal, real-time human behaviour may provide a straightforward and surprisingly effective means of imbuing agents with a rich behavioural prior from which agents might then be fine-tuned for specific purposes, thus laying a foundation for training capable agents for interactive robots or digital assistants. A video of MIA's behaviour may be found at https://youtu.be/ZFgRhviF7mY",
+    "published": "2021-12-07",
+    "authors": [
+      " DeepMind Interactive Agents Team",
+      "Josh Abramson",
+      "Arun Ahuja",
+      "Arthur Brussee",
+      "Federico Carnevale",
+      "Mary Cassin",
+      "Felix Fischer",
+      "Petko Georgiev",
+      "Alex Goldin",
+      "Mansi Gupta",
+      "Tim Harley",
+      "Felix Hill",
+      "Peter C Humphreys",
+      "Alden Hung",
+      "Jessica Landon",
+      "Timothy Lillicrap",
+      "Hamza Merzic",
+      "Alistair Muldal",
+      "Adam Santoro",
+      "Guy Scully",
+      "Tamara von Glehn",
+      "Greg Wayne",
+      "Nathaniel Wong",
+      "Chen Yan",
+      "Rui Zhu"
+    ],
+    "categories": [
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2112.03763v2",
+    "url": "https://arxiv.org/abs/2112.03763v2"
+  },
+  {
+    "query": "AgentBench",
+    "id": "2308.03688v3",
+    "title": "AgentBench: Evaluating LLMs as Agents",
+    "abstract": "The potential of Large Language Model (LLM) as agents has been widely acknowledged recently. Thus, there is an urgent need to quantitatively \\textit{evaluate LLMs as agents} on challenging tasks in interactive environments. We present AgentBench, a multi-dimensional benchmark that consists of 8 distinct environments to assess LLM-as-Agent's reasoning and decision-making abilities. Our extensive test over \\num API-based and open-sourced (OSS) LLMs shows that, while top commercial LLMs present a strong ability of acting as agents in complex environments, there is a significant disparity in performance between them and many OSS competitors that are no larger than 70B. We identify the typical reasons of failures in environments and LLMs, showing that poor long-term reasoning, decision-making, and instruction following abilities are the main obstacles for developing usable LLM agents. Improving instruction following and training on high quality multi-round alignment data could improve agent performance. And different from existing assumptions, training on code present ambivalent impacts on different agent tasks. Datasets, environments, and an integrated evaluation package for AgentBench are released at https://github.com/THUDM/AgentBench.",
+    "published": "2023-08-07",
+    "authors": [
+      "Xiao Liu",
+      "Hao Yu",
+      "Hanchen Zhang",
+      "Yifan Xu",
+      "Xuanyu Lei",
+      "Hanyu Lai",
+      "Yu Gu",
+      "Hangliang Ding",
+      "Kaiwen Men",
+      "Kejuan Yang",
+      "Shudan Zhang",
+      "Xiang Deng",
+      "Aohan Zeng",
+      "Zhengxiao Du",
+      "Chenhui Zhang",
+      "Sheng Shen",
+      "Tianjun Zhang",
+      "Yu Su",
+      "Huan Sun",
+      "Minlie Huang",
+      "Yuxiao Dong",
+      "Jie Tang"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CL",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2308.03688v3",
+    "url": "https://arxiv.org/abs/2308.03688v3"
+  },
+  {
+    "query": "AgentBench",
+    "id": "2509.19319v2",
+    "title": "FHIR-AgentBench: Benchmarking LLM Agents for Realistic Interoperable EHR Question Answering",
+    "abstract": "The recent shift toward the Health Level Seven Fast Healthcare Interoperability Resources (HL7 FHIR) standard opens a new frontier for clinical AI, demanding LLM agents to navigate complex, resource-based data models instead of conventional structured health data. However, existing benchmarks have lagged behind this transition, lacking the realism needed to evaluate recent LLMs on interoperable clinical data. To bridge this gap, we introduce FHIR-AgentBench, a benchmark that grounds 2,931 real-world clinical questions in the HL7 FHIR standard. Using this benchmark, we systematically evaluate agentic frameworks, comparing different data retrieval strategies (direct FHIR API calls vs. specialized tools), interaction patterns (single-turn vs. multi-turn), and reasoning strategies (natural language vs. code generation). Our experiments highlight the practical challenges of retrieving data from intricate FHIR resources and the difficulty of reasoning over them, both of which critically affect question answering performance. We publicly release the FHIR-AgentBench dataset and evaluation suite (https://github.com/glee4810/FHIR-AgentBench) to promote reproducible research and the development of robust, reliable LLM agents for clinical applications.",
+    "published": "2025-09-12",
+    "authors": [
+      "Gyubok Lee",
+      "Elea Bach",
+      "Eric Yang",
+      "Tom Pollard",
+      "Alistair Johnson",
+      "Edward Choi",
+      "Yugang jia",
+      "Jong Ha Lee"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2509.19319v2",
+    "url": "https://arxiv.org/abs/2509.19319v2"
+  },
+  {
+    "query": "AgentBench",
+    "id": "2509.09734v1",
+    "title": "MCP-AgentBench: Evaluating Real-World Language Agent Performance with MCP-Mediated Tools",
+    "abstract": "The Model Context Protocol (MCP) is rapidly emerging as a pivotal open standard, designed to enhance agent-tool integration and interoperability, and is positioned to unlock a new era of powerful, interconnected, and genuinely utilitarian agentic AI. However, despite MCP's growing adoption, existing benchmarks often fail to capture real-world agent performance within this new paradigm, leading to a distorted perception of their true operational value and an inability to reliably differentiate proficiencies. To bridge this critical evaluation gap, we introduce MCP-AgentBench -- a comprehensive benchmark specifically engineered to rigorously assess language agent capabilities in MCP-mediated tool interactions. Core contributions of MCP-AgentBench include: the establishment of a robust MCP testbed comprising 33 operational servers with 188 distinct tools; the development of a benchmark featuring 600 systematically designed queries distributed across 6 distinct categories of varying interaction complexity; and the introduction of MCP-Eval, a novel outcome-oriented evaluation methodology prioritizing real-world task success. Through extensive empirical evaluation of leading language agents, we provide foundational insights. MCP-AgentBench aims to equip the research community with a standardized and reliable framework to build, validate, and advance agents capable of fully leveraging MCP's transformative benefits, thereby accelerating progress toward truly capable and interoperable AI systems.",
+    "published": "2025-09-10",
+    "authors": [
+      "Zikang Guo",
+      "Benfeng Xu",
+      "Chiwei Zhu",
+      "Wentao Hong",
+      "Xiaorui Wang",
+      "Zhendong Mao"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2509.09734v1",
+    "url": "https://arxiv.org/abs/2509.09734v1"
+  },
+  {
+    "query": "RestGPT",
+    "id": "2306.06624v2",
+    "title": "RestGPT: Connecting Large Language Models with Real-World RESTful APIs",
+    "abstract": "Tool-augmented large language models (LLMs) have achieved remarkable progress in tackling a broad range of tasks. However, existing methods are mainly restricted to specifically designed tools and fail to fulfill complex instructions, having great limitations when confronted with real-world scenarios. In this paper, we explore a more realistic scenario by connecting LLMs with RESTful APIs, which adhere to the widely adopted REST software architectural style for web service development. To address the practical challenges of tackling complex instructions, we propose RestGPT, which exploits the power of LLMs and conducts a coarse-to-fine online planning mechanism to enhance the abilities of task decomposition and API selection. RestGPT also contains an API executor tailored for calling RESTful APIs, which can meticulously formulate parameters and parse API responses. To fully evaluate the performance of RestGPT, we propose RestBench, a high-quality benchmark which consists of two real-world scenarios and human-annotated instructions with gold solution paths. Experiments show that RestGPT is able to achieve impressive results in complex tasks and has strong robustness, which paves a new way towards AGI. RestGPT and RestBench is publicly available at https://restgpt.github.io/.",
+    "published": "2023-06-11",
+    "authors": [
+      "Yifan Song",
+      "Weimin Xiong",
+      "Dawei Zhu",
+      "Wenhao Wu",
+      "Han Qian",
+      "Mingbo Song",
+      "Hailiang Huang",
+      "Cheng Li",
+      "Ke Wang",
+      "Rong Yao",
+      "Ye Tian",
+      "Sujian Li"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2306.06624v2",
+    "url": "https://arxiv.org/abs/2306.06624v2"
+  },
+  {
+    "query": "SwiftSage",
+    "id": "2305.17390v2",
+    "title": "SwiftSage: A Generative Agent with Fast and Slow Thinking for Complex Interactive Tasks",
+    "abstract": "We introduce SwiftSage, a novel agent framework inspired by the dual-process theory of human cognition, designed to excel in action planning for complex interactive reasoning tasks. SwiftSage integrates the strengths of behavior cloning and prompting large language models (LLMs) to enhance task completion performance. The framework comprises two primary modules: the Swift module, representing fast and intuitive thinking, and the Sage module, emulating deliberate thought processes. The Swift module is a small encoder-decoder LM fine-tuned on the oracle agent's action trajectories, while the Sage module employs LLMs such as GPT-4 for subgoal planning and grounding. We develop a heuristic method to harmoniously integrate the two modules, resulting in a more efficient and robust problem-solving process. In 30 tasks from the ScienceWorld benchmark, SwiftSage significantly outperforms other methods such as SayCan, ReAct, and Reflexion, demonstrating its effectiveness in solving complex interactive tasks.",
+    "published": "2023-05-27",
+    "authors": [
+      "Bill Yuchen Lin",
+      "Yicheng Fu",
+      "Karina Yang",
+      "Faeze Brahman",
+      "Shiyu Huang",
+      "Chandra Bhagavatula",
+      "Prithviraj Ammanabrolu",
+      "Yejin Choi",
+      "Xiang Ren"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.LG",
+      "cs.MA",
+      "cs.RO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2305.17390v2",
+    "url": "https://arxiv.org/abs/2305.17390v2"
+  },
+  {
+    "query": "ProAgent",
+    "id": "2311.10751v2",
+    "title": "ProAgent: From Robotic Process Automation to Agentic Process Automation",
+    "abstract": "From ancient water wheels to robotic process automation (RPA), automation technology has evolved throughout history to liberate human beings from arduous tasks. Yet, RPA struggles with tasks needing human-like intelligence, especially in elaborate design of workflow construction and dynamic decision-making in workflow execution. As Large Language Models (LLMs) have emerged human-like intelligence, this paper introduces Agentic Process Automation (APA), a groundbreaking automation paradigm using LLM-based agents for advanced automation by offloading the human labor to agents associated with construction and execution. We then instantiate ProAgent, an LLM-based agent designed to craft workflows from human instructions and make intricate decisions by coordinating specialized agents. Empirical experiments are conducted to detail its construction and execution procedure of workflow, showcasing the feasibility of APA, unveiling the possibility of a new paradigm of automation driven by agents. Our code is public at https://github.com/OpenBMB/ProAgent.",
+    "published": "2023-11-02",
+    "authors": [
+      "Yining Ye",
+      "Xin Cong",
+      "Shizuo Tian",
+      "Jiannan Cao",
+      "Hao Wang",
+      "Yujia Qin",
+      "Yaxi Lu",
+      "Heyang Yu",
+      "Huadong Wang",
+      "Yankai Lin",
+      "Zhiyuan Liu",
+      "Maosong Sun"
+    ],
+    "categories": [
+      "cs.RO",
+      "cs.AI",
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2311.10751v2",
+    "url": "https://arxiv.org/abs/2311.10751v2"
+  },
+  {
+    "query": "ProAgent",
+    "id": "2308.11339v3",
+    "title": "ProAgent: Building Proactive Cooperative Agents with Large Language Models",
+    "abstract": "Building agents with adaptive behavior in cooperative tasks stands as a paramount goal in the realm of multi-agent systems. Current approaches to developing cooperative agents rely primarily on learning-based methods, whose policy generalization depends heavily on the diversity of teammates they interact with during the training phase. Such reliance, however, constrains the agents' capacity for strategic adaptation when cooperating with unfamiliar teammates, which becomes a significant challenge in zero-shot coordination scenarios. To address this challenge, we propose ProAgent, a novel framework that harnesses large language models (LLMs) to create proactive agents capable of dynamically adapting their behavior to enhance cooperation with teammates. ProAgent can analyze the present state, and infer the intentions of teammates from observations. It then updates its beliefs in alignment with the teammates' subsequent actual behaviors. Moreover, ProAgent exhibits a high degree of modularity and interpretability, making it easily integrated into various of coordination scenarios. Experimental evaluations conducted within the Overcooked-AI environment unveil the remarkable performance superiority of ProAgent, outperforming five methods based on self-play and population-based training when cooperating with AI agents. Furthermore, in partnered with human proxy models, its performance exhibits an average improvement exceeding 10% compared to the current state-of-the-art method. For more information about our project, please visit~\\url{https://pku-proagent.github.io}.",
+    "published": "2023-08-22",
+    "authors": [
+      "Ceyao Zhang",
+      "Kaijie Yang",
+      "Siyi Hu",
+      "Zihao Wang",
+      "Guanghe Li",
+      "Yihang Sun",
+      "Cheng Zhang",
+      "Zhaowei Zhang",
+      "Anji Liu",
+      "Song-Chun Zhu",
+      "Xiaojun Chang",
+      "Junge Zhang",
+      "Feng Yin",
+      "Yitao Liang",
+      "Yaodong Yang"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.LG",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2308.11339v3",
+    "url": "https://arxiv.org/abs/2308.11339v3"
+  },
+  {
+    "query": "ProAgent",
+    "id": "2512.06721v2",
+    "title": "ProAgent: Harnessing On-Demand Sensory Contexts for Proactive LLM Agent Systems in the Wild",
+    "abstract": "Recent studies have begun to explore proactive large language model (LLM) agents that provide unobtrusive assistance by automatically leveraging contextual information, such as in code editing and in-app suggestions. However, most focus on short, task-specific episodes or on-screen contexts, rather than continuously perceiving and assisting users throughout daily life. Enabling such in-the-wild assistance requires continuous sensing of users' surroundings, which can incur substantial system overhead. In this work, we propose ProAgent, an end-to-end proactive agent system that harnesses on-demand sensory contexts to provide in-the-wild assistance. ProAgent first employs on-demand tiered perception to continuously sense users' surroundings by integrating low-cost contextual cues with richer perception on demand, and uses proactive-oriented context extraction to derive hierarchical contexts integrating both sensory contexts and human preferences. ProAgent then employs a context-aware proactive reasoner to infer user needs and invokes external tools to deliver proactive assistance. We implement ProAgent on AR glasses and evaluate it on a public dataset and a real-world dataset. Results demonstrate that ProAgent achieves up to 27.7% higher proactive prediction accuracy and 20.5% lower false detection than state-of-the-art baselines. A user study with 20 participants shows that 85% were satisfied with ProAgent and willing to use it in daily life.",
+    "published": "2025-12-07",
+    "authors": [
+      "Bufang Yang",
+      "Lilin Xu",
+      "Liekang Zeng",
+      "Yunqi Guo",
+      "Siyang Jiang",
+      "Wenrui Lu",
+      "Kaiwei Liu",
+      "Yixuan Li",
+      "Xiaofan Jiang",
+      "Guoliang Xing",
+      "Zhenyu Yan"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CL",
+      "cs.HC"
+    ],
+    "pdf": "https://arxiv.org/pdf/2512.06721v2",
+    "url": "https://arxiv.org/abs/2512.06721v2"
+  },
+  {
+    "query": "XAgent",
+    "id": "2411.13932v2",
+    "title": "XAgents: A Framework for Interpretable Rule-Based Multi-Agents Cooperation",
+    "abstract": "Extracting implicit knowledge and logical reasoning abilities from large language models (LLMs) has consistently been a significant challenge. The advancement of multi-agent systems has further en-hanced the capabilities of LLMs. Inspired by the structure of multi-polar neurons (MNs), we propose the XAgents framework, an in-terpretable multi-agent cooperative framework based on the IF-THEN rule-based system. The IF-Parts of the rules are responsible for logical reasoning and domain membership calculation, while the THEN-Parts are comprised of domain expert agents that generate domain-specific contents. Following the calculation of the member-ship, XAgetns transmits the task to the disparate domain rules, which subsequently generate the various responses. These re-sponses are analogous to the answers provided by different experts to the same question. The final response is reached at by eliminat-ing the hallucinations and erroneous knowledge of the LLM through membership computation and semantic adversarial genera-tion of the various domain rules. The incorporation of rule-based interpretability serves to bolster user confidence in the XAgents framework. We evaluate the efficacy of XAgents through a com-parative analysis with the latest AutoAgents, in which XAgents demonstrated superior performance across three distinct datasets. We perform post-hoc interpretable studies with SHAP algorithm and case studies, proving the interpretability of XAgent in terms of input-output feature correlation and rule-based semantics.",
+    "published": "2024-11-21",
+    "authors": [
+      "Hailong Yang",
+      "Mingxian Gu",
+      "Renhuo Zhao",
+      "Fuping Hu",
+      "Zhaohong Deng",
+      "Yitang Chen"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2411.13932v2",
+    "url": "https://arxiv.org/abs/2411.13932v2"
+  },
+  {
+    "query": "XAgent",
+    "id": "2509.10054v1",
+    "title": "XAgents: A Unified Framework for Multi-Agent Cooperation via IF-THEN Rules and Multipolar Task Processing Graph",
+    "abstract": "The rapid advancement of Large Language Models (LLMs) has significantly enhanced the capabilities of Multi-Agent Systems (MAS) in supporting humans with complex, real-world tasks. However, MAS still face challenges in effective task planning when handling highly complex tasks with uncertainty, often resulting in misleading or incorrect outputs that hinder task execution. To address this, we propose XAgents, a unified multi-agent cooperative framework built on a multipolar task processing graph and IF-THEN rules. XAgents uses the multipolar task processing graph to enable dynamic task planning and handle task uncertainty. During subtask processing, it integrates domain-specific IF-THEN rules to constrain agent behaviors, while global rules enhance inter-agent collaboration. We evaluate the performance of XAgents across three distinct datasets, demonstrating that it consistently surpasses state-of-the-art single-agent and multi-agent approaches in both knowledge-typed and logic-typed question-answering tasks. The codes for XAgents are available at: https://github.com/AGI-FHBC/XAgents.",
+    "published": "2025-09-12",
+    "authors": [
+      "Hailong Yang",
+      "Mingxian Gu",
+      "Jianqi Wang",
+      "Guanjin Wang",
+      "Zhaohong Deng"
+    ],
+    "categories": [
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2509.10054v1",
+    "url": "https://arxiv.org/abs/2509.10054v1"
+  },
+  {
+    "query": "AutoGPT",
+    "id": "2306.10095v1",
+    "title": "AD-AutoGPT: An Autonomous GPT for Alzheimer's Disease Infodemiology",
+    "abstract": "In this pioneering study, inspired by AutoGPT, the state-of-the-art open-source application based on the GPT-4 large language model, we develop a novel tool called AD-AutoGPT which can conduct data collection, processing, and analysis about complex health narratives of Alzheimer's Disease in an autonomous manner via users' textual prompts. We collated comprehensive data from a variety of news sources, including the Alzheimer's Association, BBC, Mayo Clinic, and the National Institute on Aging since June 2022, leading to the autonomous execution of robust trend analyses, intertopic distance maps visualization, and identification of salient terms pertinent to Alzheimer's Disease. This approach has yielded not only a quantifiable metric of relevant discourse but also valuable insights into public focus on Alzheimer's Disease. This application of AD-AutoGPT in public health signifies the transformative potential of AI in facilitating a data-rich understanding of complex health narratives like Alzheimer's Disease in an autonomous manner, setting the groundwork for future AI-driven investigations in global health landscapes.",
+    "published": "2023-06-16",
+    "authors": [
+      "Haixing Dai",
+      "Yiwei Li",
+      "Zhengliang Liu",
+      "Lin Zhao",
+      "Zihao Wu",
+      "Suhang Song",
+      "Ye Shen",
+      "Dajiang Zhu",
+      "Xiang Li",
+      "Sheng Li",
+      "Xiaobai Yao",
+      "Lu Shi",
+      "Quanzheng Li",
+      "Zhuo Chen",
+      "Donglan Zhang",
+      "Gengchen Mai",
+      "Tianming Liu"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.IR"
+    ],
+    "pdf": "https://arxiv.org/pdf/2306.10095v1",
+    "url": "https://arxiv.org/abs/2306.10095v1"
+  },
+  {
+    "query": "AutoGPT",
+    "id": "2307.00348v2",
+    "title": "Lottery and Sprint: Generate a Board Game with Design Sprint Method on AutoGPT",
+    "abstract": "In this paper, we present a novel approach using the Auto GPT system alongside Design Sprint methodology to facilitate board game creation for inexperienced users. We introduce the implementation of Auto GPT for generating diverse board games and the subsequent optimization process through a customized Design Sprint. A user study is conducted to investigate the playability and enjoyment of the generated games, revealing both successes and challenges in employing systems like Auto GPT for board game design. Insights and future research directions are proposed to overcome identified limitations and enhance computational-driven game creation.",
+    "published": "2023-07-01",
+    "authors": [
+      "Maya Grace Torii",
+      "Takahito Murakami",
+      "Yoichi Ochiai"
+    ],
+    "categories": [
+      "cs.HC"
+    ],
+    "pdf": "https://arxiv.org/pdf/2307.00348v2",
+    "url": "https://arxiv.org/abs/2307.00348v2"
+  },
+  {
+    "query": "AutoGPT",
+    "id": "2402.10778v2",
+    "title": "AutoGPT+P: Affordance-based Task Planning with Large Language Models",
+    "abstract": "Recent advances in task planning leverage Large Language Models (LLMs) to improve generalizability by combining such models with classical planning algorithms to address their inherent limitations in reasoning capabilities. However, these approaches face the challenge of dynamically capturing the initial state of the task planning problem. To alleviate this issue, we propose AutoGPT+P, a system that combines an affordance-based scene representation with a planning system. Affordances encompass the action possibilities of an agent on the environment and objects present in it. Thus, deriving the planning domain from an affordance-based scene representation allows symbolic planning with arbitrary objects. AutoGPT+P leverages this representation to derive and execute a plan for a task specified by the user in natural language. In addition to solving planning tasks under a closed-world assumption, AutoGPT+P can also handle planning with incomplete information, e. g., tasks with missing objects by exploring the scene, suggesting alternatives, or providing a partial plan. The affordance-based scene representation combines object detection with an automatically generated object-affordance-mapping using ChatGPT. The core planning tool extends existing work by automatically correcting semantic and syntactic errors. Our approach achieves a success rate of 98%, surpassing the current 81% success rate of the current state-of-the-art LLM-based planning method SayCan on the SayCan instruction set. Furthermore, we evaluated our approach on our newly created dataset with 150 scenarios covering a wide range of complex tasks with missing objects, achieving a success rate of 79% on our dataset. The dataset and the code are publicly available at https://git.h2t.iar.kit.edu/birr/autogpt-p-standalone.",
+    "published": "2024-02-16",
+    "authors": [
+      "Timo Birr",
+      "Christoph Pohl",
+      "Abdelrahman Younes",
+      "Tamim Asfour"
+    ],
+    "categories": [
+      "cs.RO",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2402.10778v2",
+    "url": "https://arxiv.org/abs/2402.10778v2"
+  },
+  {
+    "query": "ALPBench",
+    "id": "2406.17322v1",
+    "title": "ALPBench: A Benchmark for Active Learning Pipelines on Tabular Data",
+    "abstract": "In settings where only a budgeted amount of labeled data can be afforded, active learning seeks to devise query strategies for selecting the most informative data points to be labeled, aiming to enhance learning algorithms' efficiency and performance. Numerous such query strategies have been proposed and compared in the active learning literature. However, the community still lacks standardized benchmarks for comparing the performance of different query strategies. This particularly holds for the combination of query strategies with different learning algorithms into active learning pipelines and examining the impact of the learning algorithm choice. To close this gap, we propose ALPBench, which facilitates the specification, execution, and performance monitoring of active learning pipelines. It has built-in measures to ensure evaluations are done reproducibly, saving exact dataset splits and hyperparameter settings of used algorithms. In total, ALPBench consists of 86 real-world tabular classification datasets and 5 active learning settings, yielding 430 active learning problems. To demonstrate its usefulness and broad compatibility with various learning algorithms and query strategies, we conduct an exemplary study evaluating 9 query strategies paired with 8 learning algorithms in 2 different settings. We provide ALPBench here: https://github.com/ValentinMargraf/ActiveLearningPipelines.",
+    "published": "2024-06-25",
+    "authors": [
+      "Valentin Margraf",
+      "Marcel Wever",
+      "Sandra Gilhuber",
+      "Gabriel Marques Tavares",
+      "Thomas Seidl",
+      "Eyke Hüllermeier"
+    ],
+    "categories": [
+      "cs.LG",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2406.17322v1",
+    "url": "https://arxiv.org/abs/2406.17322v1"
+  },
+  {
+    "query": "ALPBench",
+    "id": "2602.03056v1",
+    "title": "ALPBench: A Benchmark for Attribution-level Long-term Personal Behavior Understanding",
+    "abstract": "Recent advances in large language models have highlighted their potential for personalized recommendation, where accurately capturing user preferences remains a key challenge. Leveraging their strong reasoning and generalization capabilities, LLMs offer new opportunities for modeling long-term user behavior. To systematically evaluate this, we introduce ALPBench, a Benchmark for Attribution-level Long-term Personal Behavior Understanding. Unlike item-focused benchmarks, ALPBench predicts user-interested attribute combinations, enabling ground-truth evaluation even for newly introduced items. It models preferences from long-term historical behaviors rather than users' explicitly expressed requests, better reflecting enduring interests. User histories are represented as natural language sequences, allowing interpretable, reasoning-based personalization. ALPBench enables fine-grained evaluation of personalization by focusing on the prediction of attribute combinations task that remains highly challenging for current LLMs due to the need to capture complex interactions among multiple attributes and reason over long-term user behavior sequences.",
+    "published": "2026-02-03",
+    "authors": [
+      "Lu Ren",
+      "Junda She",
+      "Xinchen Luo",
+      "Tao Wang",
+      "Xin Ye",
+      "Xu Zhang",
+      "Muxuan Wang",
+      "Xiao Yang",
+      "Chenguang Wang",
+      "Fei Xie",
+      "Yiwei Zhou",
+      "Danjun Wu",
+      "Guodong Zhang",
+      "Yifei Hu",
+      "Guoying Zheng",
+      "Shujie Yang",
+      "Xingmei Wang",
+      "Shiyao Wang",
+      "Yukun Zhou",
+      "Fan Yang",
+      "Size Li",
+      "Kuo Cai",
+      "Qiang Luo",
+      "Ruiming Tang",
+      "Han Li",
+      "Kun Gai"
+    ],
+    "categories": [
+      "cs.IR"
+    ],
+    "pdf": "https://arxiv.org/pdf/2602.03056v1",
+    "url": "https://arxiv.org/abs/2602.03056v1"
+  },
+  {
+    "query": "OS-Copilot",
+    "id": "2402.07456v2",
+    "title": "OS-Copilot: Towards Generalist Computer Agents with Self-Improvement",
+    "abstract": "Autonomous interaction with the computer has been a longstanding challenge with great potential, and the recent proliferation of large language models (LLMs) has markedly accelerated progress in building digital agents. However, most of these agents are designed to interact with a narrow domain, such as a specific software or website. This narrow focus constrains their applicability for general computer tasks. To this end, we introduce OS-Copilot, a framework to build generalist agents capable of interfacing with comprehensive elements in an operating system (OS), including the web, code terminals, files, multimedia, and various third-party applications. We use OS-Copilot to create FRIDAY, a self-improving embodied agent for automating general computer tasks. On GAIA, a general AI assistants benchmark, FRIDAY outperforms previous methods by 35%, showcasing strong generalization to unseen applications via accumulated skills from previous tasks. We also present numerical and quantitative evidence that FRIDAY learns to control and self-improve on Excel and Powerpoint with minimal supervision. Our OS-Copilot framework and empirical findings provide infrastructure and insights for future research toward more capable and general-purpose computer agents.",
+    "published": "2024-02-12",
+    "authors": [
+      "Zhiyong Wu",
+      "Chengcheng Han",
+      "Zichen Ding",
+      "Zhenmin Weng",
+      "Zhoumianze Liu",
+      "Shunyu Yao",
+      "Tao Yu",
+      "Lingpeng Kong"
+    ],
+    "categories": [
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2402.07456v2",
+    "url": "https://arxiv.org/abs/2402.07456v2"
+  },
+  {
+    "query": "Computer-Using Agent",
+    "id": "2203.08975v2",
+    "title": "A Survey of Multi-Agent Deep Reinforcement Learning with Communication",
+    "abstract": "Communication is an effective mechanism for coordinating the behaviors of multiple agents, broadening their views of the environment, and to support their collaborations. In the field of multi-agent deep reinforcement learning (MADRL), agents can improve the overall learning performance and achieve their objectives by communication. Agents can communicate various types of messages, either to all agents or to specific agent groups, or conditioned on specific constraints. With the growing body of research work in MADRL with communication (Comm-MADRL), there is a lack of a systematic and structural approach to distinguish and classify existing Comm-MADRL approaches. In this paper, we survey recent works in the Comm-MADRL field and consider various aspects of communication that can play a role in designing and developing multi-agent reinforcement learning systems. With these aspects in mind, we propose 9 dimensions along which Comm-MADRL approaches can be analyzed, developed, and compared. By projecting existing works into the multi-dimensional space, we discover interesting trends. We also propose some novel directions for designing future Comm-MADRL systems through exploring possible combinations of the dimensions.",
+    "published": "2022-03-16",
+    "authors": [
+      "Changxi Zhu",
+      "Mehdi Dastani",
+      "Shihan Wang"
+    ],
+    "categories": [
+      "cs.MA",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2203.08975v2",
+    "url": "https://arxiv.org/abs/2203.08975v2"
+  },
+  {
+    "query": "Computer-Using Agent",
+    "id": "2409.01907v1",
+    "title": "Focus Agent: LLM-Powered Virtual Focus Group",
+    "abstract": "In the domain of Human-Computer Interaction, focus groups represent a widely utilised yet resource-intensive methodology, often demanding the expertise of skilled moderators and meticulous preparatory efforts. This study introduces the ``Focus Agent,'' a Large Language Model (LLM) powered framework that simulates both the focus group (for data collection) and acts as a moderator in a focus group setting with human participants. To assess the data quality derived from the Focus Agent, we ran five focus group sessions with a total of 23 human participants as well as deploying the Focus Agent to simulate these discussions with AI participants. Quantitative analysis indicates that Focus Agent can generate opinions similar to those of human participants. Furthermore, the research exposes some improvements associated with LLMs acting as moderators in focus group discussions that include human participants.",
+    "published": "2024-09-03",
+    "authors": [
+      "Taiyu Zhang",
+      "Xuesong Zhang",
+      "Robbe Cools",
+      "Adalberto L. Simeone"
+    ],
+    "categories": [
+      "cs.HC"
+    ],
+    "pdf": "https://arxiv.org/pdf/2409.01907v1",
+    "url": "https://arxiv.org/abs/2409.01907v1"
+  },
+  {
+    "query": "Computer-Using Agent",
+    "id": "cs/0205016v1",
+    "title": "From Alife Agents to a Kingdom of N Queens",
+    "abstract": "This paper presents a new approach to solving N-queen problems, which involves a model of distributed autonomous agents with artificial life (ALife) and a method of representing N-queen constraints in an agent environment. The distributed agents locally interact with their living environment, i.e., a chessboard, and execute their reactive behaviors by applying their behavioral rules for randomized motion, least-conflict position searching, and cooperating with other agents etc. The agent-based N-queen problem solving system evolves through selection and contest according to the rule of Survival of the Fittest, in which some agents will die or be eaten if their moving strategies are less efficient than others. The experimental results have shown that this system is capable of solving large-scale N-queen problems. This paper also provides a model of ALife agents for solving general CSPs.",
+    "published": "2002-05-13",
+    "authors": [
+      "Jing Han",
+      "Jiming Liu",
+      "Qingsheng Cai"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.DS",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/cs/0205016v1",
+    "url": "https://arxiv.org/abs/cs/0205016v1"
+  },
+  {
+    "query": "Computer-Using Agent",
+    "id": "2512.09543v2",
+    "title": "SWEnergy: An Empirical Study on Energy Efficiency in Agentic Issue Resolution Frameworks with SLMs",
+    "abstract": "Context. LLM-based autonomous agents in software engineering rely on large, proprietary models, limiting local deployment. This has spurred interest in Small Language Models (SLMs), but their practical effectiveness and efficiency within complex agentic frameworks for automated issue resolution remain poorly understood.\n  Goal. We investigate the performance, energy efficiency, and resource consumption of four leading agentic issue resolution frameworks when deliberately constrained to using SLMs. We aim to assess the viability of these systems for this task in resource-limited settings and characterize the resulting trade-offs.\n  Method. We conduct a controlled evaluation of four leading agentic frameworks (SWE-Agent, OpenHands, Mini SWE Agent, AutoCodeRover) using two SLMs (Gemma-3 4B, Qwen-3 1.7B) on the SWE-bench Verified Mini benchmark. On fixed hardware, we measure energy, duration, token usage, and memory over 150 runs per configuration.\n  Results. We find that framework architecture is the primary driver of energy consumption. The most energy-intensive framework, AutoCodeRover (Gemma), consumed 9.4x more energy on average than the least energy-intensive, OpenHands (Gemma). However, this energy is largely wasted. Task resolution rates were near-zero, demonstrating that current frameworks, when paired with SLMs, consume significant energy on unproductive reasoning loops. The SLM's limited reasoning was the bottleneck for success, but the framework's design was the bottleneck for efficiency.\n  Conclusions. Current agentic frameworks, designed for powerful LLMs, fail to operate efficiently with SLMs. We find that framework architecture is the primary driver of energy consumption, but this energy is largely wasted due to the SLMs' limited reasoning. Viable low-energy solutions require shifting from passive orchestration to architectures that actively manage SLM weaknesses.",
+    "published": "2025-12-10",
+    "authors": [
+      "Arihant Tripathy",
+      "Ch Pavan Harshit",
+      "Karthik Vaidhyanathan"
+    ],
+    "categories": [
+      "cs.SE",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2512.09543v2",
+    "url": "https://arxiv.org/abs/2512.09543v2"
+  },
+  {
+    "query": "Computer-Using Agent",
+    "id": "2510.13343v1",
+    "title": "AOAD-MAT: Transformer-based multi-agent deep reinforcement learning model considering agents' order of action decisions",
+    "abstract": "Multi-agent reinforcement learning focuses on training the behaviors of multiple learning agents that coexist in a shared environment. Recently, MARL models, such as the Multi-Agent Transformer (MAT) and ACtion dEpendent deep Q-learning (ACE), have significantly improved performance by leveraging sequential decision-making processes. Although these models can enhance performance, they do not explicitly consider the importance of the order in which agents make decisions. In this paper, we propose an Agent Order of Action Decisions-MAT (AOAD-MAT), a novel MAT model that considers the order in which agents make decisions. The proposed model explicitly incorporates the sequence of action decisions into the learning process, allowing the model to learn and predict the optimal order of agent actions. The AOAD-MAT model leverages a Transformer-based actor-critic architecture that dynamically adjusts the sequence of agent actions. To achieve this, we introduce a novel MARL architecture that cooperates with a subtask focused on predicting the next agent to act, integrated into a Proximal Policy Optimization based loss function to synergistically maximize the advantage of the sequential decision-making. The proposed method was validated through extensive experiments on the StarCraft Multi-Agent Challenge and Multi-Agent MuJoCo benchmarks. The experimental results show that the proposed AOAD-MAT model outperforms existing MAT and other baseline models, demonstrating the effectiveness of adjusting the AOAD order in MARL.",
+    "published": "2025-10-15",
+    "authors": [
+      "Shota Takayama",
+      "Katsuhide Fujita"
+    ],
+    "categories": [
+      "cs.MA",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2510.13343v1",
+    "url": "https://arxiv.org/abs/2510.13343v1"
+  },
+  {
+    "query": "MCP Model Context Protocol",
+    "id": "2507.19570v1",
+    "title": "MCP4EDA: LLM-Powered Model Context Protocol RTL-to-GDSII Automation with Backend Aware Synthesis Optimization",
+    "abstract": "This paper presents MCP4EDA, the first Model Context Protocol server that enables Large Language Models (LLMs) to control and optimize the complete open-source RTL-to-GDSII design flow through natural language interaction. The system integrates Yosys synthesis, Icarus Verilog simulation, OpenLane place-and-route, GTKWave analysis, and KLayout visualization into a unified LLM-accessible interface, enabling designers to execute complex multi-tool EDA workflows conversationally via AI assistants such as Claude Desktop and Cursor IDE. The principal contribution is a backend-aware synthesis optimization methodology wherein LLMs analyze actual post-layout timing, power, and area metrics from OpenLane results to iteratively refine synthesis TCL scripts, establishing a closed-loop optimization system that bridges the traditional gap between synthesis estimates and physical implementation reality. In contrast to conventional flows that rely on wire-load models, this methodology leverages real backend performance data to guide synthesis parameter tuning, optimization sequence selection, and constraint refinement, with the LLM functioning as an intelligent design space exploration agent. Experimental evaluation on representative digital designs demonstrates 15-30% improvements in timing closure and 10-20% area reduction compared to default synthesis flows, establishing MCP4EDA as the first practical LLM-controlled end-to-end open-source EDA automation system. The code and demo are avaiable at: http://www.agent4eda.com/",
+    "published": "2025-07-25",
+    "authors": [
+      "Yiting Wang",
+      "Wanghao Ye",
+      "Yexiao He",
+      "Yiran Chen",
+      "Gang Qu",
+      "Ang Li"
+    ],
+    "categories": [
+      "cs.AR",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2507.19570v1",
+    "url": "https://arxiv.org/abs/2507.19570v1"
+  },
+  {
+    "query": "MCP Model Context Protocol",
+    "id": "cmp-lg/9701001v1",
+    "title": "Exploiting Context to Identify Lexical Atoms -- A Statistical View of Linguistic Context",
+    "abstract": "Interpretation of natural language is inherently context-sensitive. Most words in natural language are ambiguous and their meanings are heavily dependent on the linguistic context in which they are used. The study of lexical semantics can not be separated from the notion of context. This paper takes a contextual approach to lexical semantics and studies the linguistic context of lexical atoms, or \"sticky\" phrases such as \"hot dog\". Since such lexical atoms may occur frequently in unrestricted natural language text, recognizing them is crucial for understanding naturally-occurring text. The paper proposes several heuristic approaches to exploiting the linguistic context to identify lexical atoms from arbitrary natural language text.",
+    "published": "1997-01-02",
+    "authors": [
+      "Chengxiang Zhai"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/cmp-lg/9701001v1",
+    "url": "https://arxiv.org/abs/cmp-lg/9701001v1"
+  },
+  {
+    "query": "MCP Model Context Protocol",
+    "id": "1002.1178v1",
+    "title": "Adaptation of TURN protocol to SIP protocol",
+    "abstract": "Today, SIP is a protocol par Excellence in the field of communication over Internet. But, the fact that it belongs to the application layer constitutes a weakness vis-a-vis the NAT traversal. This weakness is due to the way in which the server replies to the requests of clients on the one hand. On the other, it is caused by the dynamic allocation of UDP ports for emission and reception of packets RTP/RTCP. The TURN Protocol may face this weakness. However, its use requires a certain number of exchanges between the clients and a TURN server before establishing the multimedia sessions and this increase the latent time. In this article, we propose to adapt TURN protocol for applications based on SIP protocol such as telephony over Internet, conference video, etc. This adaptation optimises the establishment of multimedia sessions by integrating a manager of TCP connections and multimedia flow controller into SIP Proxy server.",
+    "published": "2010-02-05",
+    "authors": [
+      "Mustapha Guezouri",
+      "Ahmed Blaha",
+      "Mokhtar Keche"
+    ],
+    "categories": [
+      "cs.NI"
+    ],
+    "pdf": "https://arxiv.org/pdf/1002.1178v1",
+    "url": "https://arxiv.org/abs/1002.1178v1"
+  },
+  {
+    "query": "MCP Model Context Protocol",
+    "id": "2602.18764v2",
+    "title": "The Convergence of Schema-Guided Dialogue Systems and the Model Context Protocol",
+    "abstract": "This paper establishes a fundamental convergence: Schema-Guided Dialogue (SGD) and the Model Context Protocol (MCP) represent two manifestations of a unified paradigm for deterministic, auditable LLM-agent interaction. SGD, designed for dialogue-based API discovery (2019), and MCP, now the de facto standard for LLM-tool integration, share the same core insight -- that schemas can encode not just tool signatures but operational constraints and reasoning guidance. By analyzing this convergence, we extract five foundational principles for schema design: (1) Semantic Completeness over Syntactic Precision, (2) Explicit Action Boundaries, (3) Failure Mode Documentation, (4) Progressive Disclosure Compatibility, and (5) Inter-Tool Relationship Declaration. These principles reveal three novel insights: first, SGD's original design was fundamentally sound and should be inherited by MCP; second, both frameworks leave failure modes and inter-tool relationships unexploited -- gaps we identify and resolve; third, progressive disclosure emerges as a critical production-scaling insight under real-world token constraints. We provide concrete design patterns for each principle. These principles position schema-driven governance as a scalable mechanism for AI system oversight without requiring proprietary system inspection -- central to Software 3.0.",
+    "published": "2026-02-21",
+    "authors": [
+      "Andreas Schlapbach"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2602.18764v2",
+    "url": "https://arxiv.org/abs/2602.18764v2"
+  },
+  {
+    "query": "MCP Model Context Protocol",
+    "id": "2605.26159v1",
+    "title": "Device Context Protocol: A Compact, Safety-First Architecture for LLM-Driven Control of Constrained Devices",
+    "abstract": "Large language models are increasingly used as orchestrators of external tools via the Model Context Protocol (MCP), but MCP is built for software services with megabytes of memory and does not descend to the microcontrollers that dominate the long tail of physical devices. Recent work (IoT-MCP) ports MCP to edge gateways at 74 KB peak memory; this still excludes the smallest commodity MCUs and, critically, does not address the safety problem of giving an unreliable caller (an LLM that may hallucinate or be prompt-injected) direct control of physical hardware. We present the Device Context Protocol (DCP): a sub-50-byte typical frame (6-byte header + CBOR payload + optional 16-byte HMAC), a manifest schema in which capability scoping, range and type checks, dry-run evaluation, and units-as-types are protocol-layer primitives, and a host-side Bridge that rejects malformed or hallucinated calls before any byte reaches the device. Reference firmware measures 27.6 KB flash / 0.6 KB RAM on ESP32; the Python Bridge, ESP32 firmware, and a language-neutral conformance suite are MIT-licensed and public. An empirical study -- 675 tool calls produced by five LLMs across four vendors (DeepSeek, Alibaba, Zhipu, MiniMax) against six categories of adversarial prompts, with the injection category instantiating AgentDojo's attack templates -- shows DCP rejects 100% of capability-escalation attempts and 78% of prompt-injection attempts, versus 0--1% for Raw MCP and IoT-MCP, matching the expressiveness of a well-formed OpenAPI 3 schema at three orders of magnitude less firmware footprint. We position DCP as the missing layer between MCP (which is moving toward enterprise SaaS connectivity) and the physical devices it does not reach.",
+    "published": "2026-05-24",
+    "authors": [
+      "Dongxu Yang"
+    ],
+    "categories": [
+      "cs.NI",
+      "cs.CR",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2605.26159v1",
+    "url": "https://arxiv.org/abs/2605.26159v1"
+  },
+  {
+    "query": "LangGraph",
+    "id": "2411.18241v1",
+    "title": "Exploration of LLM Multi-Agent Application Implementation Based on LangGraph+CrewAI",
+    "abstract": "With the rapid development of large model technology, the application of agent technology in various fields is becoming increasingly widespread, profoundly changing people's work and lifestyles. In complex and dynamic systems, multi-agents achieve complex tasks that are difficult for a single agent to complete through division of labor and collaboration among agents. This paper discusses the integrated application of LangGraph and CrewAI. LangGraph improves the efficiency of information transmission through graph architecture, while CrewAI enhances team collaboration capabilities and system performance through intelligent task allocation and resource management. The main research contents of this paper are: (1) designing the architecture of agents based on LangGraph for precise control; (2) enhancing the capabilities of agents based on CrewAI to complete a variety of tasks. This study aims to delve into the application of LangGraph and CrewAI in multi-agent systems, providing new perspectives for the future development of agent technology, and promoting technological progress and application innovation in the field of large model intelligent agents.",
+    "published": "2024-11-27",
+    "authors": [
+      "Zhihua Duan",
+      "Jialin Wang"
+    ],
+    "categories": [
+      "cs.MA",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2411.18241v1",
+    "url": "https://arxiv.org/abs/2411.18241v1"
+  },
+  {
+    "query": "LangGraph",
+    "id": "2502.18465v1",
+    "title": "Empirical Research on Utilizing LLM-based Agents for Automated Bug Fixing via LangGraph",
+    "abstract": "This paper presents a novel framework for automated code generation and debugging, designed to improve accuracy, efficiency, and scalability in software development. The proposed system integrates three core components LangGraph, GLM4 Flash, and ChromaDB within a four step iterative workflow to deliver robust performance and seamless functionality.\n  LangGraph serves as a graph-based library for orchestrating tasks, providing precise control and execution while maintaining a unified state object for dynamic updates and consistency. It supports multi-agent, hierarchical, and sequential processes, making it highly adaptable to complex software engineering workflows. GLM4 Flash, a large language model, leverages its advanced capabilities in natural language understanding, contextual reasoning, and multilingual support to generate accurate code snippets based on user prompts. ChromaDB acts as a vector database for semantic search and contextual memory storage, enabling the identification of patterns and the generation of context-aware bug fixes based on historical data.\n  The system operates through a structured four-step process: (1) Code Generation, which translates natural language descriptions into executable code; (2) Code Execution, which validates the code by identifying runtime errors and inconsistencies; (3) Code Repair, which iteratively refines buggy code using ChromaDB's memory capabilities and LangGraph's state tracking; and (4) Code Update, which ensures the code meets functional and performance requirements through iterative modifications.",
+    "published": "2025-01-29",
+    "authors": [
+      "Jialin Wang",
+      "Zhihua Duan"
+    ],
+    "categories": [
+      "cs.SE"
+    ],
+    "pdf": "https://arxiv.org/pdf/2502.18465v1",
+    "url": "https://arxiv.org/abs/2502.18465v1"
+  },
+  {
+    "query": "LangGraph",
+    "id": "2412.03801v1",
+    "title": "Agent AI with LangGraph: A Modular Framework for Enhancing Machine Translation Using Large Language Models",
+    "abstract": "This paper explores the transformative role of Agent AI and LangGraph in advancing the automation and effectiveness of machine translation (MT). Agents are modular components designed to perform specific tasks, such as translating between particular languages, with specializations like TranslateEnAgent, TranslateFrenchAgent, and TranslateJpAgent for English, French, and Japanese translations, respectively. These agents leverage the powerful semantic capabilities of large language models (LLMs), such as GPT-4o, to ensure accurate, contextually relevant translations while maintaining modularity, scalability, and context retention.\n  LangGraph, a graph-based framework built on LangChain, simplifies the creation and management of these agents and their workflows. It supports dynamic state management, enabling agents to maintain dialogue context and automates complex workflows by linking agents and facilitating their collaboration. With flexibility, open-source community support, and seamless integration with LLMs, LangGraph empowers agents to deliver high-quality translations.\n  Together, Agent AI and LangGraph create a cohesive system where LangGraph orchestrates agent interactions, ensuring that user inputs are analyzed, routed, and processed efficiently. Experimental results demonstrate the potential of this system to enhance multilingual translation accuracy and scalability. By highlighting modular design and automated workflows, this paper sets the stage for further innovations in intelligent machine translation services.",
+    "published": "2024-12-05",
+    "authors": [
+      "Jialin Wang",
+      "Zhihua Duan"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2412.03801v1",
+    "url": "https://arxiv.org/abs/2412.03801v1"
+  },
+  {
+    "query": "LangGraph",
+    "id": "2607.19297v1",
+    "title": "Graph-Based Agentic AI with LangGraph: Workflow Pathways for Long-Running Stateful Business Processes",
+    "abstract": "This paper is a practitioner guide to graph-based workflow pathways for long-running, stateful, multi-step generative AI systems in business processes. Rather than treating LangGraph, a low-level orchestration framework for stateful agents, as a model-quality benchmark target, we present three executable recipes -- SQL analytics with repair loops, agentic retrieval-augmented generation with evidence gating, and human-in-the-loop policy review with interrupt and checkpoint recovery -- to show how typed state, conditional routing, deterministic tools, retries, interrupts, checkpoints, and traces fit together. LangGraph is positioned by workflow-complexity fit, not as a universal default: simpler ReAct-style or plain SDK loops may be better for basic tool use, schema-first tools for structured extraction and validation, and DSPy when prompt or program optimization is the main goal. Each recipe explains when LangGraph is worth the extra structure and which implementation patterns make routes, pauses, and audit trails explicit product behavior rather than hidden prompt logic.",
+    "published": "2026-07-21",
+    "authors": [
+      "Daniel Pearson",
+      "Sidney Shapiro",
+      "Emiliano Sebastian Gonzalez Venegas",
+      "Sanad Al-Khatib",
+      "Aurora Pinzón Arzola"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.SE"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.19297v1",
+    "url": "https://arxiv.org/abs/2607.19297v1"
+  },
+  {
+    "query": "LangGraph",
+    "id": "2412.01490v4",
+    "title": "Intelligent Spark Agents: A Modular LangGraph Framework for Scalable, Visualized, and Enhanced Big Data Machine Learning Workflows",
+    "abstract": "This paper presents a Spark-based modular LangGraph framework, designed to enhance machine learning workflows through scalability, visualization, and intelligent process optimization. At its core, the framework introduces Agent AI, a pivotal innovation that leverages Spark's distributed computing capabilities and integrates with LangGraph for workflow orchestration.\n  Agent AI facilitates the automation of data preprocessing, feature engineering, and model evaluation while dynamically interacting with data through Spark SQL and DataFrame agents. Through LangGraph's graph-structured workflows, the agents execute complex tasks, adapt to new inputs, and provide real-time feedback, ensuring seamless decision-making and execution in distributed environments. This system simplifies machine learning processes by allowing users to visually design workflows, which are then converted into Spark-compatible code for high-performance execution.\n  The framework also incorporates large language models through the LangChain ecosystem, enhancing interaction with unstructured data and enabling advanced data analysis. Experimental evaluations demonstrate significant improvements in process efficiency and scalability, as well as accurate data-driven decision-making in diverse application scenarios.\n  This paper emphasizes the integration of Spark with intelligent agents and graph-based workflows to redefine the development and execution of machine learning tasks in big data environments, paving the way for scalable and user-friendly AI solutions.",
+    "published": "2024-12-02",
+    "authors": [
+      "Jialin Wang",
+      "Zhihua Duan"
+    ],
+    "categories": [
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2412.01490v4",
+    "url": "https://arxiv.org/abs/2412.01490v4"
+  },
+  {
+    "query": "AutoGen",
+    "id": "1806.04480v1",
+    "title": "Improving latent variable descriptiveness with AutoGen",
+    "abstract": "Powerful generative models, particularly in Natural Language Modelling, are commonly trained by maximizing a variational lower bound on the data log likelihood. These models often suffer from poor use of their latent variable, with ad-hoc annealing factors used to encourage retention of information in the latent variable. We discuss an alternative and general approach to latent variable modelling, based on an objective that combines the data log likelihood as well as the likelihood of a perfect reconstruction through an autoencoder. Tying these together ensures by design that the latent variable captures information about the observations, whilst retaining the ability to generate well. Interestingly, though this approach is a priori unrelated to VAEs, the lower bound attained is identical to the standard VAE bound but with the addition of a simple pre-factor; thus, providing a formal interpretation of the commonly used, ad-hoc pre-factors in training VAEs.",
+    "published": "2018-06-12",
+    "authors": [
+      "Alex Mansbridge",
+      "Roberto Fierimonte",
+      "Ilya Feige",
+      "David Barber"
+    ],
+    "categories": [
+      "stat.ML",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/1806.04480v1",
+    "url": "https://arxiv.org/abs/1806.04480v1"
+  },
+  {
+    "query": "AutoGen",
+    "id": "2407.20730v1",
+    "title": "Autogenic Language Embedding for Coherent Point Tracking",
+    "abstract": "Point tracking is a challenging task in computer vision, aiming to establish point-wise correspondence across long video sequences. Recent advancements have primarily focused on temporal modeling techniques to improve local feature similarity, often overlooking the valuable semantic consistency inherent in tracked points. In this paper, we introduce a novel approach leveraging language embeddings to enhance the coherence of frame-wise visual features related to the same object. Our proposed method, termed autogenic language embedding for visual feature enhancement, strengthens point correspondence in long-term sequences. Unlike existing visual-language schemes, our approach learns text embeddings from visual features through a dedicated mapping network, enabling seamless adaptation to various tracking tasks without explicit text annotations. Additionally, we introduce a consistency decoder that efficiently integrates text tokens into visual features with minimal computational overhead. Through enhanced visual consistency, our approach significantly improves tracking trajectories in lengthy videos with substantial appearance variations. Extensive experiments on widely-used tracking benchmarks demonstrate the superior performance of our method, showcasing notable enhancements compared to trackers relying solely on visual cues.",
+    "published": "2024-07-30",
+    "authors": [
+      "Zikai Song",
+      "Ying Tang",
+      "Run Luo",
+      "Lintao Ma",
+      "Junqing Yu",
+      "Yi-Ping Phoebe Chen",
+      "Wei Yang"
+    ],
+    "categories": [
+      "cs.CV"
+    ],
+    "pdf": "https://arxiv.org/pdf/2407.20730v1",
+    "url": "https://arxiv.org/abs/2407.20730v1"
+  },
+  {
+    "query": "AutoGen",
+    "id": "2601.20346v2",
+    "title": "Multimodal Multi-Agent Ransomware Analysis Using AutoGen",
+    "abstract": "Ransomware has become one of the most serious cybersecurity threats causing major financial losses and operational disruptions worldwide.Traditional detection methods such as static analysis, heuristic scanning and behavioral analysis often fall short when used alone. To address these limitations, this paper presents multimodal multi agent ransomware analysis framework designed for ransomware classification. Proposed multimodal multiagent architecture combines information from static, dynamic and network sources. Each data type is handled by specialized agent that uses auto encoder based feature extraction. These representations are then integrated through a fusion agent. After that fused representation are used by transformer based classifier. It identifies the specific ransomware family. The agents interact through an interagent feedback mechanism that iteratively refines feature representations by suppressing low confidence information. The framework was evaluated on large scale datasets containing thousands of ransomware and benign samples. Multiple experiments were conducted on ransomware dataset. It outperforms single modality and nonadaptive fusion baseline achieving improvement of up to 0.936 in Macro-F1 for family classification and reducing calibration error. Over 100 epochs, the agentic feedback loop displays a stable monotonic convergence leading to over +0.75 absolute improvement in terms of agent quality and a final composite score of around 0.88 without fine tuning of the language models. Zeroday ransomware detection remains family dependent on polymorphism and modality disruptions. Confidence aware abstention enables reliable real world deployment by favoring conservativeand trustworthy decisions over forced classification. The findings indicate that proposed approach provides a practical andeffective path toward improving real world ransomware defense systems.",
+    "published": "2026-01-28",
+    "authors": [
+      "Asifullah Khan",
+      "Aimen Wadood",
+      "Mubashar Iqbal",
+      "Umme Zahoora"
+    ],
+    "categories": [
+      "cs.CR",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2601.20346v2",
+    "url": "https://arxiv.org/abs/2601.20346v2"
+  },
+  {
+    "query": "AutoGen",
+    "id": "2308.08155v2",
+    "title": "AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation",
+    "abstract": "AutoGen is an open-source framework that allows developers to build LLM applications via multiple agents that can converse with each other to accomplish tasks. AutoGen agents are customizable, conversable, and can operate in various modes that employ combinations of LLMs, human inputs, and tools. Using AutoGen, developers can also flexibly define agent interaction behaviors. Both natural language and computer code can be used to program flexible conversation patterns for different applications. AutoGen serves as a generic infrastructure to build diverse applications of various complexities and LLM capacities. Empirical studies demonstrate the effectiveness of the framework in many example applications, with domains ranging from mathematics, coding, question answering, operations research, online decision-making, entertainment, etc.",
+    "published": "2023-08-16",
+    "authors": [
+      "Qingyun Wu",
+      "Gagan Bansal",
+      "Jieyu Zhang",
+      "Yiran Wu",
+      "Beibin Li",
+      "Erkang Zhu",
+      "Li Jiang",
+      "Xiaoyun Zhang",
+      "Shaokun Zhang",
+      "Jiale Liu",
+      "Ahmed Hassan Awadallah",
+      "Ryen W White",
+      "Doug Burger",
+      "Chi Wang"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2308.08155v2",
+    "url": "https://arxiv.org/abs/2308.08155v2"
+  },
+  {
+    "query": "AutoGen",
+    "id": "2510.19839v2",
+    "title": "Finite Element and Machine Learning Modeling of Autogenous Self-Healing Concrete",
+    "abstract": "A time-dependent modeling framework for autogenous self-healing concrete that couples moisture diffusion with damage evolution was developed. Water transport follows Fick's second law with a damage-dependent diffusivity obtained by power-law interpolation between intact concrete and crack space. Healing reduces damage in proportion to the product of local moisture and a smoothed cement availability field computed via a novel Helmholtz filtering approach that models the spatial extent over which cement clinker can travel and form crystals. Two finite element variants were implemented in FEniCSx: a Crack Diffusion Model (CDM) with standard diffusion and a Crack Membrane Model (CMM) that introduces a novel threshold-based gating mechanism to control cross-crack water transport until a critical moisture threshold is reached. Key control parameters are the initial crack orientation and size, the diffusion coefficients of intact and cracked concrete, the healing rate constant, and the cement availability smoothing parameter. Simulations show that healing time varies non-monotonically with crack orientation, peaking near $45^\\circ$ and $135^\\circ$ and minimizing near $90^\\circ$. The dependence on crack width reverses with material parameters. The CMM reproduces staged moisture penetration with delayed gate activation but lengthens total healing time, whereas the CDM is efficient for parametric sweeps. Machine learning regression models were trained on finite element simulation data to predict healing times $H(σ,γ,β)$ with high accuracy ($R^2 > 0.999$), dramatically reducing computational time. SHAP analysis demonstrated that crack orientation influenced healing time the most, followed by crack width and cement availability smoothing. The modeling framework provides a versatile tool for guiding future laboratory studies and implementations of self-healing concrete.",
+    "published": "2025-10-18",
+    "authors": [
+      "William Liu"
+    ],
+    "categories": [
+      "cs.CE"
+    ],
+    "pdf": "https://arxiv.org/pdf/2510.19839v2",
+    "url": "https://arxiv.org/abs/2510.19839v2"
+  },
+  {
+    "query": "MetaGPT",
+    "id": "2308.00352v7",
+    "title": "MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework",
+    "abstract": "Remarkable progress has been made on automated problem solving through societies of agents based on large language models (LLMs). Existing LLM-based multi-agent systems can already solve simple dialogue tasks. Solutions to more complex tasks, however, are complicated through logic inconsistencies due to cascading hallucinations caused by naively chaining LLMs. Here we introduce MetaGPT, an innovative meta-programming framework incorporating efficient human workflows into LLM-based multi-agent collaborations. MetaGPT encodes Standardized Operating Procedures (SOPs) into prompt sequences for more streamlined workflows, thus allowing agents with human-like domain expertise to verify intermediate results and reduce errors. MetaGPT utilizes an assembly line paradigm to assign diverse roles to various agents, efficiently breaking down complex tasks into subtasks involving many agents working together. On collaborative software engineering benchmarks, MetaGPT generates more coherent solutions than previous chat-based multi-agent systems. Our project can be found at https://github.com/geekan/MetaGPT",
+    "published": "2023-08-01",
+    "authors": [
+      "Sirui Hong",
+      "Mingchen Zhuge",
+      "Jiaqi Chen",
+      "Xiawu Zheng",
+      "Yuheng Cheng",
+      "Ceyao Zhang",
+      "Jinlin Wang",
+      "Zili Wang",
+      "Steven Ka Shing Yau",
+      "Zijuan Lin",
+      "Liyang Zhou",
+      "Chenyu Ran",
+      "Lingfeng Xiao",
+      "Chenglin Wu",
+      "Jürgen Schmidhuber"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2308.00352v7",
+    "url": "https://arxiv.org/abs/2308.00352v7"
+  },
+  {
+    "query": "MetaGPT",
+    "id": "2406.11385v2",
+    "title": "MetaGPT: Merging Large Language Models Using Model Exclusive Task Arithmetic",
+    "abstract": "The advent of large language models (LLMs) like GPT-4 has catalyzed the exploration of multi-task learning (MTL), in which a single model demonstrates proficiency across diverse tasks. Task arithmetic has emerged as a cost-effective approach for MTL. It enables performance enhancement across multiple tasks by adding their corresponding task vectors to a pre-trained model. However, the current lack of a method that can simultaneously achieve optimal performance, computational efficiency, and data privacy limits their application to LLMs. In this paper, we propose \\textbf{M}odel \\textbf{E}xclusive \\textbf{T}ask \\textbf{A}rithmetic for merging \\textbf{GPT}-scale models, which formalizes the objective of model merging into a multi-task learning framework, aiming to minimize the average loss difference between the merged model and each individual task model. Since data privacy limits the use of multi-task training data, we leverage LLMs' local linearity and task vectors' orthogonality to separate the data term and scaling coefficients term and derive a model-exclusive task arithmetic method. Our proposed MetaGPT is data-agnostic and bypasses the heavy search process, making it cost-effective and easy to implement for LLMs.Extensive experiments demonstrate that MetaGPT leads to improvements in task arithmetic and achieves state-of-the-art performance on multiple tasks.",
+    "published": "2024-06-17",
+    "authors": [
+      "Yuyan Zhou",
+      "Liang Song",
+      "Bingning Wang",
+      "Weipeng Chen"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2406.11385v2",
+    "url": "https://arxiv.org/abs/2406.11385v2"
+  },
+  {
+    "query": "Voyager Minecraft",
+    "id": "2503.20036v2",
+    "title": "Agents in the Sandbox: End-to-End Crash Bug Reproduction for Minecraft",
+    "abstract": "Reproducing game bugs, particularly crash bugs in continuously evolving games like Minecraft, is a notoriously manual, time-consuming, and challenging process to automate; insights from a key decision maker from Minecraft we interviewed confirm this, highlighting that a substantial portion of crash reports necessitate manual scenario reconstruction. Despite the success of LLM-driven bug reproduction in other software domains, games, with their complex interactive environments, remain largely unaddressed. This paper introduces BugCraft, a novel end-to-end framework designed to automate the reproduction of crash bugs in Minecraft directly from user-submitted bug reports, addressing the critical gap in automated game bug reproduction. BugCraft employs a two-stage approach: first, a Step Synthesizer leverages LLMs and Minecraft Wiki knowledge to transform bug reports into high-quality, structured steps to reproduce (S2R). Second, an Action Model, powered by a vision-based LLM agent and a custom macro API, executes these S2R steps within Minecraft to trigger the reported crash. To facilitate evaluation, we introduce BugCraft-Bench, a curated dataset of Minecraft crash bug reports. On BugCraft-Bench, our framework end-to-end reproduced 34.9% of crash bugs with GPT-4.1, outperforming baseline computer-use models by 37%. BugCraft demonstrates the feasibility of automated reproduction of crash bugs in complex game environments using LLMs, opening promising avenues for game testing and development. Finally, we make our code open at https://bugcraft2025.github.io",
+    "published": "2025-03-25",
+    "authors": [
+      "Eray Yapağcı",
+      "Yavuz Alp Sencer Öztürk",
+      "Eray Tüzün"
+    ],
+    "categories": [
+      "cs.SE",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2503.20036v2",
+    "url": "https://arxiv.org/abs/2503.20036v2"
+  },
+  {
+    "query": "Voyager Minecraft",
+    "id": "2005.03374v1",
+    "title": "Playing Minecraft with Behavioural Cloning",
+    "abstract": "MineRL 2019 competition challenged participants to train sample-efficient agents to play Minecraft, by using a dataset of human gameplay and a limit number of steps the environment. We approached this task with behavioural cloning by predicting what actions human players would take, and reached fifth place in the final ranking. Despite being a simple algorithm, we observed the performance of such an approach can vary significantly, based on when the training is stopped. In this paper, we detail our submission to the competition, run further experiments to study how performance varied over training and study how different engineering decisions affected these results.",
+    "published": "2020-05-07",
+    "authors": [
+      "Anssi Kanervisto",
+      "Janne Karttunen",
+      "Ville Hautamäki"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2005.03374v1",
+    "url": "https://arxiv.org/abs/2005.03374v1"
+  },
+  {
+    "query": "Voyager Minecraft",
+    "id": "1906.05094v1",
+    "title": "Organic Building Generation in Minecraft",
+    "abstract": "This paper presents a method for generating floor plans for structures in Minecraft (Mojang 2009). Given a 3D space, it will auto-generate a building to fill that space using a combination of constrained growth and cellular automata. The result is a series of organic-looking buildings complete with rooms, windows, and doors connecting them. The method is applied to the Generative Design in Minecraft (GDMC) competition to auto-generate buildings in Minecraft, and the results are discussed.",
+    "published": "2019-06-11",
+    "authors": [
+      "Michael Cerny Green",
+      "Christoph Salge",
+      "Julian Togelius"
+    ],
+    "categories": [
+      "cs.HC"
+    ],
+    "pdf": "https://arxiv.org/pdf/1906.05094v1",
+    "url": "https://arxiv.org/abs/1906.05094v1"
+  },
+  {
+    "query": "Voyager Minecraft",
+    "id": "2106.10155v1",
+    "title": "World-GAN: a Generative Model for Minecraft Worlds",
+    "abstract": "This work introduces World-GAN, the first method to perform data-driven Procedural Content Generation via Machine Learning in Minecraft from a single example. Based on a 3D Generative Adversarial Network (GAN) architecture, we are able to create arbitrarily sized world snippets from a given sample. We evaluate our approach on creations from the community as well as structures generated with the Minecraft World Generator. Our method is motivated by the dense representations used in Natural Language Processing (NLP) introduced with word2vec [1]. The proposed block2vec representations make World-GAN independent from the number of different blocks, which can vary a lot in Minecraft, and enable the generation of larger levels. Finally, we demonstrate that changing this new representation space allows us to change the generated style of an already trained generator. World-GAN enables its users to generate Minecraft worlds based on parts of their creations.",
+    "published": "2021-06-18",
+    "authors": [
+      "Maren Awiszus",
+      "Frederik Schubert",
+      "Bodo Rosenhahn"
+    ],
+    "categories": [
+      "cs.LG",
+      "cs.CV",
+      "cs.NE"
+    ],
+    "pdf": "https://arxiv.org/pdf/2106.10155v1",
+    "url": "https://arxiv.org/abs/2106.10155v1"
+  },
+  {
+    "query": "Voyager Minecraft",
+    "id": "2411.18464v1",
+    "title": "Approximating Mathematical Constants using Minecraft",
+    "abstract": "In this article we will use Minecraft to experimentally approximate the values of four different mathematical constants. The mathematical constants that we will approximate are $\\sqrt{2}, π$, Euler's number $e$, and Apéry's constant $ζ(3)$. We will begin each section with a brief history of the number being approximated and describe where it appears in mathematics. We then explain how we used Minecraft mechanics to approximate the constant. At the end of each section, we provide some ideas for how to apply our techniques to the approximation of other mathematical constants in Minecraft or elsewhere. This article is a proof of concept that Minecraft can be used in higher education. We should note that the goal of this article is not to have the most accurate approximations possible, the goal is to inspire people to have fun while learning about various mathematical topics. We hope you learn something new in this article and feel inspired to try some of these techniques on your own.",
+    "published": "2024-11-27",
+    "authors": [
+      "Molly Lynch",
+      "Michael Weselcouch"
+    ],
+    "categories": [
+      "math.HO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2411.18464v1",
+    "url": "https://arxiv.org/abs/2411.18464v1"
+  },
+  {
+    "query": "Toolformer",
+    "id": "2302.04761v1",
+    "title": "Toolformer: Language Models Can Teach Themselves to Use Tools",
+    "abstract": "Language models (LMs) exhibit remarkable abilities to solve new tasks from just a few examples or textual instructions, especially at scale. They also, paradoxically, struggle with basic functionality, such as arithmetic or factual lookup, where much simpler and smaller models excel. In this paper, we show that LMs can teach themselves to use external tools via simple APIs and achieve the best of both worlds. We introduce Toolformer, a model trained to decide which APIs to call, when to call them, what arguments to pass, and how to best incorporate the results into future token prediction. This is done in a self-supervised way, requiring nothing more than a handful of demonstrations for each API. We incorporate a range of tools, including a calculator, a Q\\&A system, two different search engines, a translation system, and a calendar. Toolformer achieves substantially improved zero-shot performance across a variety of downstream tasks, often competitive with much larger models, without sacrificing its core language modeling abilities.",
+    "published": "2023-02-09",
+    "authors": [
+      "Timo Schick",
+      "Jane Dwivedi-Yu",
+      "Roberto Dessì",
+      "Roberta Raileanu",
+      "Maria Lomeli",
+      "Luke Zettlemoyer",
+      "Nicola Cancedda",
+      "Thomas Scialom"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2302.04761v1",
+    "url": "https://arxiv.org/abs/2302.04761v1"
+  },
+  {
+    "query": "Toolformer",
+    "id": "2304.11116v3",
+    "title": "Graph-ToolFormer: To Empower LLMs with Graph Reasoning Ability via Prompt Augmented by ChatGPT",
+    "abstract": "In this paper, we aim to develop a large language model (LLM) with the reasoning ability on complex graph data. Currently, LLMs have achieved very impressive performance on various natural language learning tasks, extensions of which have also been applied to study the vision tasks with multi-modal data. However, when it comes to the graph learning tasks, existing LLMs present very serious flaws due to their several inherited weaknesses in performing {multi-step logic reasoning}, {precise mathematical calculation} and {perception about the spatial and temporal factors}.\n  To address such challenges, in this paper, we will investigate the principles, methodologies and algorithms to empower existing LLMs with graph reasoning ability, which will have tremendous impacts on the current research of both LLMs and graph learning. Inspired by the latest ChatGPT and Toolformer models, we propose the Graph-ToolFormer (Graph Reasoning oriented Toolformer) framework to teach LLMs themselves with prompts augmented by ChatGPT to use external graph reasoning API tools. Specifically, we will investigate to teach Graph-ToolFormer to handle various graph data reasoning tasks in this paper, including both (1) very basic graph data loading and graph property reasoning tasks, ranging from simple graph order and size to the graph diameter and periphery, and (2) more advanced reasoning tasks on real-world graph data, such as bibliographic networks, protein molecules, sequential recommender systems, social networks and knowledge graphs.",
+    "published": "2023-04-10",
+    "authors": [
+      "Jiawei Zhang"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2304.11116v3",
+    "url": "https://arxiv.org/abs/2304.11116v3"
+  },
+  {
+    "query": "Toolformer",
+    "id": "2510.01253v1",
+    "title": "OR-Toolformer: Modeling and Solving Operations Research Problems with Tool Augmented Large Language Models",
+    "abstract": "Large language models (LLMs) demonstrate strong mathematical reasoning, but reliance on closed-source APIs for OR tasks raises privacy concerns, and training open-source models from scratch incurs high compute costs. We introduce OR-Toolformer, which fine-tunes Llama-3.1-8B-Instruct with a semi-automatic data synthesis pipeline that generates diverse OR problem-answer pairs and augments the model with external solvers to produce API calls. On three of four standard benchmarks, OR-Toolformer achieves up to 80.1% execution accuracy, exceeding size-matched baselines by over 4.3%. In zero-shot evaluation on two unseen OR problem types, it attains 54% average accuracy, a 21 percentage-point improvement over the strongest baseline. These findings validate the efficacy of tool-augmented fine-tuning LLMs for accurate and generalizable OR problem modeling and solving.",
+    "published": "2025-09-24",
+    "authors": [
+      "Jianzhang Zhang",
+      "Jialong Zhou",
+      "Chuang Liu"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2510.01253v1",
+    "url": "https://arxiv.org/abs/2510.01253v1"
+  },
+  {
+    "query": "Gorilla API",
+    "id": "2310.02990v1",
+    "title": "Exploring API Capabilities with Fieldwire",
+    "abstract": "Fieldwire, a cloud-based construction management software, has become a pivotal tool in the construction industry. It offers a comprehensive suite of features encompassing project management, task tracking, document management, and collaboration. With the rise of Application Programming Interfaces (APIs) in the software industry, Fieldwire has harnessed this trend to further empower construction professionals. APIs act as bridges between different software systems, and in Fieldwire's context, they hold the potential to integrate with specialized construction tools, eliminating data silos, manual data entry, and real-time information-sharing issues. This integration promises a streamlined and efficient construction management process, saving both time and resources. The research outlined in these abstract focuses on understanding Fieldwire's API capabilities, exploring integration possibilities with various construction tools, evaluating the impact of integration on efficiency and error reduction, establishing best practices, and offering recommendations to construction professionals. Python programming scripts are employed to visualize the benefits of API integration. Empirical findings indicate that Fieldwire's API significantly improves data accuracy, reduces project completion times by an average of 20%, and garners high user satisfaction. Such results are paramount in an industry reliant on precise data and efficient communication. This research underscores the transformative potential of Fieldwire's API and its relevance in modern construction management. It encourages construction professionals to embrace API integration for enhanced project outcomes and serves as an inspiration for software developers to innovate further in construction technology. As the construction industry evolves, API integration remains crucial for staying competitive and efficient.",
+    "published": "2023-10-04",
+    "authors": [
+      "Nwosu Obinnaya Chikezie Victor"
+    ],
+    "categories": [
+      "cs.SE",
+      "eess.SY"
+    ],
+    "pdf": "https://arxiv.org/pdf/2310.02990v1",
+    "url": "https://arxiv.org/abs/2310.02990v1"
+  },
+  {
+    "query": "Gorilla API",
+    "id": "2409.09288v2",
+    "title": "Generating API Parameter Security Rules with LLM for API Misuse Detection",
+    "abstract": "In this paper, we present a new framework, named GPTAid, for automatic APSRs generation by analyzing API source code with LLM and detecting API misuse caused by incorrect parameter use. To validate the correctness of the LLM-generated APSRs, we propose an execution feedback-checking approach based on the observation that security-critical API misuse is often caused by APSRs violations, and most of them result in runtime errors. Specifically, GPTAid first uses LLM to generate raw APSRs and the Right calling code, and then generates Violation code for each raw APSR by modifying the Right calling code using LLM. Subsequently, GPTAid performs dynamic execution on each piece of Violation code and further filters out the incorrect APSRs based on runtime errors. To further generate concrete APSRs, GPTAid employs a code differential analysis to refine the filtered ones. Particularly, as the programming language is more precise than natural language, GPTAid identifies the key operations within Violation code by differential analysis, and then generates the corresponding concrete APSR based on the aforementioned operations. These concrete APSRs could be precisely interpreted into applicable detection code, which proven to be effective in API misuse detection. Implementing on the dataset containing 200 randomly selected APIs from eight popular libraries, GPTAid achieves a precision of 92.3%. Moreover, it generates 6 times more APSRs than state-of-the-art detectors on a comparison dataset of previously reported bugs and APSRs. We further evaluated GPTAid on 47 applications, 210 unknown security bugs were found potentially resulting in severe security issues (e.g., system crashes), 150 of which have been confirmed by developers after our reports.",
+    "published": "2024-09-14",
+    "authors": [
+      "Jinghua Liu",
+      "Yi Yang",
+      "Kai Chen",
+      "Miaoqian Lin"
+    ],
+    "categories": [
+      "cs.CR",
+      "cs.SE"
+    ],
+    "pdf": "https://arxiv.org/pdf/2409.09288v2",
+    "url": "https://arxiv.org/abs/2409.09288v2"
+  },
+  {
+    "query": "Gorilla API",
+    "id": "2001.05035v3",
+    "title": "FunMC: A functional API for building Markov Chains",
+    "abstract": "Constant-memory algorithms, also loosely called Markov chains, power the vast majority of probabilistic inference and machine learning applications today. A lot of progress has been made in constructing user-friendly APIs around these algorithms. Such APIs, however, rarely make it easy to research new algorithms of this type. In this work we present FunMC, a minimal Python library for doing methodological research into algorithms based on Markov chains. FunMC is not targeted toward data scientists or others who wish to use MCMC or optimization as a black box, but rather towards researchers implementing new Markovian algorithms from scratch.",
+    "published": "2020-01-14",
+    "authors": [
+      "Pavel Sountsov",
+      "Alexey Radul",
+      "Srinivas Vasudevan"
+    ],
+    "categories": [
+      "stat.CO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2001.05035v3",
+    "url": "https://arxiv.org/abs/2001.05035v3"
+  },
+  {
+    "query": "Gorilla API",
+    "id": "1804.10847v1",
+    "title": "Open Astronomy Catalogs API",
+    "abstract": "We announce the public release of the application program interface (API) for the Open Astronomy Catalogs (OACs), the OACAPI. The OACs serve near-complete collections of supernova, tidal disruption, kilonova, and fast stars data (including photometry, spectra, radio, and X-ray observations) via a user-friendly web interface that displays the data interactively and offers full data downloads. The OACAPI, by contrast, enables users to specifically download particular pieces of the OAC dataset via a flexible programmatic syntax, either via URL GET requests, or via a module within the astroquery Python package.",
+    "published": "2018-04-28",
+    "authors": [
+      "James Guillochon",
+      "Philip S. Cowperthwaite"
+    ],
+    "categories": [
+      "astro-ph.IM",
+      "astro-ph.HE",
+      "astro-ph.SR"
+    ],
+    "pdf": "https://arxiv.org/pdf/1804.10847v1",
+    "url": "https://arxiv.org/abs/1804.10847v1"
+  },
+  {
+    "query": "Gorilla API",
+    "id": "2506.09746v2",
+    "title": "TikTok's Research API: Problems Without Explanations",
+    "abstract": "Following the Digital Services Act of 2023, which requires Very Large Online Platforms (VLOPs) and Very Large Online Search Engines (VLOSEs) to facilitate data accessibility for independent research, TikTok augmented its Research API access within Europe in July 2023. This action was intended to ensure compliance with the DSA, bolster transparency, and address systemic risks. Nonetheless, research findings reveal that despite this expansion, notable limitations and inconsistencies persist within the data provided. Our experiment reveals that the API fails to provide metadata for one in eight videos provided through data donations, including official TikTok videos, advertisements, and content from specific accounts, without an apparent reason. The API data is incomplete, making it unreliable when working with data donations, a prominent methodology for algorithm audits and research on platform accountability. To monitor the functionality of the API and eventual fixes implemented by TikTok, we publish a dashboard with a daily check of the availability of 10 videos that were not retrievable in the last month. The video list includes very well-known accounts, notably that of Taylor Swift. The current API lacks the necessary capabilities for thorough independent research and scrutiny. It is crucial to support and safeguard researchers who utilize data scraping to independently validate the platform's data quality.",
+    "published": "2025-06-11",
+    "authors": [
+      "Carlos Entrena-Serrano",
+      "Martin Degeling",
+      "Salvatore Romano",
+      "Raziye Buse Çetin"
+    ],
+    "categories": [
+      "cs.CY"
+    ],
+    "pdf": "https://arxiv.org/pdf/2506.09746v2",
+    "url": "https://arxiv.org/abs/2506.09746v2"
+  },
+  {
+    "query": "MemGPT",
+    "id": "2310.08560v2",
+    "title": "MemGPT: Towards LLMs as Operating Systems",
+    "abstract": "Large language models (LLMs) have revolutionized AI, but are constrained by limited context windows, hindering their utility in tasks like extended conversations and document analysis. To enable using context beyond limited context windows, we propose virtual context management, a technique drawing inspiration from hierarchical memory systems in traditional operating systems that provide the appearance of large memory resources through data movement between fast and slow memory. Using this technique, we introduce MemGPT (Memory-GPT), a system that intelligently manages different memory tiers in order to effectively provide extended context within the LLM's limited context window, and utilizes interrupts to manage control flow between itself and the user. We evaluate our OS-inspired design in two domains where the limited context windows of modern LLMs severely handicaps their performance: document analysis, where MemGPT is able to analyze large documents that far exceed the underlying LLM's context window, and multi-session chat, where MemGPT can create conversational agents that remember, reflect, and evolve dynamically through long-term interactions with their users. We release MemGPT code and data for our experiments at https://memgpt.ai.",
+    "published": "2023-10-12",
+    "authors": [
+      "Charles Packer",
+      "Sarah Wooders",
+      "Kevin Lin",
+      "Vivian Fang",
+      "Shishir G. Patil",
+      "Ion Stoica",
+      "Joseph E. Gonzalez"
+    ],
+    "categories": [
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2310.08560v2",
+    "url": "https://arxiv.org/abs/2310.08560v2"
+  },
+  {
+    "query": "Generative Agents",
+    "id": "2203.08975v2",
+    "title": "A Survey of Multi-Agent Deep Reinforcement Learning with Communication",
+    "abstract": "Communication is an effective mechanism for coordinating the behaviors of multiple agents, broadening their views of the environment, and to support their collaborations. In the field of multi-agent deep reinforcement learning (MADRL), agents can improve the overall learning performance and achieve their objectives by communication. Agents can communicate various types of messages, either to all agents or to specific agent groups, or conditioned on specific constraints. With the growing body of research work in MADRL with communication (Comm-MADRL), there is a lack of a systematic and structural approach to distinguish and classify existing Comm-MADRL approaches. In this paper, we survey recent works in the Comm-MADRL field and consider various aspects of communication that can play a role in designing and developing multi-agent reinforcement learning systems. With these aspects in mind, we propose 9 dimensions along which Comm-MADRL approaches can be analyzed, developed, and compared. By projecting existing works into the multi-dimensional space, we discover interesting trends. We also propose some novel directions for designing future Comm-MADRL systems through exploring possible combinations of the dimensions.",
+    "published": "2022-03-16",
+    "authors": [
+      "Changxi Zhu",
+      "Mehdi Dastani",
+      "Shihan Wang"
+    ],
+    "categories": [
+      "cs.MA",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2203.08975v2",
+    "url": "https://arxiv.org/abs/2203.08975v2"
+  },
+  {
+    "query": "Generative Agents",
+    "id": "2305.09349v1",
+    "title": "Establishing Shared Query Understanding in an Open Multi-Agent System",
+    "abstract": "We propose a method that allows to develop shared understanding between two agents for the purpose of performing a task that requires cooperation. Our method focuses on efficiently establishing successful task-oriented communication in an open multi-agent system, where the agents do not know anything about each other and can only communicate via grounded interaction. The method aims to assist researchers that work on human-machine interaction or scenarios that require a human-in-the-loop, by defining interaction restrictions and efficiency metrics. To that end, we point out the challenges and limitations of such a (diverse) setup, while also restrictions and requirements which aim to ensure that high task performance truthfully reflects the extent to which the agents correctly understand each other. Furthermore, we demonstrate a use-case where our method can be applied for the task of cooperative query answering. We design the experiments by modifying an established ontology alignment benchmark. In this example, the agents want to query each other, while representing different databases, defined in their own ontologies that contain different and incomplete knowledge. Grounded interaction here has the form of examples that consists of common instances, for which the agents are expected to have similar knowledge. Our experiments demonstrate successful communication establishment under the required restrictions, and compare different agent policies that aim to solve the task in an efficient manner.",
+    "published": "2023-05-16",
+    "authors": [
+      "Nikolaos Kondylidis",
+      "Ilaria Tiddi",
+      "Annette ten Teije"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.HC",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2305.09349v1",
+    "url": "https://arxiv.org/abs/2305.09349v1"
+  },
+  {
+    "query": "Generative Agents",
+    "id": "2511.02841v2",
+    "title": "AI Agents with Decentralized Identifiers and Verifiable Credentials",
+    "abstract": "A fundamental limitation of current LLM-based AI agents is their inability to build differentiated trust among each other at the onset of an agent-to-agent dialogue. However, autonomous and interoperable trust establishment becomes essential once agents start to operate beyond isolated environments and engage in dialogues across individual or organizational boundaries. A promising way to fill this gap in Agentic AI is to equip agents with long-lived digital identities and introduce tamper-proof and flexible identity-bound attestations of agents, provisioned by commonly trusted third parties and designed for cross-domain verifiability. This article presents a conceptual framework and a prototypical multi-agent system, where each agent is endowed with a self-sovereign digital identity. It combines a unique and ledger-anchored W3C Decentralized Identifier (DID) of an agent with a set of third-party issued W3C Verifiable Credentials (VCs). This enables agents at the start of a dialog to prove ownership of their self-controlled DIDs for authentication purposes and to establish various cross-domain trust relationships through the spontaneous exchange of their self-hosted DID-bound VCs. A comprehensive evaluation of the prototypical implementation demonstrates technical feasibility but also reveals limitations once an agent's LLM is in sole charge to control the respective security procedures.",
+    "published": "2025-10-01",
+    "authors": [
+      "Sandro Rodriguez Garzon",
+      "Awid Vaziry",
+      "Enis Mert Kuzu",
+      "Dennis Enrique Gehrmann",
+      "Buse Varkan",
+      "Alexander Gaballa",
+      "Axel Küpper"
+    ],
+    "categories": [
+      "cs.CR",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2511.02841v2",
+    "url": "https://arxiv.org/abs/2511.02841v2"
+  },
+  {
+    "query": "Generative Agents",
+    "id": "2602.15006v2",
+    "title": "Distributed Quantum Gaussian Processes for Multi-Agent Systems",
+    "abstract": "Gaussian Processes (GPs) are a powerful tool for probabilistic modeling, but their performance is often constrained in complex, large-scale real-world domains due to the limited expressivity of classical kernels. Quantum computing offers the potential to overcome this limitation by embedding data into exponentially large Hilbert spaces, capturing complex correlations that remain inaccessible to classical computing approaches. In this paper, we propose a Distributed Quantum Gaussian Process (DQGP) method in a multi-agent setting to enhance modeling capabilities and scalability. To address the challenging non-Euclidean optimization problem, we develop a Distributed consensus Riemannian Alternating Direction Method of Multipliers (DR-ADMM) algorithm that aggregates local agent models into a global model. We evaluate the efficacy of our method through numerical experiments conducted on a quantum simulator in classical hardware. We use real-world, non-stationary elevation datasets of NASA's Shuttle Radar Topography Mission and synthetic datasets generated by Quantum Gaussian Processes. Beyond modeling advantages, our framework highlights potential computational speedups that quantum hardware may provide, particularly in Gaussian processes and distributed optimization.",
+    "published": "2026-02-16",
+    "authors": [
+      "Meet Gandhi",
+      "George P. Kontoudis"
+    ],
+    "categories": [
+      "cs.MA",
+      "cs.LG",
+      "math.DG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2602.15006v2",
+    "url": "https://arxiv.org/abs/2602.15006v2"
+  },
+  {
+    "query": "Generative Agents",
+    "id": "2112.03763v2",
+    "title": "Creating Multimodal Interactive Agents with Imitation and Self-Supervised Learning",
+    "abstract": "A common vision from science fiction is that robots will one day inhabit our physical spaces, sense the world as we do, assist our physical labours, and communicate with us through natural language. Here we study how to design artificial agents that can interact naturally with humans using the simplification of a virtual environment. We show that imitation learning of human-human interactions in a simulated world, in conjunction with self-supervised learning, is sufficient to produce a multimodal interactive agent, which we call MIA, that successfully interacts with non-adversarial humans 75% of the time. We further identify architectural and algorithmic techniques that improve performance, such as hierarchical action selection. Altogether, our results demonstrate that imitation of multi-modal, real-time human behaviour may provide a straightforward and surprisingly effective means of imbuing agents with a rich behavioural prior from which agents might then be fine-tuned for specific purposes, thus laying a foundation for training capable agents for interactive robots or digital assistants. A video of MIA's behaviour may be found at https://youtu.be/ZFgRhviF7mY",
+    "published": "2021-12-07",
+    "authors": [
+      " DeepMind Interactive Agents Team",
+      "Josh Abramson",
+      "Arun Ahuja",
+      "Arthur Brussee",
+      "Federico Carnevale",
+      "Mary Cassin",
+      "Felix Fischer",
+      "Petko Georgiev",
+      "Alex Goldin",
+      "Mansi Gupta",
+      "Tim Harley",
+      "Felix Hill",
+      "Peter C Humphreys",
+      "Alden Hung",
+      "Jessica Landon",
+      "Timothy Lillicrap",
+      "Hamza Merzic",
+      "Alistair Muldal",
+      "Adam Santoro",
+      "Guy Scully",
+      "Tamara von Glehn",
+      "Greg Wayne",
+      "Nathaniel Wong",
+      "Chen Yan",
+      "Rui Zhu"
+    ],
+    "categories": [
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2112.03763v2",
+    "url": "https://arxiv.org/abs/2112.03763v2"
+  },
+  {
+    "query": "Tree of Thoughts",
+    "id": "2309.05856v1",
+    "title": "Multi-Point Detection of the Powerful Gamma Ray Burst GRB221009A Propagation through the Heliosphere on October 9, 2022",
+    "abstract": "We present the results of processing the effects of the powerful Gamma Ray Burst GRB221009A captured by the charged particle detectors (electrostatic analyzers and solid-state detectors) onboard spacecraft at different points in the heliosphere on October 9, 2022. To follow the GRB221009A propagation through the heliosphere we used the electron and proton flux measurements from solar missions Solar Orbiter and STEREO-A; Earth magnetosphere and the solar wind missions THEMIS and Wind; meteorological satellites POES15, POES19, MetOp3; and MAVEN - a NASA mission orbiting Mars. GRB221009A had a structure of four bursts: less intense Pulse 1 - the triggering impulse - was detected by gamma-ray observatories at 131659 UT (near the Earth); the most intense Pulses 2 and 3 were detected on board all the spacecraft from the list, and Pulse 4 detected in more than 500 s after Pulse 1. Due to their different scientific objectives, the spacecraft, which data was used in this study, were separated by more than 1 AU (Solar Orbiter and MAVEN). This enabled tracking GRB221009A as it was propagating across the heliosphere. STEREO-A was the first to register Pulse 2 and 3 of the GRB, almost 100 seconds before their detection by spacecraft in the vicinity of Earth. MAVEN detected GRB221009A Pulses 2, 3, and 4 at the orbit of Mars about 237 seconds after their detection near Earth. By processing the time delays observed we show that the source location of the GRB221009A was at RA 288.5 degrees, Dec 18.5 degrees (J2000) with an error cone of 2 degrees",
+    "published": "2023-09-11",
+    "authors": [
+      "Andrii Voshchepynets",
+      "Oleksiy Agapitov",
+      "Lynn Wilson",
+      "Vassilis Angelopoulos",
+      "Samer T. Alnussirat",
+      "Michael Balikhin",
+      "Myroslava Hlebena",
+      "Ihor Korol",
+      "Davin Larson",
+      "David Mitchell",
+      "Christopher Owen",
+      "Ali Rahmati",
+      "Department of System Analysis",
+      "Optimization Theory",
+      "Uzhhorod National University",
+      " Uzhhorod",
+      " Ukraine",
+      "Space Sciences Laboratory",
+      " :",
+      "University of California Berkeley Berkeley",
+      "CA 94720",
+      " Astronomy",
+      "Space Physics Department",
+      "National Taras Shevchenko University of Kyiv",
+      " Kyiv",
+      " Ukraine",
+      "Goddard Space Flight Center",
+      "National Aeronautics",
+      "Space Administration",
+      " Greenbelt",
+      " MD",
+      "Department of Earth",
+      " Planetary",
+      "Space Sciences",
+      "University of California Los Angeles",
+      "Los Angeles",
+      " CA}",
+      "University of Sheffield",
+      " Sheffield",
+      " UK",
+      "Department of Algebra",
+      "Differential Equation",
+      "Uzhhorod National University",
+      " Uzhhorod",
+      " Ukraine",
+      "Department of Mathematical Analysis",
+      "The John Paul II Catholic University of Lublin",
+      " Lublin",
+      " Poland}"
+    ],
+    "categories": [
+      "astro-ph.HE",
+      "astro-ph.IM",
+      "astro-ph.SR"
+    ],
+    "pdf": "https://arxiv.org/pdf/2309.05856v1",
+    "url": "https://arxiv.org/abs/2309.05856v1"
+  },
+  {
+    "query": "Tree of Thoughts",
+    "id": "2501.11667v1",
+    "title": "A One-Dimensional Energy Balance Model Parameterization for the Formation of CO2 Ice on the Surfaces of Eccentric Extrasolar Planets",
+    "abstract": "Eccentric planets may spend a significant portion of their orbits at large distances from their host stars, where low temperatures can cause atmospheric CO2 to condense out onto the surface, similar to the polar ice caps on Mars. The radiative effects on the climates of these planets throughout their orbits would depend on the wavelength-dependent albedo of surface CO2 ice that may accumulate at or near apoastron and vary according to the spectral energy distribution of the host star. To explore these possible effects, we incorporated a CO2 ice-albedo parameterization into a one-dimensional energy balance climate model. With the inclusion of this parameterization, our simulations demonstrated that F-dwarf planets require 29% more orbit-averaged flux to thaw out of global water ice cover compared with simulations that solely use a traditional pure water ice-albedo parameterization. When no eccentricity is assumed, and host stars are varied, F-dwarf planets with higher bond albedos relative to their M-dwarf planet counterparts require 30% more orbit-averaged flux to exit a water snowball state. Additionally, the intense heat experienced at periastron aids eccentric planets in exiting a snowball state with a smaller increase in instellation compared with planets on circular orbits; this enables eccentric planets to exhibit warmer conditions along a broad range of instellation. This study emphasizes the significance of incorporating an albedo parameterization for the formation of CO2 ice into climate models to accurately assess the habitability of eccentric planets, as we show that, even at moderate eccentricities, planets with Earth-like atmospheres can reach surface temperatures cold enough for the condensation of CO2 onto their surfaces, as can planets receiving low amounts of instellation on circular orbits.",
+    "published": "2025-01-20",
+    "authors": [
+      "Vidya Venkatesan",
+      "Aomawa L. Shields",
+      "Russell Deitrick",
+      "Eric T. Wolf",
+      "Andrew Rushby",
+      "Department of Physics",
+      " Astronomy",
+      "University of California",
+      " Irvine",
+      " California",
+      " USA",
+      "School of Earth",
+      "Ocean Sciences",
+      "University of Victoria",
+      " Victoria",
+      " Canada",
+      "Laboratory for Atmospheric",
+      "Space Physics",
+      "University of Colorado Boulder",
+      " Boulder",
+      " Colorado",
+      " USA",
+      "Sellers Exoplanet Environment Collaboration",
+      "NASA Goddard Space Flight Center",
+      " Greenbelt",
+      " Maryland",
+      " USA",
+      "Blue Marble Space Institute of Science",
+      " Seattle",
+      " Washington",
+      " USA",
+      "Department of Earth",
+      "Planetary Sciences",
+      "Birkbeck University of London",
+      " London",
+      "United Kingdom"
+    ],
+    "categories": [
+      "astro-ph.EP"
+    ],
+    "pdf": "https://arxiv.org/pdf/2501.11667v1",
+    "url": "https://arxiv.org/abs/2501.11667v1"
+  },
+  {
+    "query": "Tree of Thoughts",
+    "id": "2106.09310v1",
+    "title": "Trends and Characteristics of High-Frequency Type II Bursts Detected by CALLISTO Spectrometers",
+    "abstract": "Solar radio type II bursts serve as early indicators of incoming geo-effective space weather events such as coronal mass ejections (CMEs). In order to investigate the origin of high-frequency type II bursts (HF type II bursts), we have identified 51 of them (among 180 type II bursts from SWPC reports) that are observed by ground-based Compound Astronomical Low-cost Low-frequency Instrument for Spectroscopy and Transportable Observatory (CALLISTO) spectrometers and whose upper-frequency cutoff (of either fundamental or harmonic emission) lies in between 150 MHz-450 MHz during 2010-2019. We found that 60% of HF type II bursts, whose upper-frequency cutoff $\\geq$ 300 MHz originate from the western longitudes. Further, our study finds a good correlation $\\sim $ 0.73 between the average shock speed derived from the radio dynamic spectra and the corresponding speed from CME data. Also, we found that analyzed HF type II bursts are associated with wide and fast CMEs located near the solar disk. In addition, we have analyzed the spatio-temporal characteristics of two of these high-frequency type II bursts and compared the derived from radio observations with those derived from multi-spacecraft CME observations from SOHO/LASCO and STEREO coronagraphs.",
+    "published": "2021-06-17",
+    "authors": [
+      "A. C. Umuhire",
+      "J. Uwamahoro",
+      "K. Sasikumar Raja",
+      "A. Kumar",
+      "C. Monstein",
+      "University of Rwanda",
+      "College of Science",
+      " Technology",
+      " Kigali",
+      " Rwanda",
+      "University of Rwanda",
+      "College of Education",
+      " Rwanda",
+      "Indian Institute of Astrophysics",
+      "II Block",
+      " Koramangala",
+      "Bengaluru - 560 034",
+      " India",
+      "Department of Physics",
+      "University of Helsinki",
+      "P. O. Box 64",
+      "FI-00014 Helsinki",
+      " Finland",
+      "Istituto Ricerche Solari",
+      "Universit della Svizzera italiana",
+      "CH-6605 Locarno-Monti",
+      " Switzerland"
+    ],
+    "categories": [
+      "astro-ph.SR"
+    ],
+    "pdf": "https://arxiv.org/pdf/2106.09310v1",
+    "url": "https://arxiv.org/abs/2106.09310v1"
+  },
+  {
+    "query": "Tree of Thoughts",
+    "id": "2210.04940v1",
+    "title": "The Galactic Chemical Evolution of phosphorus observed with IGRINS",
+    "abstract": "Phosphorus (P) is considered to be one of the key elements for life, making it an important element to look for in the abundance analysis of spectra of stellar systems. Yet, there exists only a handful of spectroscopic studies to estimate the P abundances and investigate its trend across a range of metallicities. We have observed full HK band spectra at a spectral resolving power of R=45,000 with IGRINS instrument. Abundances are determined using SME in combination with 1D MARCS stellar atmosphere models. The investigated sample of stars have reliable stellar parameters estimated using optical FIES spectra (GILD; Jönsson et al. in prep.). In order to determine the P abundances from the 16482.92 Angstrom P line, we take special care of the CO($ν=7-4$) blend. We determine the C, N, O abundances from atomic carbon and a range of non-blended molecular lines (CO, CN, OH) which are aplenty in the H band region of K giant stars, assuring an appropriate modelling of the blending CO($ν=7-4$) line. We present [P/Fe] vs [Fe/H] trend for 38 K giant stars in the metallicity range of -1.2 dex $<$ [Fe/H] $<$ 0.4 dex. We find that our trend matches well with the compiled literature sample of prominently dwarf stars and limited number of giant stars. Our trend is found to be higher by $\\sim$ 0.05 - 0.1 dex compared to the theoretical chemical evolution trend in Cescutti et al. 2012 resulting from core collapse supernova (type II) of massive stars with the P yields from Kobayashi et al. (2006) arbitrarily increased by a factor of 2.75. Thus the enhancement factor might need to be $\\sim$ 0.05 - 0.1 dex higher to match our trend. We also find an empirically determined primary behaviour for phosphorus. Furthermore, the phosphorus abundance is found to be elevated by $\\sim$ 0.6 - 0.9 dex in two metal poor s-enriched stars compared to the theoretical chemical evolution trend.",
+    "published": "2022-10-10",
+    "authors": [
+      "G. Nandakumar",
+      "N. Ryde",
+      "M. Montelius",
+      "B. Thorsbro",
+      "H. Jönsson",
+      "G. Mace",
+      "Lund Observatory",
+      "Department of Astronomy",
+      "Theoretical Physics",
+      "Lund University",
+      "Box 43",
+      "SE-221 00 Lund",
+      " Sweden",
+      "Kapteyn Astronomical Institute",
+      "University of Groningen",
+      "Landleven 12",
+      "NL-9747 AD Groningen",
+      "the Netherlands",
+      "Department of Astronomy",
+      "School of Science",
+      "The University of Tokyo",
+      "7-3-1 Hongo",
+      " Bunkyo-ku",
+      "Tokyo 113-0033",
+      " Japan",
+      "Materials Science",
+      "Applied Mathematics",
+      "Malmö University",
+      "SE-205 06 Malmö",
+      " Sweden",
+      "Department of Astronomy",
+      "McDonald Observatory",
+      "The University of Texas",
+      " Austin",
+      "TX 78712",
+      " USA"
+    ],
+    "categories": [
+      "astro-ph.SR",
+      "astro-ph.GA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2210.04940v1",
+    "url": "https://arxiv.org/abs/2210.04940v1"
+  },
+  {
+    "query": "Tree of Thoughts",
+    "id": "2007.07837v1",
+    "title": "Multi-nucleon transfer in the interaction of 977 MeV and 1143 MeV $^{204}$Hg with $^{208}$Pb",
+    "abstract": "A previous study of symmetric collisions of massive nuclei has shown that current models of multi-nucleon transfer (MNT) reactions do not adequately describe the transfer product yields. To gain further insight into this problem, we have measured the yields of MNT products in the interaction of 977 (E/A = 4.79 MeV) and 1143 MeV (E/A = 5.60 MeV) $^{204}$Hg with $^{208}$Pb. We find that the yield of multi-nucleon transfer products are similar in these two reactions and are substantially lower than those observed in the reaction of 1257 MeV (E/A = 6.16 MeV) $^{204}$Hg + $^{198}$Pt. We compare our measurements with the predictions of the GRAZING-F, di-nuclear systems (DNS) and improved quantum molecular dynamics (ImQMD) models. For the observed isotopes of the elements Au, Hg, Tl, Pb and Bi, the measured values of the MNT cross sections are orders of magnitude larger than the predicted values. Furthermore, the various models predict the formation of nuclides near the N=126 shell, which are not observed.",
+    "published": "2020-07-13",
+    "authors": [
+      "V. V. Desai",
+      "A. Pica",
+      "W. Loveland",
+      "J. S. Barrett",
+      "Department of Chemistry",
+      "Oregon State University",
+      " Corvallis",
+      "Oregon 97331 USA",
+      "E. A. McCutchan",
+      "National Nuclear Data Center",
+      "Brookhaven National Laboratory",
+      " Upton",
+      "New York 11973",
+      " USA",
+      "S. Zhu",
+      "M. P. Carpenter",
+      "J. P. Greene",
+      "T. Lauritsen",
+      "Physics Division",
+      "Argonne National Laboratory",
+      " Argonne",
+      "Illinois 60439 USA",
+      "R. V. F. Janssens",
+      "Department of Physics",
+      " Astronomy",
+      "University of North Carolina at Chapel Hill",
+      "Chapel Hill",
+      "North Carolina 27599 USA",
+      "Triangle Universities Nuclear Laboratory",
+      "Duke University",
+      " Durham",
+      "North Carolina 27708 USA",
+      "B. M. S. Amro",
+      "Dept. of Physics",
+      "University of Massachusetts Lowell",
+      "Lowell MA 01854 USA",
+      "W. B. Walters",
+      "Dept. of Chemistry",
+      "University of Maryland",
+      "College Park",
+      " MD"
+    ],
+    "categories": [
+      "nucl-ex"
+    ],
+    "pdf": "https://arxiv.org/pdf/2007.07837v1",
+    "url": "https://arxiv.org/abs/2007.07837v1"
+  }
+]

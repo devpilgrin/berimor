@@ -1,0 +1,29 @@
+# Пример декларативного процесса — дословно из arch/process-engine.md §2.
+# Используется контрактными тестами Process Engine (ROADMAP P1, P2, P4).
+process: card-delivery-support
+version: 3
+steps:
+  - id: classify
+    type: llm_structured
+    contract: ClassificationOut      # см. fixtures/golden/contracts/classification-out.json
+    model_tier: any
+  - id: check_risk
+    type: branch
+    on: state.classify.risk
+    cases:
+      ">=7": human_review
+      "<7":  fetch_card_status
+  - id: human_review
+    type: human_gate
+    reason: "высокий риск: {{state.classify.risk}}"
+  - id: fetch_card_status
+    type: tool
+    tool: crm.get_card_status
+    args: {id: "{{state.user.card_id}}"}
+  - id: answer
+    type: llm_structured
+    contract: SupportReply
+limits:
+  max_steps: 50
+  timeout: 10m
+  token_budget: 100k

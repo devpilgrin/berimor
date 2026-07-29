@@ -1,0 +1,10 @@
+[package]
+name = "berimor-actors"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Модель актора, диспетчер, планировщик — мультиагентность без маршрутизации моделью."
+
+[dependencies]
+berimor-types = { path = "../berimor-types" }
+# tokio добавляется вместе с задачей ROADMAP A1 — скелет её пока не тянет.

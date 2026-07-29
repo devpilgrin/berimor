@@ -1,0 +1,21 @@
+{
+  "name": "berimor",
+  "version": "0.0.0",
+  "description": "Bootstrap-установщик Berimor: определение платформы, скачивание и верификация платформенного артефакта, оркестрация само-обновления.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "berimor": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "postinstall": "node dist/postinstall.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^20.14.0"
+  }
+}

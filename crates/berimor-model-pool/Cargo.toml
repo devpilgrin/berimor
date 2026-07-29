@@ -1,0 +1,11 @@
+[package]
+name = "berimor-model-pool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Реестр моделей, классы способностей, селектор провайдера по стоимости/латентности."
+
+[dependencies]
+berimor-types = { path = "../berimor-types" }
+# llama.cpp-биндинги и HTTP-клиент удалённых провайдеров добавляются вместе
+# с задачами ROADMAP E4/E5 — скелет их пока не тянет.

@@ -1,0 +1,12 @@
+{
+  "$comment": "Обязана быть отклонена на стадии policy (mediation.md §4.3): ссылка на идентификатор, которого нет в состоянии — модель не может «придумать» объект.",
+  "against_contract": "SupportReply",
+  "expected_outcome": "reject_policy",
+  "state_snapshot": {
+    "user": { "card_id": "card_1029" }
+  },
+  "raw_model_output": {
+    "card_id": "card_9999_does_not_exist",
+    "reply": "Ваша карта card_9999_does_not_exist заблокирована."
+  }
+}

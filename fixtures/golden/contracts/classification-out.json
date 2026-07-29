@@ -1,0 +1,14 @@
+{
+  "$comment": "Дословный пример контракта из arch/mediation.md §3. ROADMAP: M1, M3.",
+  "name": "ClassificationOut",
+  "schema_version": 1,
+  "deny_unknown_fields": true,
+  "fields": {
+    "category": { "type": "enum", "values": ["billing", "card", "debt", "other"], "required": true },
+    "risk": { "type": "integer", "min": 0, "max": 10, "required": true },
+    "summary": { "type": "string", "max_length": 280, "required": true }
+  },
+  "policy": [
+    "risk >= 7 => category != 'other'"
+  ]
+}

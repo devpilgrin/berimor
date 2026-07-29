@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/target/
+Cargo.lock.bak
+
+# Node / TypeScript (bootstrap/)
+node_modules/
+dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# Local runtime state (SQLite data, not schema)
+*.db
+*.db-wal
+*.db-shm
+
+# Obsidian vault — local editor state, not project content
+.obsidian/
+
+# Claude Code session memory — personal working history, not project content
+.remember/
+
+# Untitled Obsidian scratch artifacts — not reviewed for publication
+Без названия.canvas
+Без названия.base
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/

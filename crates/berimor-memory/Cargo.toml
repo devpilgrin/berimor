@@ -1,0 +1,9 @@
+[package]
+name = "berimor-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Четыре слоя памяти (рабочая/эпизодическая/семантическая/процедурная) + опциональный граф сущностей."
+
+[dependencies]
+berimor-types = { path = "../berimor-types" }

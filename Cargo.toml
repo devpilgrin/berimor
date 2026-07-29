@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/berimor-types",
+    "crates/berimor-storage",
+    "crates/berimor-secrets",
+    "crates/berimor-capability",
+    "crates/berimor-process-engine",
+    "crates/berimor-mediation",
+    "crates/berimor-context-engine",
+    "crates/berimor-model-pool",
+    "crates/berimor-executors",
+    "crates/berimor-memory",
+    "crates/berimor-actors",
+    "crates/berimor-tool-runtime",
+    "crates/berimor-cli",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/REPLACE_ORG/berimor"
+
+# Общие зависимости фиксируются здесь, чтобы версии не расходились между крейтами.
+# Тяжёлые зависимости (wasmtime, rusqlite, tokio, reqwest) добавляются в конкретный
+# крейт только когда берётся в работу задача ROADMAP.md, которая их требует —
+# скелет не должен тянуть то, что пока не реализует.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"

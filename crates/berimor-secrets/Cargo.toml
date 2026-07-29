@@ -1,0 +1,8 @@
+[package]
+name = "berimor-secrets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Тип-обёртка секрета без утечки через Display/Debug + точка маскировки на границе."
+
+[dependencies]

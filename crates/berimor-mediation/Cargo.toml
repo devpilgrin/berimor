@@ -1,0 +1,10 @@
+[package]
+name = "berimor-mediation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Единая точка между выводом модели и состоянием: parse → schema → policy → commit."
+
+[dependencies]
+berimor-types = { path = "../berimor-types" }
+serde_json = { workspace = true }

@@ -1,0 +1,1186 @@
+[
+  {
+    "query": "LLM agents",
+    "id": "2607.26053v1",
+    "title": "Proportional Fairness for Harmful Decisions",
+    "abstract": "We study allocation of (divisible) public bads, where agents incur costs for alternatives and the goal is to pick a lottery over the alternatives. We show that the traditional definitions of the core, a central criterion of proportional representation for allocation of public goods, private goods, and private bads (chores), do not make sense for allocation of public bads.\n  We introduce two formalizations of the core tailored to public bads. Under a structural condition which subsumes allocation of private bads, we show that zero-respecting Lindahl equilibria satisfy both formalizations, exhibit additional fairness guarantees, and strictly generalize competitive equilibria from equal incomes (CEEI) for allocation of private bads. Without this structural condition, we show that Lindahl equilibria exhibit undesirable behaviors, prove sharp impossibility results separating public bads from public goods, but show that a rule using a reduction to public goods recovers one of our formalizations of the core. Our results lay the groundwork for studying fair allocation of public bads, an overlooked yet fundamental problem, and highlight several structural and algorithmic directions that remain open.",
+    "published": "2026-07-28",
+    "authors": [
+      "Benjamin Cookson",
+      "Soroush Ebadian",
+      "Dominik Peters",
+      "Nisarg Shah"
+    ],
+    "categories": [
+      "cs.GT"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26053v1",
+    "url": "https://arxiv.org/abs/2607.26053v1"
+  },
+  {
+    "query": "LLM agents",
+    "id": "2607.26042v1",
+    "title": "VetClaw: An Edge-Cloud Multimodal Agentic System for Veterinary Disease Screening",
+    "abstract": "We present VetClaw, an edge-cloud multimodal agentic system for early veterinary disease screening. VetClaw uses a camera module as an edge sensing device and sends captured images, together with optional symptom descriptions, to a server-hosted vision-language model for zero-shot disease classification. The system separates agent interaction from workflow orchestration: OpenClaw provides scheduling, tool access, user interaction, and notification services on the edge device, while LangGraph manages the stateful screening workflow, including input validation, image transmission, model invocation, safety checks, conditional routing, failure handling, and structured logging. This design moves beyond static image classification by enabling the system to collect visual evidence, invoke external models, apply deterministic safety rules, and generate diagnostic-support alerts. Results show that image-only VLM prediction remains limited, whereas symptom-guided and multimodal inputs improve zero-shot classification performance. Thus, VetClaw transforms a static prediction model into a coordinated, safety-aware system that can use tools, manage workflows, handle failures, and escalate uncertain cases.",
+    "published": "2026-07-28",
+    "authors": [
+      "Syed Mhamudul Hasan",
+      "Anas AlSobeh",
+      "Hussein Zangoti",
+      "Abdur R. Shahid"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26042v1",
+    "url": "https://arxiv.org/abs/2607.26042v1"
+  },
+  {
+    "query": "LLM agents",
+    "id": "2607.26041v1",
+    "title": "Desktop-Delta Bench: Do Computer-Use Models Understand Desktop GUI Transitions?",
+    "abstract": "Computer-use agents (CUAs) increasingly act through desktop GUIs to complete long-horizon tasks. Current benchmarks primarily measure end-task success or single-frame grounding. Neither isolates whether a model can reconstruct the causal, task-relevant transition produced by an action- crucial for rejecting stale observations, verifying progress, and recovering from failure. This is difficult because inference, remote input, app rendering, and screenshot capture are asynchronous: the next observation may be delayed, occluded, transient, or unrelated, then misread as progress and carried into subsequent planning. We introduce Desktop-Delta Bench (DDB), an offline step-level benchmark with 2,013 human-verified instances from novel, multi-app Linux trajectories across ~15 applications and 50 task domains. DDB trajectories targets 3 failure dimensions- state verification, source tracking, and context-aware control- through 2 complementary tasks: 463 3-frame temporal-ordering instances, including 105 with a cross-trajectory decoy, and 1,550 before-after pairs labeled from 5 actions + its payload. We evaluate 8 closed and open-source model families across 32 ordering and 16 single-action settings, observing consistent gaps. Ordering remains unsaturated: best non-decoy and decoy exact-match rates are 65.1% and 65.7%. Task context improves decoy identification by 6.9 percentage points but reduces non-decoy exact match by 2.2 points; error analysis reveals systematic copying of the presented A-B-C order. Single-action results show that inferring the action family is harder than locating it: click F1 is 0.96 vs, 0.76 for drag, while recognized drags are generally localized well. DDB, thus, complements end-to-end benchmarks by filling the missing diagnostic layer between GUI grounding and final task success, enabling targeted improvements to desktop CUA verification, reliability, and recovery.",
+    "published": "2026-07-28",
+    "authors": [
+      "Abhishek Pillai",
+      "Samir Kumar Nayak",
+      "Yuan Chen"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CV"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26041v1",
+    "url": "https://arxiv.org/abs/2607.26041v1"
+  },
+  {
+    "query": "LLM agents",
+    "id": "2607.26024v1",
+    "title": "LLM4OSC: Profile-Bound Natural Language Control with Deterministic Validation for Open Sound Control",
+    "abstract": "Open Sound Control (OSC) is the dominant wire protocol for real-time parametric control in professional audio, live performance, and virtual production. Large language models can emit plausible OSC, but they hallucinate addresses, mishandle type tags, and fail under paraphrase- unacceptable in show-critical contexts. We present LLM4OSC, a local-first architecture in which models propose structured intent JSON over a human-reviewed device profile, and deterministic code validates, clamps, and encodes before any UDP send. We introduce a frozen evaluation harness with CI gates on wrong-send rate: mismatches that would still pass validation and transmit. On a Max/MSP hero profile (12 patterns; 8 literal + 8 paraphrase + 4 refusal cases), after profile tag enrichment, symbolic slot fill, NL refine, and a retrieval confidence gate, backends B0--B3 all pass frozen gates (100% semantic accuracy, 0% wrong-send). B0 (rules) remains the production default at ~0.05ms; LLM backends remain ~3-4s. Historical few-shot B2 accuracy of 62.5% rises to 100% on this suite only after symbolic post-processing- not because the 0.5B model alone becomes show-safe. We argue for propose-validate-send and wrong-send rate as first-class metrics for language-to-control systems.",
+    "published": "2026-07-28",
+    "authors": [
+      "Yuan-Yi Fan"
+    ],
+    "categories": [
+      "cs.HC",
+      "cs.SD",
+      "eess.AS"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26024v1",
+    "url": "https://arxiv.org/abs/2607.26024v1"
+  },
+  {
+    "query": "LLM agents",
+    "id": "2607.26023v1",
+    "title": "CHARM: A Multimodal Graph Foundation Model with Hierarchical Context Modeling for Zero-Shot Transfer",
+    "abstract": "Graph foundation models (GFMs) have emerged as a promising paradigm for transferring knowledge across graph domains and tasks. Real-world graphs associate nodes with text, images, and other modalities, making multimodal graphs essential for representing complex entities and relations. Moreover, collecting labels and adapting models for every new graph domain is costly and often infeasible, motivating zero-shot transfer. Unfortunately, zero-shot transfer on multimodal graphs remains underexplored. Existing GNN-based graph foundation models typically require downstream adaptation, whereas LLM-based graph methods mainly address unimodal graphs or tasks within a single domain. This setting presents two key challenges. First, models must generalize knowledge from individual modalities while capturing transferable cross-modal relations. Second, without target-domain fine-tuning, node representations remain entangled with domain-specific structures and modality-specific characteristics, obscuring shared concepts in unseen domains. To address these challenges, we propose CHARM, a multimodal graph foundation model with hierarchical context modeling for zero-shot transfer. CHARM replaces isolated raw nodes with hierarchical graph contexts that capture multimodal semantics and cross-modal relations. These contexts map domain-specific node patterns to shared high-level concepts, reducing reliance on target-domain supervision or adaptation. A modality-aware graph context encoder integrates multimodal information with graph structure and converts the resulting representations into graph tokens for a large language model . Experiments show consistent improvements on zero-shot multimodal graph tasks.",
+    "published": "2026-07-28",
+    "authors": [
+      "Ankang Yang",
+      "Jitao Zhao",
+      "Di Jin",
+      "Yuxiao Huang",
+      "Dongxiao He"
+    ],
+    "categories": [
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26023v1",
+    "url": "https://arxiv.org/abs/2607.26023v1"
+  },
+  {
+    "query": "LLM agents",
+    "id": "2607.26017v1",
+    "title": "UniMem: Complementary Episodic-to-Parametric Memory for Boundary-Agnostic Task Streams",
+    "abstract": "Memory is essential for LLM agents to accumulate task experience and reuse task-specific execution strategies. However, real-world deployment over boundary-agnostic and evolving task streams exposes a fundamental stability-plasticity dilemma. External retrieval-based memory can rapidly absorb new evidence, but it often fails to internalize recurring execution patterns and incurs inference-time retrieval overhead. Parametric memory enables stable and efficient execution once learned, but typically relies on explicit task boundaries and fixed parameter budgets. Inspired by the human brain, which balances plasticity and stability through complementary episodic storage and gradual consolidation, we propose UniMem, a self-routing framework for autonomous memory management. UniMem uses learnable routing tokens as memory controllers, enabling adaptive coordination between complementary memory pathways: novel or sparse tasks are retained in an episodic buffer for retrieval-augmented execution, while recurring and reliable patterns are consolidated into expandable parametric memory. By decoupling task identification from task execution with routing tokens and parametric memory blocks, UniMem expands memory on demand without task labels during deployment or uncontrolled parameter growth. Experiments on long-horizon streaming task sequences show that UniMem consistently outperforms baselines while maintaining execution fidelity, achieving an average gain of 4.0 EM points across three backbone models.",
+    "published": "2026-07-28",
+    "authors": [
+      "Siyu Xia",
+      "Chenheng Zhang",
+      "Yanting Wu",
+      "Haoxuan Li",
+      "Jiajun Chai",
+      "Xiaohan Wang",
+      "Guojun Yin",
+      "Wei Lin",
+      "Zhouchen Lin",
+      "Haifeng Zhang",
+      "Jun Wang"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26017v1",
+    "url": "https://arxiv.org/abs/2607.26017v1"
+  },
+  {
+    "query": "LLM agents",
+    "id": "2607.26005v1",
+    "title": "Pictura: Perspective-View Self-Play at Scale for Driving",
+    "abstract": "Self-play in simulation produces robust driving policies at scale. Demonstrations of such behavior have been made using privileged vectorized observations such as exact poses and velocities, even for occluded agents. This assumes that perception is solved and introduces a representation gap with the partial observation of a deployed agent driving from the perspective view of egocentric cameras. A common fix, distilling the privileged policy into a camera-input student, leaves the student imitating decisions its own view cannot justify. Instead, we establish perspective-view self-play as a practical training regime. We introduce Pictura, a GPU-accelerated multi-agent driving simulator that renders each agent's egocentric view at every step, mitigating the representation gap at its source. Pictura sustains up to 500K agent-steps/s (2M images/s) on a single H100. Using Pictura, we train Alberti by self-play with plain PPO. It is the first large-scale driving self-play policy trained directly from perspective images, without privileged observations. Training spans 50B agent steps for ~35M km of driving. It approaches the driving performance of its privileged vectorized counterpart, and transfers zero-shot to Waymo Open Motion Dataset layouts re-rendered in Pictura, where it outperforms privileged vectorized agents. Project page: https://valeoai.github.io/Pictura/",
+    "published": "2026-07-28",
+    "authors": [
+      "Yuan Yin",
+      "Elias Ramzi",
+      "Marc Lafon",
+      "Valentin Charraut",
+      "Victor Bares",
+      "Yihong Xu",
+      "Éloi Zablocki",
+      "Alexandre Boulch",
+      "Thibault Buhet",
+      "Andrei Bursuc",
+      "Matthieu Cord"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.AI",
+      "cs.RO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26005v1",
+    "url": "https://arxiv.org/abs/2607.26005v1"
+  },
+  {
+    "query": "LLM agents",
+    "id": "2607.25996v1",
+    "title": "RepoReasoner: Evaluating Repository-Level Code Reasoning Ability of Long-Context Language Models",
+    "abstract": "Recent large language models (LLMs) have shown strong performance on software engineering tasks, yet most existing benchmarks evaluate code reasoning at the function level, where all relevant information is localized. This setting fails to reflect real-world development, which requires reasoning across multiple files and complex dependency structures. We introduce RepoReasoner, a benchmark for evaluating repository-level code reasoning. It assesses two complementary abilities: Output Prediction, which measures fine-grained, stateful execution reasoning across files, and Call Chain Prediction, which evaluates high-level architectural dependency understanding under noisy context. Our benchmark is constructed through a multi-stage pipeline that leverages dynamic tracing of pytest executions to obtain ground-truth call chains, along with LLM-based I/O rewriting to reduce memorization effects. We evaluate seven state-of-the-art LLMs. Even under oracle context, the best-performing model achieves only 69.1% Pass@1 on Output Prediction, indicating that cross-file reasoning remains a major challenge. In Call Chain Prediction, models exhibit high precision but low recall, suggesting limited multi-hop dependency understanding. Furthermore, performance drops on rewritten data reveal partial reliance on memorization, and longer contexts do not consistently improve results due to noise. These findings highlight fundamental limitations in current LLMs' repository-level reasoning and motivate future work on structured architectural understanding and cross-file inference.",
+    "published": "2026-07-28",
+    "authors": [
+      "Yanlin Wang",
+      "Suiquan Wang",
+      "Yanli Wang",
+      "Bowen Zhang",
+      "Daya Guo",
+      "Jiachi Chen",
+      "Zibin Zheng"
+    ],
+    "categories": [
+      "cs.SE"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.25996v1",
+    "url": "https://arxiv.org/abs/2607.25996v1"
+  },
+  {
+    "query": "LLM agents",
+    "id": "2607.25995v1",
+    "title": "Does Runtime Topology Context Improve LLM-Generated Kubernetes Security Patches?",
+    "abstract": "Kubernetes is central to the cloud-native ecosystem, orchestrating containerised workloads. Recent work suggests that large language models (LLMs) can automate cluster security remediation, generating configuration patches from Kubernetes Security Posture Management (KSPM) findings without human authoring. Such systems, however, prompt the model with each finding in isolation from the live service call graph, assuming general hardening knowledge suffices. This assumption breaks down whenever a patch must preserve a runtime service dependency invisible to the model: an otherwise compliant fix then carries a destructive functional blast radius, crashing downstream callers or silently severing call edges across the cluster. Whether live cluster context improves patch correctness has not been measured under controlled conditions across multiple dependency classes. We introduce KuTIE (Kubernetes Topology Intelligence Engine), which builds a live cluster context from Istio call edges, Trivy KSPM findings, and the service-account bindings a workload reads, and conditions LLM patch generation on it. It is evaluated on VulnCare, a purpose-built 36-deployment, four-namespace healthcare cluster with 31 injectable findings across seven dependency classes, each labelled by topology dependence against cluster ground truth. Across 248 trials, topology context raises topology-dependent patch correctness from 11.1% to 78.0% ($Δ= 0.669$), a gap that holds for every model and for six of seven classes, from credential and network-policy ($Δ= 0.95$) to role-based access control ($Δ= 0.31$); a topology-independent control exhibits no such effect ($Δ= 0.0$), isolating the result from generic prompt enrichment. Supplying the live service-call graph and the service-account bindings it exposes thus improves remediation of topology-dependent findings well beyond scanner-only context.",
+    "published": "2026-07-28",
+    "authors": [
+      "Farooq Shaikh"
+    ],
+    "categories": [
+      "cs.CR",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.25995v1",
+    "url": "https://arxiv.org/abs/2607.25995v1"
+  },
+  {
+    "query": "LLM agents",
+    "id": "2607.25992v1",
+    "title": "MemLens: A Value-Aware Memory Management System with Interactive Analytics for LLM-based Agents",
+    "abstract": "Recently, memory management has become a key infrastructure for LLM-based agents, as it directly affects long-horizon reasoning, personalized responses, and knowledge reuse. However, existing LLM memory systems typically adopt a coarse-grained (utility-agnostic) manner that treats heterogeneous user-LLM interaction records uniformly, leading to redundant and low-impact records persisting in the memory repository. To address this challenge, we present MemLens, a value-aware memory management system that takes memory records as first-class data objects. MemLens provides an end-to-end interactive analytics dashboard that exposes the complete memory lifecycle, including Shapley-style memory evaluation, value-aware storage, and memory-assisted response. Through a study-copilot application, the system enables users to inspect memory values, visualize hierarchical memory structures, and compare various memory management strategies in terms of response quality, retrieval latency, and token consumption. Therefore, our MemLens can serve as an efficient, interpretable, and personalized long-term memory management system for LLM-based agents.",
+    "published": "2026-07-28",
+    "authors": [
+      "Shuyue Wei",
+      "Chang Liu",
+      "Zimu Zhou",
+      "Yongxin Tong",
+      "Lizhen Cui"
+    ],
+    "categories": [
+      "cs.DB",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.25992v1",
+    "url": "https://arxiv.org/abs/2607.25992v1"
+  },
+  {
+    "query": "multi-agent systems",
+    "id": "2607.26042v1",
+    "title": "VetClaw: An Edge-Cloud Multimodal Agentic System for Veterinary Disease Screening",
+    "abstract": "We present VetClaw, an edge-cloud multimodal agentic system for early veterinary disease screening. VetClaw uses a camera module as an edge sensing device and sends captured images, together with optional symptom descriptions, to a server-hosted vision-language model for zero-shot disease classification. The system separates agent interaction from workflow orchestration: OpenClaw provides scheduling, tool access, user interaction, and notification services on the edge device, while LangGraph manages the stateful screening workflow, including input validation, image transmission, model invocation, safety checks, conditional routing, failure handling, and structured logging. This design moves beyond static image classification by enabling the system to collect visual evidence, invoke external models, apply deterministic safety rules, and generate diagnostic-support alerts. Results show that image-only VLM prediction remains limited, whereas symptom-guided and multimodal inputs improve zero-shot classification performance. Thus, VetClaw transforms a static prediction model into a coordinated, safety-aware system that can use tools, manage workflows, handle failures, and escalate uncertain cases.",
+    "published": "2026-07-28",
+    "authors": [
+      "Syed Mhamudul Hasan",
+      "Anas AlSobeh",
+      "Hussein Zangoti",
+      "Abdur R. Shahid"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26042v1",
+    "url": "https://arxiv.org/abs/2607.26042v1"
+  },
+  {
+    "query": "multi-agent systems",
+    "id": "2607.26041v1",
+    "title": "Desktop-Delta Bench: Do Computer-Use Models Understand Desktop GUI Transitions?",
+    "abstract": "Computer-use agents (CUAs) increasingly act through desktop GUIs to complete long-horizon tasks. Current benchmarks primarily measure end-task success or single-frame grounding. Neither isolates whether a model can reconstruct the causal, task-relevant transition produced by an action- crucial for rejecting stale observations, verifying progress, and recovering from failure. This is difficult because inference, remote input, app rendering, and screenshot capture are asynchronous: the next observation may be delayed, occluded, transient, or unrelated, then misread as progress and carried into subsequent planning. We introduce Desktop-Delta Bench (DDB), an offline step-level benchmark with 2,013 human-verified instances from novel, multi-app Linux trajectories across ~15 applications and 50 task domains. DDB trajectories targets 3 failure dimensions- state verification, source tracking, and context-aware control- through 2 complementary tasks: 463 3-frame temporal-ordering instances, including 105 with a cross-trajectory decoy, and 1,550 before-after pairs labeled from 5 actions + its payload. We evaluate 8 closed and open-source model families across 32 ordering and 16 single-action settings, observing consistent gaps. Ordering remains unsaturated: best non-decoy and decoy exact-match rates are 65.1% and 65.7%. Task context improves decoy identification by 6.9 percentage points but reduces non-decoy exact match by 2.2 points; error analysis reveals systematic copying of the presented A-B-C order. Single-action results show that inferring the action family is harder than locating it: click F1 is 0.96 vs, 0.76 for drag, while recognized drags are generally localized well. DDB, thus, complements end-to-end benchmarks by filling the missing diagnostic layer between GUI grounding and final task success, enabling targeted improvements to desktop CUA verification, reliability, and recovery.",
+    "published": "2026-07-28",
+    "authors": [
+      "Abhishek Pillai",
+      "Samir Kumar Nayak",
+      "Yuan Chen"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CV"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26041v1",
+    "url": "https://arxiv.org/abs/2607.26041v1"
+  },
+  {
+    "query": "multi-agent systems",
+    "id": "2607.26038v1",
+    "title": "Collaborative System Failure Prognostics via Federated Longitudinal-Survival Modeling",
+    "abstract": "Time-to-event modeling provides a systematic framework for estimating time-dependent failure risk, reliability, and remaining useful life (RUL) from longitudinal condition monitoring data. However, applying these models to distributed prognostics remains challenging because sensor trajectories and failure-time records are often stored across organizations or operational sites and cannot be centrally pooled due to privacy or proprietary constraints. Moreover, the classical Cox proportional hazards model relies on a nonseparable partial likelihood involving global risk sets, making direct optimization difficult under standard federated learning protocols. This paper presents a federated longitudinal-survival modeling framework for collaborative system failure prognostics. The proposed framework combines longitudinal sensor representation learning with a client-separable discrete-time hazard objective, enabling multiple clients to collaboratively train a prognostic model without sharing raw sensor measurements or individual failure records. Time-dependent representations extracted from multivariate sensor histories are used to estimate interval-specific failure hazards, reliability curves, and system RUL. Experiments on the four C-MAPSS turbofan engine degradation subsets under simulated decentralized settings demonstrate that the proposed framework consistently improves prognostic performance over isolated local training while maintaining performance comparable to centralized training across heterogeneous operating conditions and failure modes. These results demonstrate the potential of federated longitudinal-survival modeling for collaborative, data-aware condition monitoring and system failure prognostics.",
+    "published": "2026-07-28",
+    "authors": [
+      "Fan Yang",
+      "Madelyn Weller",
+      "Dimuthu Fernando",
+      "Hila Livneh",
+      "Yuxin Wen"
+    ],
+    "categories": [
+      "cs.OH"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26038v1",
+    "url": "https://arxiv.org/abs/2607.26038v1"
+  },
+  {
+    "query": "multi-agent systems",
+    "id": "2607.26037v1",
+    "title": "Wonder: Video World Model Done Better",
+    "abstract": "We present Wonder, a general-purpose video world model for real-time, camera-controllable world exploration. Given an image or a conditional video, Wonder constructs a playable world where users can navigate interactively by moving the camera, discovering unseen regions, and revisiting previously observed areas in real time and over a long-term horizon. Achieving this capability requires a system-level co-design of control method, memory mechanism, and training strategy. We introduce a novel camera conditioning with a dense coordinate field whose renderings provide spatially aligned motion and orientation cues, allowing the model to interpret camera motion directly as visual evidence. To support fast and precise memory retrieval over a growing generation context, we propose an efficient sparse attention-based memory mechanism, enabling the model to selectively attend to a small set of relevant context tokens at inference time, regardless of actual context length. We further develop several techniques to rectify the self-forcing-style distillation pipeline, improving the student model's ability to respect control signals, as well as maintaining diverse generation modes and long-term memory from the teacher. Together, these components enable Wonder to synthesize diverse, minute-scale videos at 16 FPS while preserving coherent geometry, appearance, and dynamics across long rollouts. Beyond image-to-video generation, Wonder naturally supports video-conditioned generation, allowing existing dynamic scenes to be re-shot in real time.",
+    "published": "2026-07-28",
+    "authors": [
+      "Jiacong Xu",
+      "Hanwen Jiang",
+      "Zhixin Shu",
+      "Kalyan Sunkavalli",
+      "Vishal M. Patel",
+      "Yiqun Mei"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.GR"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26037v1",
+    "url": "https://arxiv.org/abs/2607.26037v1"
+  },
+  {
+    "query": "multi-agent systems",
+    "id": "2607.26033v1",
+    "title": "Long-Slit Spectroscopy Of Herbig-Haro Outflow System, Associated With IRAS 01166+6635",
+    "abstract": "We present long-slit spectroscopic observations of the outflow associated with an infrared source IRAS 01166+6635, conducted with the 6-m telescope of the Special Astrophysical Observatory using the SCORPIO-2 focal reducer. The structure of the flow as investigated in detail, its position-velocity diagrams are constructed. The electron densities of the several knots in the outflow were estimated, revealing a decrease in its density with increasing distance from the driving source.",
+    "published": "2026-07-28",
+    "authors": [
+      "T. A. Movsessian",
+      "T. Yu. Magakian",
+      "A. V. Moiseev"
+    ],
+    "categories": [
+      "astro-ph.SR"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26033v1",
+    "url": "https://arxiv.org/abs/2607.26033v1"
+  },
+  {
+    "query": "multi-agent systems",
+    "id": "2607.26030v1",
+    "title": "Soft-mode nonlinearities away from ferroelectric phase transition",
+    "abstract": "The interplay between ionic and electronic subsystems dictates the behavior of structural phase transitions in polar dielectrics, a coupling mediated by soft optical phonon modes. In incipient ferroelectrics such as SrTiO$_3$ (STO), strong local-field effects can drive the lattice into a non-perturbative regime near the phase boundary. However, disentangling the distinct contributions of local fields from those of spontaneous macroscopic polarization remains an experimental challenge. Here, we isolate these mechanisms by probing paraelectric STO deep within its symmetric phase, where macroscopic spontaneous polarization is suppressed. Linear terahertz (THz) spectroscopy reveals that the soft mode exhibits a hybrid character, predominantly driven by electronic polarizability. Utilizing two-dimensional THz spectroscopy, we map the underlying nonlinear signals, demonstrating that the system persists in a perturbative regime characterized by robust local-field coherence. By implementing a microscopic model of coupled electronic and lattice degrees of freedom mediated by local fields, we qualitatively reproduce these multidimensional coherent signatures. Our findings highlight that while local fields are necessary to initiate non-perturbative lattice dynamics, they are insufficient on their own. This reveals that spontaneous polarization plays a deterministic role in dictating soft-mode nonlinearities in strongly correlated polar dielectrics.",
+    "published": "2026-07-28",
+    "authors": [
+      "Payel Shee",
+      "Ipek Efe",
+      "Jingwen Li",
+      "Kshitij V. Goyal",
+      "Morgan Trassin",
+      "Shovon Pal"
+    ],
+    "categories": [
+      "cond-mat.mtrl-sci"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26030v1",
+    "url": "https://arxiv.org/abs/2607.26030v1"
+  },
+  {
+    "query": "multi-agent systems",
+    "id": "2607.26029v1",
+    "title": "Path integral approach to the truncated Wigner approximation of driven-dissipative spins",
+    "abstract": "Phase-space approaches such as the truncated Wigner approximation (TWA) provide an efficient semiclassical framework for performing approximate simulations of the dynamics of open quantum many-body systems outside the reach of exact numerical methods but beyond the mean-field level. For bosonic systems, TWA is known to be equivalent to a Keldysh path-integral formulation truncated at second order in the so-called quantum fluctuations. This semiclassical approach provides an alternative transparent route towards approximate stochastic equations of motion, which can be efficiently solved. Here we establish the corresponding path-integral formulation for interacting open spin-$1/2$ systems using the continuous $\\mathrm{SU}(2)$ phase space. We show, in particular, that a consistent treatment of dissipation requires correctly mapping operator products onto the curved spin phase space, leading to stochastic equations that coincide with those obtained from the continuous TWA formulation and thus reproduce the exact dynamics of a single dissipative spin. Our results provide a unified field-theoretic foundation for the TWA to dissipative spin dynamics and offer a systematic starting point for extensions beyond the semiclassical approximation.",
+    "published": "2026-07-28",
+    "authors": [
+      "Viktoria Noel",
+      "Michael Fleischhauer",
+      "Igor Lesanovsky"
+    ],
+    "categories": [
+      "quant-ph",
+      "cond-mat.quant-gas",
+      "cond-mat.stat-mech"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26029v1",
+    "url": "https://arxiv.org/abs/2607.26029v1"
+  },
+  {
+    "query": "multi-agent systems",
+    "id": "2607.26027v1",
+    "title": "A Synchronized Multi-IMU Wearable System for Tracking of Joint-Angles in Sports Motion Analysis With Reference-Based Validation and Dynamic Task Characterization",
+    "abstract": "Reliable joint-angle measurement outside laboratory environments is important for posture assessment and technique analysis in sports and rehabilitation. Yet, wearable IMU systems, despite being the most practical solution, remain constrained by drift, multisensor timing consistency, validation, and cost. This paper presents a synchronized, cost-efficient, modular IMU wearable platform and an end-to-end pipeline for joint-angle estimation tailored to high-dynamic sports motion analysis. The system combines high-rate sensing with robust local logging, a Real Time Clock-disciplined microsecond timestamping scheme for inter-node synchronization, an indirect Kalman filter-based orientation estimator followed by relative-rotation joint-angle extraction, high-pass drift mitigation, and range normalization. Reference-based validation used a standardized seated knee flexion-extension protocol, comparing IMU-derived knee trajectories against a markerless vision reference computed from YOLOv11. The proposed method reproduced the expected 14-cycle motion and achieved low normalized error. Instrumentation performance was further evaluated using a long-duration (2h 12min) rigid-body elbow hold, yielding near-zero drift ($r_{\\mathrm{drift}}=1.5\\times10^{-6}$ deg/min) and a practical noise-limited resolution of $0.6442^\\circ$. The system was also demonstrated on a high-dynamic clean & jerk task with two participants (professional and amateur) performing five consecutive lifts. Measured elbow and knee trajectories preserved stage-dependent signatures and rapid transients for technique interpretation, while enabling expertise-level discrimination through differences in transient timing and trajectory regularity. Overall, the results support the proposed system as a practical, temporally consistent, and cost-effective wearable approach for multi-joint technique analysis in high-dynamic settings.",
+    "published": "2026-07-28",
+    "authors": [
+      "Thevindu Samarasekera",
+      "Praveen Rathnayaka",
+      "Sachintha Adhikari",
+      "Tharinda Navarathne",
+      "Mahela Pandukabhaya",
+      "Roshan Godaliyadda",
+      "Parakrama Ekanayake",
+      "Chanaka Senanayake",
+      "Vijitha Herath",
+      "Asela Ratnayake"
+    ],
+    "categories": [
+      "eess.SP"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26027v1",
+    "url": "https://arxiv.org/abs/2607.26027v1"
+  },
+  {
+    "query": "multi-agent systems",
+    "id": "2607.26026v1",
+    "title": "The interplay of crystal-field transitions and exchange spin dynamics in a ferrimagnet",
+    "abstract": "Rare-earth iron garnets offer an ideal platform for exploring the interplay of low-energy excitations and the complex temperature-dependent magnetization dynamics. In these systems, exchange coupling between rare-earth and iron sublattices generates high-frequency collective spin excitations. In addition, the robust spin-orbit coupling of localized 4$f$ electrons triggers the crystal-electric-field (CEF) transitions at THz frequencies. Despite extensive research into the garnet spin dynamics, the interplay between CEF excitations and exchange modes has remained largely unmapped. Using temperature-dependent THz time-domain spectroscopy, we demonstrate a hybridization between the Yb-ion CEF excitation and the Yb-Fe exchange mode in Gd$_{3/2}$Yb$_{1/2}$BiFe$_{5}$O$_{12}$. This coupling is characterized by a significant redistribution of spectral and temporal weights as the material approaches its magnetization compensation temperature. Notably, the Yb-Fe exchange mode exhibits an anomalous redshift upon cooling -- a reversal of the conventional blue shift typically driven by increased exchange coupling. We trace this phenomenon to a modification of Yb-Fe exchange anisotropy, driven by the interplay of the Fe exchange field and Yb CEF excitations. These findings highlight the critical role of CEF-mediated exchange coupling in shaping low-energy spin dynamics, positioning rare-earth garnets as a cornerstone for future THz spintronic technologies.",
+    "published": "2026-07-28",
+    "authors": [
+      "Arpita Dutta",
+      "Pratyay Mukherjee",
+      "Ritwik Mondal",
+      "Shovon Pal"
+    ],
+    "categories": [
+      "cond-mat.mtrl-sci"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26026v1",
+    "url": "https://arxiv.org/abs/2607.26026v1"
+  },
+  {
+    "query": "multi-agent systems",
+    "id": "2607.26024v1",
+    "title": "LLM4OSC: Profile-Bound Natural Language Control with Deterministic Validation for Open Sound Control",
+    "abstract": "Open Sound Control (OSC) is the dominant wire protocol for real-time parametric control in professional audio, live performance, and virtual production. Large language models can emit plausible OSC, but they hallucinate addresses, mishandle type tags, and fail under paraphrase- unacceptable in show-critical contexts. We present LLM4OSC, a local-first architecture in which models propose structured intent JSON over a human-reviewed device profile, and deterministic code validates, clamps, and encodes before any UDP send. We introduce a frozen evaluation harness with CI gates on wrong-send rate: mismatches that would still pass validation and transmit. On a Max/MSP hero profile (12 patterns; 8 literal + 8 paraphrase + 4 refusal cases), after profile tag enrichment, symbolic slot fill, NL refine, and a retrieval confidence gate, backends B0--B3 all pass frozen gates (100% semantic accuracy, 0% wrong-send). B0 (rules) remains the production default at ~0.05ms; LLM backends remain ~3-4s. Historical few-shot B2 accuracy of 62.5% rises to 100% on this suite only after symbolic post-processing- not because the 0.5B model alone becomes show-safe. We argue for propose-validate-send and wrong-send rate as first-class metrics for language-to-control systems.",
+    "published": "2026-07-28",
+    "authors": [
+      "Yuan-Yi Fan"
+    ],
+    "categories": [
+      "cs.HC",
+      "cs.SD",
+      "eess.AS"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26024v1",
+    "url": "https://arxiv.org/abs/2607.26024v1"
+  },
+  {
+    "query": "agent architecture",
+    "id": "2607.26056v1",
+    "title": "INTACT: Isomorphic Intent-to-Action Learning for Search-Free World Models",
+    "abstract": "Forward latent world models predict how actions change a scene, but recover actions for a desired change only through expensive test-time search. We introduce INTACT (INtent-To-ACTion), an end-to-end JEPA that turns action-labeled, reward-free trajectories into a deployable intent-to-action interface. Each transition supplies physical intent $z_{t+1}-z_t$, while a future goal supplies deployment intent $\\operatorname{sg}(z_g)-z_t$. The architecture is isomorphic between the local and goal motion-intent backbone-input graphs through an identical four-slot grammar and shared parameters, and between supported local and goal motion-intent families through action-law semantics induced by the same predictor rather than pointwise latent equality. INTACT also provides intact transfer from RGB evidence to action-effective latent intent coordinates and from intent families to their corresponding action-law families. Asymmetric endpoint gradients ground physical successors and fix future goals as anchors, joining representation learning and control without pointwise latent matching or globally linear dynamics. The resulting coordinates support a robust distributional action law: its conditional mean serves directly as a search-free policy, while sampling remains available for diversity or optional verification. On the four official LeWM tasks, one-epoch, zero-search models reach 85.78\\%, 100.00\\%, 97.67\\%, and 97.89\\% success. Optional local CEM centered on the Direct plan reaches 96.86\\% macro success using 384 instead of 9,000 candidate sequences, reducing sampling by $23.44\\times$ while improving pure CEM by 16.00 points. One shared four-task encoder reaches 89.39\\% E5 Direct macro and improves every task over jointly trained LeWM, while predicted--expert action-family kNN tracks Direct success at $r=0.954$. Direct inference takes 2.9--5.5 ms.",
+    "published": "2026-07-28",
+    "authors": [
+      "Junhan Sun",
+      "Hao Zhao",
+      "Guofeng Zhang"
+    ],
+    "categories": [
+      "cs.RO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26056v1",
+    "url": "https://arxiv.org/abs/2607.26056v1"
+  },
+  {
+    "query": "agent architecture",
+    "id": "2607.26055v1",
+    "title": "$π\\mathbf{R}^2$: Reactive Real-time Flow Policies",
+    "abstract": "Generalist manipulation policies increasingly take the form of action-chunking flow policies built on large pretrained backbones. Such chunks run open-loop, so the policy cannot react to sensory input arriving mid-execution, sacrificing \\emph{reactivity}. Replanning more often would restore it, but the perception-to-action pipeline (a large backbone plus multiple denoising steps) is too slow: this \\emph{latency} forbids frequent replanning and leaves committed actions stale, making such policies ill-suited for dynamic, closed-loop control. We present $π\\mathbf{R}^2$, which makes these policies reactive and real-time while retaining large backbones, expressive multi-modal policies, and multi-action prediction. Built on the per-position noise schedule of diffusion forcing, $π\\mathbf{R}^2$ contributes two ideas. First, it splits conditioning into a fast channel (proprioception, fresh every tick) and an asynchronously updated slow channel (vision-language features), so the policy reacts to proprioception within a chunk while tolerating stale vision. Second, a latency-adaptive flow schedule treats in-flight actions as inpainting conditioning and emits actions in one denoising step per call, letting one trained model adapt to varying hardware latency. Requiring minimal modification to existing architectures, $π\\mathbf{R}^2$ can be finetuned from a pretrained policy: applied to GR00T-N1.7 on a real xArm6+XHand platform, it replans closed-loop roughly $4\\times$ faster than the base policy (~$25$Hz on an A5000 GPU), acting on a fresh observation every $40$ms. Across simulation and real-world manipulation tasks, $π\\mathbf{R}^2$ improves the success rate by up to $23\\%$ in simulation and $30\\%$ in the real world over the strongest baseline. Project page: https://pi-r2-flow.github.io/",
+    "published": "2026-07-28",
+    "authors": [
+      "Sungjae Park",
+      "Shubham Tulsiani"
+    ],
+    "categories": [
+      "cs.RO",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26055v1",
+    "url": "https://arxiv.org/abs/2607.26055v1"
+  },
+  {
+    "query": "agent architecture",
+    "id": "2607.26053v1",
+    "title": "Proportional Fairness for Harmful Decisions",
+    "abstract": "We study allocation of (divisible) public bads, where agents incur costs for alternatives and the goal is to pick a lottery over the alternatives. We show that the traditional definitions of the core, a central criterion of proportional representation for allocation of public goods, private goods, and private bads (chores), do not make sense for allocation of public bads.\n  We introduce two formalizations of the core tailored to public bads. Under a structural condition which subsumes allocation of private bads, we show that zero-respecting Lindahl equilibria satisfy both formalizations, exhibit additional fairness guarantees, and strictly generalize competitive equilibria from equal incomes (CEEI) for allocation of private bads. Without this structural condition, we show that Lindahl equilibria exhibit undesirable behaviors, prove sharp impossibility results separating public bads from public goods, but show that a rule using a reduction to public goods recovers one of our formalizations of the core. Our results lay the groundwork for studying fair allocation of public bads, an overlooked yet fundamental problem, and highlight several structural and algorithmic directions that remain open.",
+    "published": "2026-07-28",
+    "authors": [
+      "Benjamin Cookson",
+      "Soroush Ebadian",
+      "Dominik Peters",
+      "Nisarg Shah"
+    ],
+    "categories": [
+      "cs.GT"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26053v1",
+    "url": "https://arxiv.org/abs/2607.26053v1"
+  },
+  {
+    "query": "agent architecture",
+    "id": "2607.26042v1",
+    "title": "VetClaw: An Edge-Cloud Multimodal Agentic System for Veterinary Disease Screening",
+    "abstract": "We present VetClaw, an edge-cloud multimodal agentic system for early veterinary disease screening. VetClaw uses a camera module as an edge sensing device and sends captured images, together with optional symptom descriptions, to a server-hosted vision-language model for zero-shot disease classification. The system separates agent interaction from workflow orchestration: OpenClaw provides scheduling, tool access, user interaction, and notification services on the edge device, while LangGraph manages the stateful screening workflow, including input validation, image transmission, model invocation, safety checks, conditional routing, failure handling, and structured logging. This design moves beyond static image classification by enabling the system to collect visual evidence, invoke external models, apply deterministic safety rules, and generate diagnostic-support alerts. Results show that image-only VLM prediction remains limited, whereas symptom-guided and multimodal inputs improve zero-shot classification performance. Thus, VetClaw transforms a static prediction model into a coordinated, safety-aware system that can use tools, manage workflows, handle failures, and escalate uncertain cases.",
+    "published": "2026-07-28",
+    "authors": [
+      "Syed Mhamudul Hasan",
+      "Anas AlSobeh",
+      "Hussein Zangoti",
+      "Abdur R. Shahid"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26042v1",
+    "url": "https://arxiv.org/abs/2607.26042v1"
+  },
+  {
+    "query": "agent architecture",
+    "id": "2607.26041v1",
+    "title": "Desktop-Delta Bench: Do Computer-Use Models Understand Desktop GUI Transitions?",
+    "abstract": "Computer-use agents (CUAs) increasingly act through desktop GUIs to complete long-horizon tasks. Current benchmarks primarily measure end-task success or single-frame grounding. Neither isolates whether a model can reconstruct the causal, task-relevant transition produced by an action- crucial for rejecting stale observations, verifying progress, and recovering from failure. This is difficult because inference, remote input, app rendering, and screenshot capture are asynchronous: the next observation may be delayed, occluded, transient, or unrelated, then misread as progress and carried into subsequent planning. We introduce Desktop-Delta Bench (DDB), an offline step-level benchmark with 2,013 human-verified instances from novel, multi-app Linux trajectories across ~15 applications and 50 task domains. DDB trajectories targets 3 failure dimensions- state verification, source tracking, and context-aware control- through 2 complementary tasks: 463 3-frame temporal-ordering instances, including 105 with a cross-trajectory decoy, and 1,550 before-after pairs labeled from 5 actions + its payload. We evaluate 8 closed and open-source model families across 32 ordering and 16 single-action settings, observing consistent gaps. Ordering remains unsaturated: best non-decoy and decoy exact-match rates are 65.1% and 65.7%. Task context improves decoy identification by 6.9 percentage points but reduces non-decoy exact match by 2.2 points; error analysis reveals systematic copying of the presented A-B-C order. Single-action results show that inferring the action family is harder than locating it: click F1 is 0.96 vs, 0.76 for drag, while recognized drags are generally localized well. DDB, thus, complements end-to-end benchmarks by filling the missing diagnostic layer between GUI grounding and final task success, enabling targeted improvements to desktop CUA verification, reliability, and recovery.",
+    "published": "2026-07-28",
+    "authors": [
+      "Abhishek Pillai",
+      "Samir Kumar Nayak",
+      "Yuan Chen"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CV"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26041v1",
+    "url": "https://arxiv.org/abs/2607.26041v1"
+  },
+  {
+    "query": "agent architecture",
+    "id": "2607.26024v1",
+    "title": "LLM4OSC: Profile-Bound Natural Language Control with Deterministic Validation for Open Sound Control",
+    "abstract": "Open Sound Control (OSC) is the dominant wire protocol for real-time parametric control in professional audio, live performance, and virtual production. Large language models can emit plausible OSC, but they hallucinate addresses, mishandle type tags, and fail under paraphrase- unacceptable in show-critical contexts. We present LLM4OSC, a local-first architecture in which models propose structured intent JSON over a human-reviewed device profile, and deterministic code validates, clamps, and encodes before any UDP send. We introduce a frozen evaluation harness with CI gates on wrong-send rate: mismatches that would still pass validation and transmit. On a Max/MSP hero profile (12 patterns; 8 literal + 8 paraphrase + 4 refusal cases), after profile tag enrichment, symbolic slot fill, NL refine, and a retrieval confidence gate, backends B0--B3 all pass frozen gates (100% semantic accuracy, 0% wrong-send). B0 (rules) remains the production default at ~0.05ms; LLM backends remain ~3-4s. Historical few-shot B2 accuracy of 62.5% rises to 100% on this suite only after symbolic post-processing- not because the 0.5B model alone becomes show-safe. We argue for propose-validate-send and wrong-send rate as first-class metrics for language-to-control systems.",
+    "published": "2026-07-28",
+    "authors": [
+      "Yuan-Yi Fan"
+    ],
+    "categories": [
+      "cs.HC",
+      "cs.SD",
+      "eess.AS"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26024v1",
+    "url": "https://arxiv.org/abs/2607.26024v1"
+  },
+  {
+    "query": "agent architecture",
+    "id": "2607.26017v1",
+    "title": "UniMem: Complementary Episodic-to-Parametric Memory for Boundary-Agnostic Task Streams",
+    "abstract": "Memory is essential for LLM agents to accumulate task experience and reuse task-specific execution strategies. However, real-world deployment over boundary-agnostic and evolving task streams exposes a fundamental stability-plasticity dilemma. External retrieval-based memory can rapidly absorb new evidence, but it often fails to internalize recurring execution patterns and incurs inference-time retrieval overhead. Parametric memory enables stable and efficient execution once learned, but typically relies on explicit task boundaries and fixed parameter budgets. Inspired by the human brain, which balances plasticity and stability through complementary episodic storage and gradual consolidation, we propose UniMem, a self-routing framework for autonomous memory management. UniMem uses learnable routing tokens as memory controllers, enabling adaptive coordination between complementary memory pathways: novel or sparse tasks are retained in an episodic buffer for retrieval-augmented execution, while recurring and reliable patterns are consolidated into expandable parametric memory. By decoupling task identification from task execution with routing tokens and parametric memory blocks, UniMem expands memory on demand without task labels during deployment or uncontrolled parameter growth. Experiments on long-horizon streaming task sequences show that UniMem consistently outperforms baselines while maintaining execution fidelity, achieving an average gain of 4.0 EM points across three backbone models.",
+    "published": "2026-07-28",
+    "authors": [
+      "Siyu Xia",
+      "Chenheng Zhang",
+      "Yanting Wu",
+      "Haoxuan Li",
+      "Jiajun Chai",
+      "Xiaohan Wang",
+      "Guojun Yin",
+      "Wei Lin",
+      "Zhouchen Lin",
+      "Haifeng Zhang",
+      "Jun Wang"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26017v1",
+    "url": "https://arxiv.org/abs/2607.26017v1"
+  },
+  {
+    "query": "agent architecture",
+    "id": "2607.26016v1",
+    "title": "MDTransformer: A Hardware-Software Co-Design of Mode-Division Photonic Transformer Accelerator with Inverse-Designed Coherent Crossbar",
+    "abstract": "Recently, photonic transformer accelerators (PTAs) have successfully achieved significant speedup and energy efficiency improvements over electronic accelerators for expediting Transformer inference. However, state-of-the-art rely on expensive multi-wavelength light generation and large dot-product units due to active phase-shifter components, thus making their approach inefficient and impractical. To address this, we propose MDTransformer, a novel hardware-software co-design of PTA based on mode-division optical dataflow and operations. Specifically, MDTransformer performs complex matrix operations using spatial-mode interference, that leverages the inverse-designed multi-mode couplers, crossings, and Mach-Zehnder IQ modulators into a compact mode-division photonic tensor core (MPTC), capable of executing matrix multiplications in the optical domain. Its each guided mode (i.e., TE0-TE3) acts as an independent computational lane, enabling four-fold parallelism-per-waveguide without spectral filtering or free-spectral-range limitations. Moreover, its coherent detection and IQ modulation jointly encode amplitude and phase, realizing complex-valued arithmetic for full-range operations in transformers. MDTransformer offers analog multiplication with sub-4-bit effective precision and inter-modal crosstalk below -30 dB. Its inverse-designed approach also offers scalable and full compatibility with single-laser continuous-wave operation at 1550 nm. Experimental results show that MDTransformer achieves 40.4% area reduction, 63.6% power saving, 40.6% energy saving, and comparable latency over the state-of-the-art PTA across different workloads (i.e., DeiT-Tiny/Small/Base and BERT-Base/Large). These results show that MDTransformer offers a practical solution for high-performance and energy-efficient transformer-based systems.",
+    "published": "2026-07-28",
+    "authors": [
+      "Solomon Micheal Serunjogi",
+      "Rachmad Vidya Wicaksana Putra",
+      "Ayat Taha",
+      "Muhammad Shafique",
+      "Mahmoud Rasras"
+    ],
+    "categories": [
+      "cs.AR",
+      "cs.AI",
+      "cs.DC"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26016v1",
+    "url": "https://arxiv.org/abs/2607.26016v1"
+  },
+  {
+    "query": "agent architecture",
+    "id": "2607.26015v1",
+    "title": "Instruction-Tuned Models Locally Reuse Human Syntax More Than Humans Do",
+    "abstract": "Syntactic convergence (the tendency of speakers to adapt in language towards the grammatical profiles of their interlocutors) is a well-documented feature of human dialogue widely considered to operate below conscious awareness. Whether large language models exhibit analogous syntactic convergence toward human users relative to human baselines and across a broad range of syntactic constructions remains an open question. Using substitution-paradigm data in which model generations replace one speaker's turns in pre-existing human dialogues, this study measures turn-adjacent reuse of context-free grammar (CFG) rules across sixteen open-weight Llama and Gemma models (1B-70B, pretrained and instruction-tuned) at 1,901 matched positions per model. Every model showed greater CFG-rule overlap with the preceding human turn than with a sampled unrelated human prime, and in every model this actual-versus-random difference was larger for lower-frequency rules. Each instruction-tuned model also showed greater natural-output overlap with the actual prime than the human response it replaced, and all eight matched architecture pairs exhibited greater actual-prime overlap after instruction tuning. However, relative to pretrained variants, instruction-tuned outputs overlapped more with unrelated primes, showed a smaller actual-versus-random increment, and had lower conditional rule-reuse odds once target rule-set size was held constant. In exploratory analyses, each model exhibited greater mean lexical and semantic similarity to the preceding turn than the matched human responses did. Instruction-tuned models additionally produced responses with greater mean semantic similarity than their pretrained counterparts in all eight architecture pairs, whereas the lexical similarity results were more heterogeneous.",
+    "published": "2026-07-28",
+    "authors": [
+      "Zandi Eberstadt"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26015v1",
+    "url": "https://arxiv.org/abs/2607.26015v1"
+  },
+  {
+    "query": "agent architecture",
+    "id": "2607.26012v1",
+    "title": "MAC-Gyver: Open, Programmable, Scheduling for AI-RAN 6G Systems",
+    "abstract": "Cellular networks are integrating Artificial Intelli- gence (AI) into radio access network control. The MAC scheduler is a promising target because it allocates a limited resource, spectrum, at every slot, under competing latency, throughput, and reliability requirements. However, most learning-based sched- ulers are evaluated only in simulation. Production schedulers are difficult to modify, and realistic stress tests require more radio hardware than most laboratories can provide. We present MAC-Gyver, an open-source framework for developing and evaluating scheduling applications that execute directly inside the OpenAirInterface scheduler. It exposes scheduler observations and controls through typed interfaces while preserving the underlying protocol and real-time execution paths. The same applications run over the air and in mac-emu, a PHY-less emulator that executes the unmodified OpenAirInterface Layer 2 stack for up to 90 users on one host at real-time slot pace, with a 3GPP-compliant channel model. To showcase the flexibility of MAC-Gyver, we evaluate two use cases. A proactive uplink scheduler predicts packet arrivals and roughly halves median round-trip latency. A frequency-selective uplink scheduler selects contiguous sub-bands from per-PRB sounding observations and is evaluated across mobility and power-limited operating points against an offline scheduling ceiling. Together, they show how the same production stack can be an AI playground that supports implementation, controlled evaluation, and over-the-air validation through complementary scheduling use cases.",
+    "published": "2026-07-28",
+    "authors": [
+      "Maxime Elkael",
+      "Reshma Prasad",
+      "Tamerlan Aghayev",
+      "Salvatore D'Oro",
+      "Michele Polese",
+      "Tommaso Melodia"
+    ],
+    "categories": [
+      "cs.NI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26012v1",
+    "url": "https://arxiv.org/abs/2607.26012v1"
+  },
+  {
+    "query": "tool use LLM",
+    "id": "2607.26058v1",
+    "title": "The evolution of galaxy dust scaling relations in the COLIBRE simulations",
+    "abstract": "We present dust scaling relations across cosmic time ($0 \\le z \\le 15$) for galaxies in the COLIBRE cosmological simulations. COLIBRE self-consistently tracks dust production, growth, destruction, and grain size evolution within a multiphase interstellar medium. Using volumes up to $(400\\, {\\rm cMpc})^3$ at three mass resolutions ($10^{5}-10^7$ M$_{\\odot}$), we predict the dust mass function, cosmic dust mass density, and key dust scaling relations (dust-to-gas ratio, dust-to-metal ratio, grain species fractions, and grain sizes) as functions of galaxy metallicity, stellar mass, and dust mass. The model broadly reproduces most observed relations across cosmic time, matching closest at the highest resolution. We find that silicates dominate the dust mass ($\\gtrsim 70\\%$) at all epochs, and while large grains dominate in the early Universe ($z \\ge 5$), their mass fraction declines to become comparable to small grains by $z=0$. At $z < 1$, the simulated dust mass functions align well with observations, but the cosmic dust mass density is systematically high by $\\lesssim 0.3$ dex, while in agreement with observations at higher redshifts. Additionally, the simulations underpredict the extreme dust masses of bright sub-millimeter galaxies at $z \\ge 2$. We demonstrate that scaling relations are sensitive to numerical resolution only in the low-redshift, low-mass regime; while their normalisation is influenced by gas-phase selection. These findings highlight both the predictive power and resolution-dependent limits of cosmological dust models, providing essential insights to refine ISM physics.",
+    "published": "2026-07-28",
+    "authors": [
+      "Aswin P. Vijayan",
+      "James W. Trayford",
+      "Joop Schaye",
+      "Sylvia Ploeckinger",
+      "Andrea Gebek",
+      "Nick Andreadis",
+      "Maarten Baes",
+      "Alejandro Benítez-Llambay",
+      "Evgenii Chaikin",
+      "Carlos S. Frenk",
+      "Filip Huško",
+      "Robert J. McGibbon",
+      "Alexander J. Richings",
+      "Matthieu Schaller"
+    ],
+    "categories": [
+      "astro-ph.GA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26058v1",
+    "url": "https://arxiv.org/abs/2607.26058v1"
+  },
+  {
+    "query": "tool use LLM",
+    "id": "2607.26056v1",
+    "title": "INTACT: Isomorphic Intent-to-Action Learning for Search-Free World Models",
+    "abstract": "Forward latent world models predict how actions change a scene, but recover actions for a desired change only through expensive test-time search. We introduce INTACT (INtent-To-ACTion), an end-to-end JEPA that turns action-labeled, reward-free trajectories into a deployable intent-to-action interface. Each transition supplies physical intent $z_{t+1}-z_t$, while a future goal supplies deployment intent $\\operatorname{sg}(z_g)-z_t$. The architecture is isomorphic between the local and goal motion-intent backbone-input graphs through an identical four-slot grammar and shared parameters, and between supported local and goal motion-intent families through action-law semantics induced by the same predictor rather than pointwise latent equality. INTACT also provides intact transfer from RGB evidence to action-effective latent intent coordinates and from intent families to their corresponding action-law families. Asymmetric endpoint gradients ground physical successors and fix future goals as anchors, joining representation learning and control without pointwise latent matching or globally linear dynamics. The resulting coordinates support a robust distributional action law: its conditional mean serves directly as a search-free policy, while sampling remains available for diversity or optional verification. On the four official LeWM tasks, one-epoch, zero-search models reach 85.78\\%, 100.00\\%, 97.67\\%, and 97.89\\% success. Optional local CEM centered on the Direct plan reaches 96.86\\% macro success using 384 instead of 9,000 candidate sequences, reducing sampling by $23.44\\times$ while improving pure CEM by 16.00 points. One shared four-task encoder reaches 89.39\\% E5 Direct macro and improves every task over jointly trained LeWM, while predicted--expert action-family kNN tracks Direct success at $r=0.954$. Direct inference takes 2.9--5.5 ms.",
+    "published": "2026-07-28",
+    "authors": [
+      "Junhan Sun",
+      "Hao Zhao",
+      "Guofeng Zhang"
+    ],
+    "categories": [
+      "cs.RO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26056v1",
+    "url": "https://arxiv.org/abs/2607.26056v1"
+  },
+  {
+    "query": "tool use LLM",
+    "id": "2607.26053v1",
+    "title": "Proportional Fairness for Harmful Decisions",
+    "abstract": "We study allocation of (divisible) public bads, where agents incur costs for alternatives and the goal is to pick a lottery over the alternatives. We show that the traditional definitions of the core, a central criterion of proportional representation for allocation of public goods, private goods, and private bads (chores), do not make sense for allocation of public bads.\n  We introduce two formalizations of the core tailored to public bads. Under a structural condition which subsumes allocation of private bads, we show that zero-respecting Lindahl equilibria satisfy both formalizations, exhibit additional fairness guarantees, and strictly generalize competitive equilibria from equal incomes (CEEI) for allocation of private bads. Without this structural condition, we show that Lindahl equilibria exhibit undesirable behaviors, prove sharp impossibility results separating public bads from public goods, but show that a rule using a reduction to public goods recovers one of our formalizations of the core. Our results lay the groundwork for studying fair allocation of public bads, an overlooked yet fundamental problem, and highlight several structural and algorithmic directions that remain open.",
+    "published": "2026-07-28",
+    "authors": [
+      "Benjamin Cookson",
+      "Soroush Ebadian",
+      "Dominik Peters",
+      "Nisarg Shah"
+    ],
+    "categories": [
+      "cs.GT"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26053v1",
+    "url": "https://arxiv.org/abs/2607.26053v1"
+  },
+  {
+    "query": "tool use LLM",
+    "id": "2607.26050v1",
+    "title": "$Λ$XCDM: a running vacuum strategy for crossing the phantom divide",
+    "abstract": "Composite dynamical dark energy (DDE) has recently been explored as an efficient way to help cure cosmological tensions through the so-called $w$XCDM model {Gomez-Valent:2024tdb,Gomez-Valent:2024ejh}, a toy-model version of the $Λ$XCDM model {Grande:2006nn}. The latter is a composite running vacuum model (RVM) that involves a DE component $X$ (`cosmon') of generic nature. We compute the effective equation of state of $Λ$XCDM and use state-of-the-art techniques to fit this model to two standard sets of cosmological data, one involving SNIa from Pantheon$+$ and the other SNIa from DES-Dovekie, in addition to BAO data from DESI DR2 and the CMB data from Planck PR4. We do not use large scale structure formation data for this analysis nor the SH0ES calibration of $H_0$. We find that $Λ$XCDM naturally performs the crossing of the phantom divide as observed by DESI near $z\\simeq 0.4$ using the $w_0w_a$CDM parameterization, a feature well favored by existing model-agnostic analyzes of the same data {Gonzalez-Fuentes:2025lei,Gonzalez-Fuentes:2026rgu}. It turns out that the cosmon $X$ behaves as `phantom matter' (PM) near the present, which in contrast to usual phantom DE satisfies the strong energy condition (as ordinary matter) and furnishes positive pressure ($P_X>-ρ_X>0$) at the expense of negative energy density ($ρ_X<0$). $Λ$XCDM provides a better fit than $w_0w_a$CDM and, as a bonus, alleviates the cosmic coincidence problem. Given that PM appears in stringy versions of the RVM, the $Λ$XCDM appears to be a composite DDE model with a good chance of explaining the crossing of the phantom divide from first principles, therefore providing theoretical support to the DESI observations inferred from generic parameterizations of the DE.",
+    "published": "2026-07-28",
+    "authors": [
+      "Joan Solà Peracaula",
+      "Adrià Gómez-Valent",
+      "Alex González-Fuentes"
+    ],
+    "categories": [
+      "astro-ph.CO",
+      "gr-qc",
+      "hep-ph"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26050v1",
+    "url": "https://arxiv.org/abs/2607.26050v1"
+  },
+  {
+    "query": "tool use LLM",
+    "id": "2607.26049v1",
+    "title": "Recent progress in graph theory using expansion",
+    "abstract": "Graph expansion has long been recognised as an important and desirable property with applications in a wide range of areas in computer science and mathematics. A particular form of expansion known as `sublinear expansion' has recently been used particularly effectively in extremal graph theory, leading to the resolution of many long-standing and notable problems over the last decade and an improved understanding of the structure of sparse graphs. This survey will cover these advances.",
+    "published": "2026-07-28",
+    "authors": [
+      "Richard Montgomery"
+    ],
+    "categories": [
+      "math.CO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26049v1",
+    "url": "https://arxiv.org/abs/2607.26049v1"
+  },
+  {
+    "query": "tool use LLM",
+    "id": "2607.26047v1",
+    "title": "S2A2: Audio-Visual Imitation Learning for Manipulation Tasks Using Acoustic Spatial Information",
+    "abstract": "Acoustic information provides rich cues about object location, material properties, and changes caused by contact or motion. This paper introduces a new set of acoustic-aware manipulation tasks for imitation learning, in which robots must use auditory cues to determine manipulation targets. These tasks require sound source localization and identification for active exploration in robotic manipulation. Also, we propose a multimodal imitation learning framework, Spatial-Spectral Audio Action (S2A2), that integrates visual features with acoustic spatial and acoustic signal information for the acoustic-aware manipulation tasks. We implemented S2A2 models that integrates policies such as ACT, Diffusion Policy, VQ-BeT, and $π_0$, into our framework. Simulation experiments showed that the proposed method is the most effective for tasks requiring both position and timbre. Furthermore, real-robot experiments confirm the applicability of the proposed tasks and framework to real-world manipulation.",
+    "published": "2026-07-28",
+    "authors": [
+      "Kaneyoshi Hiratsuka",
+      "Benjamin Yen",
+      "Ryosuke Kojima"
+    ],
+    "categories": [
+      "cs.RO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26047v1",
+    "url": "https://arxiv.org/abs/2607.26047v1"
+  },
+  {
+    "query": "tool use LLM",
+    "id": "2607.26046v1",
+    "title": "Probing Parity Violation with Weak Lensing Trispectrum",
+    "abstract": "We establish the weak gravitational lensing convergence trispectrum as an independent probe of cosmological parity violation in the late-time Large-Scale Structure (LSS). To map three-dimensional primordial symmetries into two-dimensional observables, we derive a generalized, compact projection formalism for the reduced angular trispectrum applicable to two classes of factorizable primordial curvature trispectra considered in this work. Applying this framework, we compute the parity-odd signal and forecast the expected Signal-to-Noise Ratio (SNR) using two phenomenological parity-violating trispectrum templates. These two templates encode the initial conditions for the late-time weak lensing observables. One template peaks at the squeezed limit, and the other template peaks at the collapsed limit. Our analysis evaluates idealized Dirac-delta source redshift distributions alongside actual tomographic profiles from the Dark Energy Survey Year 3 (DES Y3) and forecasted profiles for the Legacy Survey of Space and Time Year 10 (LSST Y10). We map the geometric sensitivity of these templates, providing physical intuition into how the resulting SNR is strongly modulated by the specific source galaxy redshift distributions and the underlying geometry of the configurations. Furthermore, we rigorously test the validity of the Limber approximation for higher-order angular statistics, demonstrating the necessity of exact line-of-sight numerical integration to capture the parity-violating signal accurately. By demonstrating the theoretical detectability of parity-breaking signatures through weak lensing, this work serves as a proof of principle, showing how upcoming weak lensing surveys can be leveraged to probe the fundamental symmetries of the early universe.",
+    "published": "2026-07-28",
+    "authors": [
+      "Sijin Chen",
+      "Zhengyangguang Gong",
+      "Jiamin Hou"
+    ],
+    "categories": [
+      "astro-ph.CO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26046v1",
+    "url": "https://arxiv.org/abs/2607.26046v1"
+  },
+  {
+    "query": "tool use LLM",
+    "id": "2607.26045v1",
+    "title": "Photonuclear Neutron Production in OpenMC: Verification Against MCNPX, FLUKA, and a First-Collision Analytical Solution",
+    "abstract": "The modeling of photonuclear reactions is increasingly important for applications involving high-energy photon fields, including accelerator-driven neutron sources, radiation shielding, medical physics, and fusion technologies. Although the Monte Carlo code OpenMC provides well-verified photoatomic transport capabilities, its photonuclear physics is currently available only in an unofficial development branch and requires independent verification before broader scientific use or possible integration into the official code distribution. This work presents a systematic verification of the OpenMC photonuclear implementation using six single-collision broomstick benchmarks based on 2H, 9Be, and 238U targets irradiated by monoenergetic 5 MeV and 15 MeV photons and by a continuous 1--20 MeV linear accelerator (LINAC)-representative spectrum. OpenMC was compared with MCNPX using common ENDF7u photonuclear data, with FLUKA using its native photonuclear models, and with a first-collision analytical solution for the integrated neutron yield. Calculations using the IAEA/PD-2019 library were also performed to quantify nuclear-data sensitivity. OpenMC and MCNPX agreed within 0.7% in integrated neutron yield for all benchmark cases when the same ENDF7u data were used. FLUKA, which relies on its own native photonuclear models rather than ENDF7u, differed from the analytical solution by approximately 6-9% for the monoenergetic cases and by no more than approximately 4% for the continuous-source cases. Changing the OpenMC library to IAEA/PD-2019 produced deviations of up to 11.3% from the ENDF7u-based analytical solution, with the sensitivity varying strongly by nuclide and source spectrum.",
+    "published": "2026-07-28",
+    "authors": [
+      "Lorenzo Loi",
+      "Andrea Missaglia",
+      "Carolina Introini",
+      "David Breitenmoser",
+      "Shaun D. Clarke",
+      "Sara A. Pozzi",
+      "Antonio Cammi"
+    ],
+    "categories": [
+      "physics.app-ph"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26045v1",
+    "url": "https://arxiv.org/abs/2607.26045v1"
+  },
+  {
+    "query": "tool use LLM",
+    "id": "2607.26043v1",
+    "title": "Re-thinking Mammography Transfer Learning: The Dataset-Informed Transfer Learning (DITL) Framework for Breast Cancer Screening and Lesion Diagnosis",
+    "abstract": "Enhancing classification performance in mammography remains a persistent challenge across both small curated datasets and large-scale clinical cohorts. Conventional transfer learning approaches often neglect dataset-specific characteristics, while recent neighborhood-informed methods have been restricted to narrow tasks with rigid formulations, limiting their scalability to population-level datasets. To address these challenges, we propose the Dataset-Informed Transfer Learning (DITL) framework, which integrates dataset-derived difficulty signals with neighborhood-based triplet supervision in a unified objective. DITL introduces two adaptive components: (i) Adaptive Difficulty-Weighted Cross-Entropy (A-DWCE), which assigns per-sample weights based on k-nearest neighbor label purity in a self-supervised feature space, and (ii) Adaptive Neighborhood Representation Triplet (A-NR-Triplet), which enforces intra-class compactness and inter-class separation using a learnable margin. Unlike focal loss, DITL requires no hyperparameter tuning, removes heuristic weighting and fixed margins, and incurs negligible computational overhead, yielding a robust and scalable optimization strategy. On the large-scale VinDR-Mammo dataset, DITL achieves state-of-the-art performance for whole-image breast density classification, with significant improvements across accuracy, F1-score, and AUC (p < 0.0001). Beyond large cohorts, DITL also delivers consistent, statistically significant gains on small ROI datasets (p < 0.0001). By bridging small-scale lesion analysis with large-scale density estimation, DITL establishes a clinically relevant, scalable, and generalizable framework for mammography classification, spanning the full breast cancer screening-to-diagnosis spectrum.",
+    "published": "2026-07-28",
+    "authors": [
+      "Adarsh Bhandary Panambur",
+      "Siming Bayer",
+      "Andreas Maier"
+    ],
+    "categories": [
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26043v1",
+    "url": "https://arxiv.org/abs/2607.26043v1"
+  },
+  {
+    "query": "tool use LLM",
+    "id": "2607.26042v1",
+    "title": "VetClaw: An Edge-Cloud Multimodal Agentic System for Veterinary Disease Screening",
+    "abstract": "We present VetClaw, an edge-cloud multimodal agentic system for early veterinary disease screening. VetClaw uses a camera module as an edge sensing device and sends captured images, together with optional symptom descriptions, to a server-hosted vision-language model for zero-shot disease classification. The system separates agent interaction from workflow orchestration: OpenClaw provides scheduling, tool access, user interaction, and notification services on the edge device, while LangGraph manages the stateful screening workflow, including input validation, image transmission, model invocation, safety checks, conditional routing, failure handling, and structured logging. This design moves beyond static image classification by enabling the system to collect visual evidence, invoke external models, apply deterministic safety rules, and generate diagnostic-support alerts. Results show that image-only VLM prediction remains limited, whereas symptom-guided and multimodal inputs improve zero-shot classification performance. Thus, VetClaw transforms a static prediction model into a coordinated, safety-aware system that can use tools, manage workflows, handle failures, and escalate uncertain cases.",
+    "published": "2026-07-28",
+    "authors": [
+      "Syed Mhamudul Hasan",
+      "Anas AlSobeh",
+      "Hussein Zangoti",
+      "Abdur R. Shahid"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26042v1",
+    "url": "https://arxiv.org/abs/2607.26042v1"
+  },
+  {
+    "query": "agent memory",
+    "id": "2607.26053v1",
+    "title": "Proportional Fairness for Harmful Decisions",
+    "abstract": "We study allocation of (divisible) public bads, where agents incur costs for alternatives and the goal is to pick a lottery over the alternatives. We show that the traditional definitions of the core, a central criterion of proportional representation for allocation of public goods, private goods, and private bads (chores), do not make sense for allocation of public bads.\n  We introduce two formalizations of the core tailored to public bads. Under a structural condition which subsumes allocation of private bads, we show that zero-respecting Lindahl equilibria satisfy both formalizations, exhibit additional fairness guarantees, and strictly generalize competitive equilibria from equal incomes (CEEI) for allocation of private bads. Without this structural condition, we show that Lindahl equilibria exhibit undesirable behaviors, prove sharp impossibility results separating public bads from public goods, but show that a rule using a reduction to public goods recovers one of our formalizations of the core. Our results lay the groundwork for studying fair allocation of public bads, an overlooked yet fundamental problem, and highlight several structural and algorithmic directions that remain open.",
+    "published": "2026-07-28",
+    "authors": [
+      "Benjamin Cookson",
+      "Soroush Ebadian",
+      "Dominik Peters",
+      "Nisarg Shah"
+    ],
+    "categories": [
+      "cs.GT"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26053v1",
+    "url": "https://arxiv.org/abs/2607.26053v1"
+  },
+  {
+    "query": "agent memory",
+    "id": "2607.26042v1",
+    "title": "VetClaw: An Edge-Cloud Multimodal Agentic System for Veterinary Disease Screening",
+    "abstract": "We present VetClaw, an edge-cloud multimodal agentic system for early veterinary disease screening. VetClaw uses a camera module as an edge sensing device and sends captured images, together with optional symptom descriptions, to a server-hosted vision-language model for zero-shot disease classification. The system separates agent interaction from workflow orchestration: OpenClaw provides scheduling, tool access, user interaction, and notification services on the edge device, while LangGraph manages the stateful screening workflow, including input validation, image transmission, model invocation, safety checks, conditional routing, failure handling, and structured logging. This design moves beyond static image classification by enabling the system to collect visual evidence, invoke external models, apply deterministic safety rules, and generate diagnostic-support alerts. Results show that image-only VLM prediction remains limited, whereas symptom-guided and multimodal inputs improve zero-shot classification performance. Thus, VetClaw transforms a static prediction model into a coordinated, safety-aware system that can use tools, manage workflows, handle failures, and escalate uncertain cases.",
+    "published": "2026-07-28",
+    "authors": [
+      "Syed Mhamudul Hasan",
+      "Anas AlSobeh",
+      "Hussein Zangoti",
+      "Abdur R. Shahid"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26042v1",
+    "url": "https://arxiv.org/abs/2607.26042v1"
+  },
+  {
+    "query": "agent memory",
+    "id": "2607.26041v1",
+    "title": "Desktop-Delta Bench: Do Computer-Use Models Understand Desktop GUI Transitions?",
+    "abstract": "Computer-use agents (CUAs) increasingly act through desktop GUIs to complete long-horizon tasks. Current benchmarks primarily measure end-task success or single-frame grounding. Neither isolates whether a model can reconstruct the causal, task-relevant transition produced by an action- crucial for rejecting stale observations, verifying progress, and recovering from failure. This is difficult because inference, remote input, app rendering, and screenshot capture are asynchronous: the next observation may be delayed, occluded, transient, or unrelated, then misread as progress and carried into subsequent planning. We introduce Desktop-Delta Bench (DDB), an offline step-level benchmark with 2,013 human-verified instances from novel, multi-app Linux trajectories across ~15 applications and 50 task domains. DDB trajectories targets 3 failure dimensions- state verification, source tracking, and context-aware control- through 2 complementary tasks: 463 3-frame temporal-ordering instances, including 105 with a cross-trajectory decoy, and 1,550 before-after pairs labeled from 5 actions + its payload. We evaluate 8 closed and open-source model families across 32 ordering and 16 single-action settings, observing consistent gaps. Ordering remains unsaturated: best non-decoy and decoy exact-match rates are 65.1% and 65.7%. Task context improves decoy identification by 6.9 percentage points but reduces non-decoy exact match by 2.2 points; error analysis reveals systematic copying of the presented A-B-C order. Single-action results show that inferring the action family is harder than locating it: click F1 is 0.96 vs, 0.76 for drag, while recognized drags are generally localized well. DDB, thus, complements end-to-end benchmarks by filling the missing diagnostic layer between GUI grounding and final task success, enabling targeted improvements to desktop CUA verification, reliability, and recovery.",
+    "published": "2026-07-28",
+    "authors": [
+      "Abhishek Pillai",
+      "Samir Kumar Nayak",
+      "Yuan Chen"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CV"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26041v1",
+    "url": "https://arxiv.org/abs/2607.26041v1"
+  },
+  {
+    "query": "agent memory",
+    "id": "2607.26037v1",
+    "title": "Wonder: Video World Model Done Better",
+    "abstract": "We present Wonder, a general-purpose video world model for real-time, camera-controllable world exploration. Given an image or a conditional video, Wonder constructs a playable world where users can navigate interactively by moving the camera, discovering unseen regions, and revisiting previously observed areas in real time and over a long-term horizon. Achieving this capability requires a system-level co-design of control method, memory mechanism, and training strategy. We introduce a novel camera conditioning with a dense coordinate field whose renderings provide spatially aligned motion and orientation cues, allowing the model to interpret camera motion directly as visual evidence. To support fast and precise memory retrieval over a growing generation context, we propose an efficient sparse attention-based memory mechanism, enabling the model to selectively attend to a small set of relevant context tokens at inference time, regardless of actual context length. We further develop several techniques to rectify the self-forcing-style distillation pipeline, improving the student model's ability to respect control signals, as well as maintaining diverse generation modes and long-term memory from the teacher. Together, these components enable Wonder to synthesize diverse, minute-scale videos at 16 FPS while preserving coherent geometry, appearance, and dynamics across long rollouts. Beyond image-to-video generation, Wonder naturally supports video-conditioned generation, allowing existing dynamic scenes to be re-shot in real time.",
+    "published": "2026-07-28",
+    "authors": [
+      "Jiacong Xu",
+      "Hanwen Jiang",
+      "Zhixin Shu",
+      "Kalyan Sunkavalli",
+      "Vishal M. Patel",
+      "Yiqun Mei"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.GR"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26037v1",
+    "url": "https://arxiv.org/abs/2607.26037v1"
+  },
+  {
+    "query": "agent memory",
+    "id": "2607.26017v1",
+    "title": "UniMem: Complementary Episodic-to-Parametric Memory for Boundary-Agnostic Task Streams",
+    "abstract": "Memory is essential for LLM agents to accumulate task experience and reuse task-specific execution strategies. However, real-world deployment over boundary-agnostic and evolving task streams exposes a fundamental stability-plasticity dilemma. External retrieval-based memory can rapidly absorb new evidence, but it often fails to internalize recurring execution patterns and incurs inference-time retrieval overhead. Parametric memory enables stable and efficient execution once learned, but typically relies on explicit task boundaries and fixed parameter budgets. Inspired by the human brain, which balances plasticity and stability through complementary episodic storage and gradual consolidation, we propose UniMem, a self-routing framework for autonomous memory management. UniMem uses learnable routing tokens as memory controllers, enabling adaptive coordination between complementary memory pathways: novel or sparse tasks are retained in an episodic buffer for retrieval-augmented execution, while recurring and reliable patterns are consolidated into expandable parametric memory. By decoupling task identification from task execution with routing tokens and parametric memory blocks, UniMem expands memory on demand without task labels during deployment or uncontrolled parameter growth. Experiments on long-horizon streaming task sequences show that UniMem consistently outperforms baselines while maintaining execution fidelity, achieving an average gain of 4.0 EM points across three backbone models.",
+    "published": "2026-07-28",
+    "authors": [
+      "Siyu Xia",
+      "Chenheng Zhang",
+      "Yanting Wu",
+      "Haoxuan Li",
+      "Jiajun Chai",
+      "Xiaohan Wang",
+      "Guojun Yin",
+      "Wei Lin",
+      "Zhouchen Lin",
+      "Haifeng Zhang",
+      "Jun Wang"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26017v1",
+    "url": "https://arxiv.org/abs/2607.26017v1"
+  },
+  {
+    "query": "agent memory",
+    "id": "2607.26011v1",
+    "title": "Krylov-Space Memory Cores",
+    "abstract": "We introduce Krylov-space memory cores as stationary, depth-resolved structures that reveal how anomalous initial-state memory is organized inside the Krylov space of otherwise thermalizing nonintegrable systems. The stationary occupation profile identifies where late-time probability is concentrated along the Krylov chain, while complementary diagnostics of residual equilibration fluctuations, deviation from the Gibbs reference, and long-time Krylov-current fluctuations determine the physical character of that region. Across weak thermalization, confinement-induced anomalous dynamics, and many-body scarring, anomalous initial states develop compact low-depth memory cores that carry appreciable residual fluctuations, Gibbs mismatch, and persistent current-fluctuation activity. These cores are often embedded within substantially broader stationary occupation halos. Generic reference states, by contrast, do not exhibit a comparable combination of signal strength and spatial compactness. An auxiliary integrable comparison further shows that compact Krylov memory is state selective rather than a generic consequence of integrability. Krylov-space memory cores therefore provide a stationary framework for identifying where structured quantum memory resides and how it remains dynamically encoded.",
+    "published": "2026-07-28",
+    "authors": [
+      "Mohsen Alishahiha",
+      "Mohammad Javad Vasli"
+    ],
+    "categories": [
+      "hep-th",
+      "cond-mat.stat-mech",
+      "quant-ph"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26011v1",
+    "url": "https://arxiv.org/abs/2607.26011v1"
+  },
+  {
+    "query": "agent memory",
+    "id": "2607.26005v1",
+    "title": "Pictura: Perspective-View Self-Play at Scale for Driving",
+    "abstract": "Self-play in simulation produces robust driving policies at scale. Demonstrations of such behavior have been made using privileged vectorized observations such as exact poses and velocities, even for occluded agents. This assumes that perception is solved and introduces a representation gap with the partial observation of a deployed agent driving from the perspective view of egocentric cameras. A common fix, distilling the privileged policy into a camera-input student, leaves the student imitating decisions its own view cannot justify. Instead, we establish perspective-view self-play as a practical training regime. We introduce Pictura, a GPU-accelerated multi-agent driving simulator that renders each agent's egocentric view at every step, mitigating the representation gap at its source. Pictura sustains up to 500K agent-steps/s (2M images/s) on a single H100. Using Pictura, we train Alberti by self-play with plain PPO. It is the first large-scale driving self-play policy trained directly from perspective images, without privileged observations. Training spans 50B agent steps for ~35M km of driving. It approaches the driving performance of its privileged vectorized counterpart, and transfers zero-shot to Waymo Open Motion Dataset layouts re-rendered in Pictura, where it outperforms privileged vectorized agents. Project page: https://valeoai.github.io/Pictura/",
+    "published": "2026-07-28",
+    "authors": [
+      "Yuan Yin",
+      "Elias Ramzi",
+      "Marc Lafon",
+      "Valentin Charraut",
+      "Victor Bares",
+      "Yihong Xu",
+      "Éloi Zablocki",
+      "Alexandre Boulch",
+      "Thibault Buhet",
+      "Andrei Bursuc",
+      "Matthieu Cord"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.AI",
+      "cs.RO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26005v1",
+    "url": "https://arxiv.org/abs/2607.26005v1"
+  },
+  {
+    "query": "agent memory",
+    "id": "2607.26000v1",
+    "title": "Empirical Evaluation of Out-Of-Distribution Performance of Tabular Foundation Models",
+    "abstract": "Tabular Foundation Models (TFMs) have emerged as novel approaches for tabular predictive tasks, demonstrating competitive predictive performance to ensemble tree-based models. Most TFMs are trained and evaluated on independent and identically distributed data, but this assumption changes in real-world scenarios due to distribution shifts, which compromise the robustness of models. Limited research has been conducted of TFMs under distribution shifts. We present an empirical evaluation of Out-Of-Distribution (OOD) performance of nine TFMs, spanning diverse pre-training strategies and architectures: TabPFNv2, TabPFNv2.5, TabPFNv2.6, TabPFNv3, TabICL, TabICLv2, Mitra, LimiX and TabFM. Three real-world datasets from the TableShift study were considered (HELOC, Voting, Childhood Lead), covering label, socioeconomic, and geographic shift types. Our results show that all evaluated TFMs degrade systematically under distribution shift regardless of pre-training strategy, with shift gaps ranging from 0.003 to 0.060 depending on shift type. The relationship between in-distribution and OOD predictive performance documented for classical tabular models extends into TFMs. We also identified a scalability gap, as high-performing models demand significant memory and computational resources beyond what standard deployment infrastructure can support. This study extends existing benchmarks for OOD in tabular data, providing evidence to support their adoption in high-stakes domains characterized by structural distribution shifts.",
+    "published": "2026-07-28",
+    "authors": [
+      "Malena Loza",
+      "David Chushig-Muzo",
+      "Eva Milara",
+      "Luis Bote-Curiel",
+      "Luis Estrada-Petrocelli",
+      "Felipe Grijalva"
+    ],
+    "categories": [
+      "cs.LG",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26000v1",
+    "url": "https://arxiv.org/abs/2607.26000v1"
+  },
+  {
+    "query": "agent memory",
+    "id": "2607.25992v1",
+    "title": "MemLens: A Value-Aware Memory Management System with Interactive Analytics for LLM-based Agents",
+    "abstract": "Recently, memory management has become a key infrastructure for LLM-based agents, as it directly affects long-horizon reasoning, personalized responses, and knowledge reuse. However, existing LLM memory systems typically adopt a coarse-grained (utility-agnostic) manner that treats heterogeneous user-LLM interaction records uniformly, leading to redundant and low-impact records persisting in the memory repository. To address this challenge, we present MemLens, a value-aware memory management system that takes memory records as first-class data objects. MemLens provides an end-to-end interactive analytics dashboard that exposes the complete memory lifecycle, including Shapley-style memory evaluation, value-aware storage, and memory-assisted response. Through a study-copilot application, the system enables users to inspect memory values, visualize hierarchical memory structures, and compare various memory management strategies in terms of response quality, retrieval latency, and token consumption. Therefore, our MemLens can serve as an efficient, interpretable, and personalized long-term memory management system for LLM-based agents.",
+    "published": "2026-07-28",
+    "authors": [
+      "Shuyue Wei",
+      "Chang Liu",
+      "Zimu Zhou",
+      "Yongxin Tong",
+      "Lizhen Cui"
+    ],
+    "categories": [
+      "cs.DB",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.25992v1",
+    "url": "https://arxiv.org/abs/2607.25992v1"
+  },
+  {
+    "query": "agent memory",
+    "id": "2607.25975v1",
+    "title": "Who is scientific code for? Maintaining human-readable landmarks in agent-written code",
+    "abstract": "Scientific research involving code has long rested on the assumption that at least one person understands why the code exists. As scientists adopt coding agents, this assumption is breaking down. Drawing on an ongoing contextual inquiry of scientific programmers working with agentic tools (four cases to date), a survey of over 800 scientific programmers, and my own analysis workflows, this position piece describes how scientists are inventing personal conventions, \"landmarking strategies\", for marking which artifacts in a codebase are meant for human understanding and which are context for agents. They repurpose shared infrastructure (version control especially) in idiosyncratic ways, and I argue that this quiet de-standardization could complicate collaboration in teams with heterogeneous software practices. Alternatively, teams that explicitly delineate what is human-readable versus agent context will be better able to develop, document, and maintain scientific code.",
+    "published": "2026-07-28",
+    "authors": [
+      "Elle O'Brien"
+    ],
+    "categories": [
+      "cs.HC"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.25975v1",
+    "url": "https://arxiv.org/abs/2607.25975v1"
+  },
+  {
+    "query": "reasoning agents",
+    "id": "2607.26057v1",
+    "title": "Pass the Baton: Trajectory-Relayed On-Policy Distillation",
+    "abstract": "On-policy distillation (OPD) grounds token-level supervision in the student's own trajectory, yet suffers from prefix failure: once the student commits to a wrong reasoning direction, all subsequent generation builds on this deviation, producing misdirected continuations that elicit unreliable supervision and waste compute. We identify a teacher-student continuation asymmetry on failed prefixes, where the teacher tends to redirect while the student continues along the original direction, and convert it into a label-free handoff trigger in Relay On-Policy Distillation (Relay-OPD). During training, Relay-OPD constructs relay trajectories by letting the teacher briefly take over at detected trigger points to produce a teacher leg, after which the student resumes and is optimized on the resulting trajectory. A limited relay budget concentrates intervention on critical early positions while limiting departure from the student policy. With a Qwen3-4B-Instruct-2507 teacher and Qwen3-0.6B/1.7B-Non-Thinking students on eight mathematical reasoning benchmarks, Relay-OPD achieves the best or second-best results on every benchmark, outperforming standard OPD by +5.73% and the strongest baseline FastOPD by +1.49% on average for 1.7B, with consistent gains at 0.6B. Training trajectory length is reduced by over 50%.",
+    "published": "2026-07-28",
+    "authors": [
+      "Haolei Xu",
+      "Xiaowen Xu",
+      "Haiwen Hong",
+      "Zixuan Ni",
+      "Hongxing Li",
+      "Yiwen Qiu",
+      "Weiming Lu",
+      "Yongliang Shen"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26057v1",
+    "url": "https://arxiv.org/abs/2607.26057v1"
+  },
+  {
+    "query": "reasoning agents",
+    "id": "2607.26053v1",
+    "title": "Proportional Fairness for Harmful Decisions",
+    "abstract": "We study allocation of (divisible) public bads, where agents incur costs for alternatives and the goal is to pick a lottery over the alternatives. We show that the traditional definitions of the core, a central criterion of proportional representation for allocation of public goods, private goods, and private bads (chores), do not make sense for allocation of public bads.\n  We introduce two formalizations of the core tailored to public bads. Under a structural condition which subsumes allocation of private bads, we show that zero-respecting Lindahl equilibria satisfy both formalizations, exhibit additional fairness guarantees, and strictly generalize competitive equilibria from equal incomes (CEEI) for allocation of private bads. Without this structural condition, we show that Lindahl equilibria exhibit undesirable behaviors, prove sharp impossibility results separating public bads from public goods, but show that a rule using a reduction to public goods recovers one of our formalizations of the core. Our results lay the groundwork for studying fair allocation of public bads, an overlooked yet fundamental problem, and highlight several structural and algorithmic directions that remain open.",
+    "published": "2026-07-28",
+    "authors": [
+      "Benjamin Cookson",
+      "Soroush Ebadian",
+      "Dominik Peters",
+      "Nisarg Shah"
+    ],
+    "categories": [
+      "cs.GT"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26053v1",
+    "url": "https://arxiv.org/abs/2607.26053v1"
+  },
+  {
+    "query": "reasoning agents",
+    "id": "2607.26042v1",
+    "title": "VetClaw: An Edge-Cloud Multimodal Agentic System for Veterinary Disease Screening",
+    "abstract": "We present VetClaw, an edge-cloud multimodal agentic system for early veterinary disease screening. VetClaw uses a camera module as an edge sensing device and sends captured images, together with optional symptom descriptions, to a server-hosted vision-language model for zero-shot disease classification. The system separates agent interaction from workflow orchestration: OpenClaw provides scheduling, tool access, user interaction, and notification services on the edge device, while LangGraph manages the stateful screening workflow, including input validation, image transmission, model invocation, safety checks, conditional routing, failure handling, and structured logging. This design moves beyond static image classification by enabling the system to collect visual evidence, invoke external models, apply deterministic safety rules, and generate diagnostic-support alerts. Results show that image-only VLM prediction remains limited, whereas symptom-guided and multimodal inputs improve zero-shot classification performance. Thus, VetClaw transforms a static prediction model into a coordinated, safety-aware system that can use tools, manage workflows, handle failures, and escalate uncertain cases.",
+    "published": "2026-07-28",
+    "authors": [
+      "Syed Mhamudul Hasan",
+      "Anas AlSobeh",
+      "Hussein Zangoti",
+      "Abdur R. Shahid"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26042v1",
+    "url": "https://arxiv.org/abs/2607.26042v1"
+  },
+  {
+    "query": "reasoning agents",
+    "id": "2607.26041v1",
+    "title": "Desktop-Delta Bench: Do Computer-Use Models Understand Desktop GUI Transitions?",
+    "abstract": "Computer-use agents (CUAs) increasingly act through desktop GUIs to complete long-horizon tasks. Current benchmarks primarily measure end-task success or single-frame grounding. Neither isolates whether a model can reconstruct the causal, task-relevant transition produced by an action- crucial for rejecting stale observations, verifying progress, and recovering from failure. This is difficult because inference, remote input, app rendering, and screenshot capture are asynchronous: the next observation may be delayed, occluded, transient, or unrelated, then misread as progress and carried into subsequent planning. We introduce Desktop-Delta Bench (DDB), an offline step-level benchmark with 2,013 human-verified instances from novel, multi-app Linux trajectories across ~15 applications and 50 task domains. DDB trajectories targets 3 failure dimensions- state verification, source tracking, and context-aware control- through 2 complementary tasks: 463 3-frame temporal-ordering instances, including 105 with a cross-trajectory decoy, and 1,550 before-after pairs labeled from 5 actions + its payload. We evaluate 8 closed and open-source model families across 32 ordering and 16 single-action settings, observing consistent gaps. Ordering remains unsaturated: best non-decoy and decoy exact-match rates are 65.1% and 65.7%. Task context improves decoy identification by 6.9 percentage points but reduces non-decoy exact match by 2.2 points; error analysis reveals systematic copying of the presented A-B-C order. Single-action results show that inferring the action family is harder than locating it: click F1 is 0.96 vs, 0.76 for drag, while recognized drags are generally localized well. DDB, thus, complements end-to-end benchmarks by filling the missing diagnostic layer between GUI grounding and final task success, enabling targeted improvements to desktop CUA verification, reliability, and recovery.",
+    "published": "2026-07-28",
+    "authors": [
+      "Abhishek Pillai",
+      "Samir Kumar Nayak",
+      "Yuan Chen"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CV"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26041v1",
+    "url": "https://arxiv.org/abs/2607.26041v1"
+  },
+  {
+    "query": "reasoning agents",
+    "id": "2607.26017v1",
+    "title": "UniMem: Complementary Episodic-to-Parametric Memory for Boundary-Agnostic Task Streams",
+    "abstract": "Memory is essential for LLM agents to accumulate task experience and reuse task-specific execution strategies. However, real-world deployment over boundary-agnostic and evolving task streams exposes a fundamental stability-plasticity dilemma. External retrieval-based memory can rapidly absorb new evidence, but it often fails to internalize recurring execution patterns and incurs inference-time retrieval overhead. Parametric memory enables stable and efficient execution once learned, but typically relies on explicit task boundaries and fixed parameter budgets. Inspired by the human brain, which balances plasticity and stability through complementary episodic storage and gradual consolidation, we propose UniMem, a self-routing framework for autonomous memory management. UniMem uses learnable routing tokens as memory controllers, enabling adaptive coordination between complementary memory pathways: novel or sparse tasks are retained in an episodic buffer for retrieval-augmented execution, while recurring and reliable patterns are consolidated into expandable parametric memory. By decoupling task identification from task execution with routing tokens and parametric memory blocks, UniMem expands memory on demand without task labels during deployment or uncontrolled parameter growth. Experiments on long-horizon streaming task sequences show that UniMem consistently outperforms baselines while maintaining execution fidelity, achieving an average gain of 4.0 EM points across three backbone models.",
+    "published": "2026-07-28",
+    "authors": [
+      "Siyu Xia",
+      "Chenheng Zhang",
+      "Yanting Wu",
+      "Haoxuan Li",
+      "Jiajun Chai",
+      "Xiaohan Wang",
+      "Guojun Yin",
+      "Wei Lin",
+      "Zhouchen Lin",
+      "Haifeng Zhang",
+      "Jun Wang"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26017v1",
+    "url": "https://arxiv.org/abs/2607.26017v1"
+  },
+  {
+    "query": "reasoning agents",
+    "id": "2607.26005v1",
+    "title": "Pictura: Perspective-View Self-Play at Scale for Driving",
+    "abstract": "Self-play in simulation produces robust driving policies at scale. Demonstrations of such behavior have been made using privileged vectorized observations such as exact poses and velocities, even for occluded agents. This assumes that perception is solved and introduces a representation gap with the partial observation of a deployed agent driving from the perspective view of egocentric cameras. A common fix, distilling the privileged policy into a camera-input student, leaves the student imitating decisions its own view cannot justify. Instead, we establish perspective-view self-play as a practical training regime. We introduce Pictura, a GPU-accelerated multi-agent driving simulator that renders each agent's egocentric view at every step, mitigating the representation gap at its source. Pictura sustains up to 500K agent-steps/s (2M images/s) on a single H100. Using Pictura, we train Alberti by self-play with plain PPO. It is the first large-scale driving self-play policy trained directly from perspective images, without privileged observations. Training spans 50B agent steps for ~35M km of driving. It approaches the driving performance of its privileged vectorized counterpart, and transfers zero-shot to Waymo Open Motion Dataset layouts re-rendered in Pictura, where it outperforms privileged vectorized agents. Project page: https://valeoai.github.io/Pictura/",
+    "published": "2026-07-28",
+    "authors": [
+      "Yuan Yin",
+      "Elias Ramzi",
+      "Marc Lafon",
+      "Valentin Charraut",
+      "Victor Bares",
+      "Yihong Xu",
+      "Éloi Zablocki",
+      "Alexandre Boulch",
+      "Thibault Buhet",
+      "Andrei Bursuc",
+      "Matthieu Cord"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.AI",
+      "cs.RO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.26005v1",
+    "url": "https://arxiv.org/abs/2607.26005v1"
+  },
+  {
+    "query": "reasoning agents",
+    "id": "2607.25996v1",
+    "title": "RepoReasoner: Evaluating Repository-Level Code Reasoning Ability of Long-Context Language Models",
+    "abstract": "Recent large language models (LLMs) have shown strong performance on software engineering tasks, yet most existing benchmarks evaluate code reasoning at the function level, where all relevant information is localized. This setting fails to reflect real-world development, which requires reasoning across multiple files and complex dependency structures. We introduce RepoReasoner, a benchmark for evaluating repository-level code reasoning. It assesses two complementary abilities: Output Prediction, which measures fine-grained, stateful execution reasoning across files, and Call Chain Prediction, which evaluates high-level architectural dependency understanding under noisy context. Our benchmark is constructed through a multi-stage pipeline that leverages dynamic tracing of pytest executions to obtain ground-truth call chains, along with LLM-based I/O rewriting to reduce memorization effects. We evaluate seven state-of-the-art LLMs. Even under oracle context, the best-performing model achieves only 69.1% Pass@1 on Output Prediction, indicating that cross-file reasoning remains a major challenge. In Call Chain Prediction, models exhibit high precision but low recall, suggesting limited multi-hop dependency understanding. Furthermore, performance drops on rewritten data reveal partial reliance on memorization, and longer contexts do not consistently improve results due to noise. These findings highlight fundamental limitations in current LLMs' repository-level reasoning and motivate future work on structured architectural understanding and cross-file inference.",
+    "published": "2026-07-28",
+    "authors": [
+      "Yanlin Wang",
+      "Suiquan Wang",
+      "Yanli Wang",
+      "Bowen Zhang",
+      "Daya Guo",
+      "Jiachi Chen",
+      "Zibin Zheng"
+    ],
+    "categories": [
+      "cs.SE"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.25996v1",
+    "url": "https://arxiv.org/abs/2607.25996v1"
+  },
+  {
+    "query": "reasoning agents",
+    "id": "2607.25993v1",
+    "title": "Beyond Zooming: Learning Multi-Tool Visual Reasoning for Ultra-High-Resolution Remote Sensing",
+    "abstract": "Ultra-high-resolution (UHR) remote-sensing (RS) imagery provides fine-grained Earth-observation evidence over city-scale scenes, but poses a fundamental challenge for multimodal large language models (MLLMs): task-relevant evidence is often sparse, local, and spatially dispersed across extremely large visual contexts. A natural solution is to equip MLLMs with zoom-in tools for active local inspection. However, through a pilot study on XLRS-Bench, we find that zoom-in is only partially effective: it resolves easy and medium-level tasks with locally recoverable evidence, but saturates on hard cases requiring global search, multi-region comparison, path planning, or dispersed-evidence reasoning. Motivated by this finding, we move beyond single-tool zoom-in and introduce GeoMTVR, a large-scale Geospatial Multi-Tool Visual Reasoning dataset built from wide-area satellite imagery. GeoMTVR contains 13K UHR VQA samples with interleaved reasoning trajectories, diverse visual tool calls, and returned visual observations, enabling models to learn question decomposition, tool selection, regional inspection, object-level grounding, auxiliary visual reasoning, and cross-tool evidence integration. Beyond supervised fine-tuning, we propose a tool-attention-focused reinforcement learning algorithm that concentrates optimization on critical tool-use decisions, including when to invoke tools, which tool to select, where to apply it, and how to interpret tool outputs. By combining SFT on GeoMTVR with our RL algorithm, we develop GeoLens, a multi-tool visual reasoning MLLM for UHR RS. Experiments show that GeoLens consistently outperforms direct reasoning and single-tool zoom-in baselines, achieving stronger accuracy, better evidence grounding, and more efficient tool-use trajectories.",
+    "published": "2026-07-28",
+    "authors": [
+      "Fengxiang Wang",
+      "Jiangnan Huang",
+      "Mingshuo Chen",
+      "Yueying Li",
+      "Yang Shi",
+      "Junwei Luo",
+      "Haoyu Wang",
+      "Yansheng Li",
+      "Jing Zhang",
+      "Haiyan Zhao",
+      "Wenjing Yang"
+    ],
+    "categories": [
+      "cs.CV"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.25993v1",
+    "url": "https://arxiv.org/abs/2607.25993v1"
+  },
+  {
+    "query": "reasoning agents",
+    "id": "2607.25992v1",
+    "title": "MemLens: A Value-Aware Memory Management System with Interactive Analytics for LLM-based Agents",
+    "abstract": "Recently, memory management has become a key infrastructure for LLM-based agents, as it directly affects long-horizon reasoning, personalized responses, and knowledge reuse. However, existing LLM memory systems typically adopt a coarse-grained (utility-agnostic) manner that treats heterogeneous user-LLM interaction records uniformly, leading to redundant and low-impact records persisting in the memory repository. To address this challenge, we present MemLens, a value-aware memory management system that takes memory records as first-class data objects. MemLens provides an end-to-end interactive analytics dashboard that exposes the complete memory lifecycle, including Shapley-style memory evaluation, value-aware storage, and memory-assisted response. Through a study-copilot application, the system enables users to inspect memory values, visualize hierarchical memory structures, and compare various memory management strategies in terms of response quality, retrieval latency, and token consumption. Therefore, our MemLens can serve as an efficient, interpretable, and personalized long-term memory management system for LLM-based agents.",
+    "published": "2026-07-28",
+    "authors": [
+      "Shuyue Wei",
+      "Chang Liu",
+      "Zimu Zhou",
+      "Yongxin Tong",
+      "Lizhen Cui"
+    ],
+    "categories": [
+      "cs.DB",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.25992v1",
+    "url": "https://arxiv.org/abs/2607.25992v1"
+  },
+  {
+    "query": "reasoning agents",
+    "id": "2607.25989v1",
+    "title": "Untangling Co-Drift: Proactive Multi-Intent Failure Prediction and Root-Cause Disambiguation for Self-Driving Networks",
+    "abstract": "The vision of self-driving networks that monitor, reason, and act upon themselves with minimal human intervention relies on tightly coupled monitoring, analytics, and actuation functions. In this work, we treat these functions as three operational macro-intents: continuous telemetry, real-time analytics, and programmatic actuation, and formalize the health of each function as an intent that the network must continuously satisfy. A critical, yet underexplored, challenge stems from the causal coupling among these intents, where a singular fault within one macro-intent propagates as a co-drift and subsequently triggers cascading, symptomatic anomalies across the remaining intents. This ambiguity makes it exceedingly difficult for existing, reactive approaches to distinguish the true root-cause intent from symptomatic victim intents, and their reliance on threshold-crossing detection leaves insufficient time for proactive remediation. We introduce MILD, a novel framework that reformulates intent assurance from reactive drift detection to proactive failure prediction. Grounded in our three-macro-intent formulation of the self-driving control loop, MILD employs a teacher-augmented Mixture-of-Experts architecture with a hybrid objective that jointly optimizes intent failure prediction and root-cause attribution. MILD enables KPI-level diagnostics via SHAP explainability and dynamic intent failure urgency estimation via multi-horizon modeling. Our extensive evaluation of MILD across three environments of increasing realism, from a controlled statistical benchmark, to a microservices application, to an SDN-based edge-to-cloud testbed, demonstrates that MILD achieves high failure detection rates, strong remediation lead times, and accurate intent-level root-cause disambiguation. This positions MILD as a practical enabler of closed-loop assurance in next-generation autonomous networks.",
+    "published": "2026-07-28",
+    "authors": [
+      "Md. Kamrul Hossain",
+      "Walid Aljoby"
+    ],
+    "categories": [
+      "cs.NI",
+      "cs.LG",
+      "cs.RO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2607.25989v1",
+    "url": "https://arxiv.org/abs/2607.25989v1"
+  }
+]

@@ -1,0 +1,941 @@
+[
+  {
+    "id": "2312.04811v2",
+    "title": "Optimal Decay Estimates for the Radially Symmetric Compressible Navier-Stokes Equations",
+    "abstract": "We examine the large-time behaviour of solutions to the compressible Navier-Stokes equations under the assumption of radial symmetry. In particular, we calculate a fast time-decay estimate of the norm of the nonlinear part of the solution. This allows us to obtain a bound from below for the time-decay of the solution in $L^\\infty$, proving that our decay estimate in that space is sharp. The decay rate is the same as that of the linear problem for curl-free flow. We also obtain an estimate for a scalar system related to curl-free solutions to the compressible Navier-Stokes equations in a weighted Lebesgue space.",
+    "published": "2023-12-08",
+    "authors": [
+      "Tsukasa Iwabuchi",
+      "Dáithí Ó hAodha"
+    ],
+    "categories": [
+      "math.AP"
+    ],
+    "pdf": "https://arxiv.org/pdf/2312.04811v2",
+    "url": "https://arxiv.org/abs/2312.04811v2"
+  },
+  {
+    "id": "2303.11381v1",
+    "title": "MM-REACT: Prompting ChatGPT for Multimodal Reasoning and Action",
+    "abstract": "We propose MM-REACT, a system paradigm that integrates ChatGPT with a pool of vision experts to achieve multimodal reasoning and action. In this paper, we define and explore a comprehensive list of advanced vision tasks that are intriguing to solve, but may exceed the capabilities of existing vision and vision-language models. To achieve such advanced visual intelligence, MM-REACT introduces a textual prompt design that can represent text descriptions, textualized spatial coordinates, and aligned file names for dense visual signals such as images and videos. MM-REACT's prompt design allows language models to accept, associate, and process multimodal information, thereby facilitating the synergetic combination of ChatGPT and various vision experts. Zero-shot experiments demonstrate MM-REACT's effectiveness in addressing the specified capabilities of interests and its wide application in different scenarios that require advanced visual understanding. Furthermore, we discuss and compare MM-REACT's system paradigm with an alternative approach that extends language models for multimodal scenarios through joint finetuning. Code, demo, video, and visualization are available at https://multimodal-react.github.io/",
+    "published": "2023-03-20",
+    "authors": [
+      "Zhengyuan Yang",
+      "Linjie Li",
+      "Jianfeng Wang",
+      "Kevin Lin",
+      "Ehsan Azarnasab",
+      "Faisal Ahmed",
+      "Zicheng Liu",
+      "Ce Liu",
+      "Michael Zeng",
+      "Lijuan Wang"
+    ],
+    "categories": [
+      "cs.CV",
+      "cs.CL",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2303.11381v1",
+    "url": "https://arxiv.org/abs/2303.11381v1"
+  },
+  {
+    "id": "2309.09970v1",
+    "title": "Empirical Study of Mix-based Data Augmentation Methods in Physiological Time Series Data",
+    "abstract": "Data augmentation is a common practice to help generalization in the procedure of deep model training. In the context of physiological time series classification, previous research has primarily focused on label-invariant data augmentation methods. However, another class of augmentation techniques (\\textit{i.e., Mixup}) that emerged in the computer vision field has yet to be fully explored in the time series domain. In this study, we systematically review the mix-based augmentations, including mixup, cutmix, and manifold mixup, on six physiological datasets, evaluating their performance across different sensory data and classification tasks. Our results demonstrate that the three mix-based augmentations can consistently improve the performance on the six datasets. More importantly, the improvement does not rely on expert knowledge or extensive parameter tuning. Lastly, we provide an overview of the unique properties of the mix-based augmentation methods and highlight the potential benefits of using the mix-based augmentation in physiological time series data.",
+    "published": "2023-09-18",
+    "authors": [
+      "Peikun Guo",
+      "Huiyuan Yang",
+      "Akane Sano"
+    ],
+    "categories": [
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2309.09970v1",
+    "url": "https://arxiv.org/abs/2309.09970v1"
+  },
+  {
+    "id": "2310.08560v2",
+    "title": "MemGPT: Towards LLMs as Operating Systems",
+    "abstract": "Large language models (LLMs) have revolutionized AI, but are constrained by limited context windows, hindering their utility in tasks like extended conversations and document analysis. To enable using context beyond limited context windows, we propose virtual context management, a technique drawing inspiration from hierarchical memory systems in traditional operating systems that provide the appearance of large memory resources through data movement between fast and slow memory. Using this technique, we introduce MemGPT (Memory-GPT), a system that intelligently manages different memory tiers in order to effectively provide extended context within the LLM's limited context window, and utilizes interrupts to manage control flow between itself and the user. We evaluate our OS-inspired design in two domains where the limited context windows of modern LLMs severely handicaps their performance: document analysis, where MemGPT is able to analyze large documents that far exceed the underlying LLM's context window, and multi-session chat, where MemGPT can create conversational agents that remember, reflect, and evolve dynamically through long-term interactions with their users. We release MemGPT code and data for our experiments at https://memgpt.ai.",
+    "published": "2023-10-12",
+    "authors": [
+      "Charles Packer",
+      "Sarah Wooders",
+      "Kevin Lin",
+      "Vivian Fang",
+      "Shishir G. Patil",
+      "Ion Stoica",
+      "Joseph E. Gonzalez"
+    ],
+    "categories": [
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2310.08560v2",
+    "url": "https://arxiv.org/abs/2310.08560v2"
+  },
+  {
+    "id": "2306.08282v2",
+    "title": "On the critical Caffarelli-Kohn-Nirenberg type inequalities involving super-logarithms",
+    "abstract": "We establish the Caffarelli-Kohn-Nirenberg type inequalities involving{ super-logarithms (infinitely iterated logarithms).} As a result the critical Caffarelli-Kohn-Nirenberg type inequalities will be improved, and in certain cases the best constants will be discovered.",
+    "published": "2023-06-14",
+    "authors": [
+      "Hiroshi Ando",
+      "Toshio Horiuchi",
+      "Eiichi Nakai"
+    ],
+    "categories": [
+      "math.AP"
+    ],
+    "pdf": "https://arxiv.org/pdf/2306.08282v2",
+    "url": "https://arxiv.org/abs/2306.08282v2"
+  },
+  {
+    "id": "2303.17760v2",
+    "title": "CAMEL: Communicative Agents for \"Mind\" Exploration of Large Language Model Society",
+    "abstract": "The rapid advancement of chat-based language models has led to remarkable progress in complex task-solving. However, their success heavily relies on human input to guide the conversation, which can be challenging and time-consuming. This paper explores the potential of building scalable techniques to facilitate autonomous cooperation among communicative agents, and provides insight into their \"cognitive\" processes. To address the challenges of achieving autonomous cooperation, we propose a novel communicative agent framework named role-playing. Our approach involves using inception prompting to guide chat agents toward task completion while maintaining consistency with human intentions. We showcase how role-playing can be used to generate conversational data for studying the behaviors and capabilities of a society of agents, providing a valuable resource for investigating conversational language models. In particular, we conduct comprehensive studies on instruction-following cooperation in multi-agent settings. Our contributions include introducing a novel communicative agent framework, offering a scalable approach for studying the cooperative behaviors and capabilities of multi-agent systems, and open-sourcing our library to support research on communicative agents and beyond: https://github.com/camel-ai/camel.",
+    "published": "2023-03-31",
+    "authors": [
+      "Guohao Li",
+      "Hasan Abed Al Kader Hammoud",
+      "Hani Itani",
+      "Dmitrii Khizbullin",
+      "Bernard Ghanem"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CL",
+      "cs.CY",
+      "cs.LG",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2303.17760v2",
+    "url": "https://arxiv.org/abs/2303.17760v2"
+  },
+  {
+    "id": "2210.03629v3",
+    "title": "ReAct: Synergizing Reasoning and Acting in Language Models",
+    "abstract": "While large language models (LLMs) have demonstrated impressive capabilities across tasks in language understanding and interactive decision making, their abilities for reasoning (e.g. chain-of-thought prompting) and acting (e.g. action plan generation) have primarily been studied as separate topics. In this paper, we explore the use of LLMs to generate both reasoning traces and task-specific actions in an interleaved manner, allowing for greater synergy between the two: reasoning traces help the model induce, track, and update action plans as well as handle exceptions, while actions allow it to interface with external sources, such as knowledge bases or environments, to gather additional information. We apply our approach, named ReAct, to a diverse set of language and decision making tasks and demonstrate its effectiveness over state-of-the-art baselines, as well as improved human interpretability and trustworthiness over methods without reasoning or acting components. Concretely, on question answering (HotpotQA) and fact verification (Fever), ReAct overcomes issues of hallucination and error propagation prevalent in chain-of-thought reasoning by interacting with a simple Wikipedia API, and generates human-like task-solving trajectories that are more interpretable than baselines without reasoning traces. On two interactive decision making benchmarks (ALFWorld and WebShop), ReAct outperforms imitation and reinforcement learning methods by an absolute success rate of 34% and 10% respectively, while being prompted with only one or two in-context examples. Project site with code: https://react-lm.github.io",
+    "published": "2022-10-06",
+    "authors": [
+      "Shunyu Yao",
+      "Jeffrey Zhao",
+      "Dian Yu",
+      "Nan Du",
+      "Izhak Shafran",
+      "Karthik Narasimhan",
+      "Yuan Cao"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2210.03629v3",
+    "url": "https://arxiv.org/abs/2210.03629v3"
+  },
+  {
+    "id": "2308.01423v2",
+    "title": "ChatMOF: An Autonomous AI System for Predicting and Generating Metal-Organic Frameworks",
+    "abstract": "ChatMOF is an autonomous Artificial Intelligence (AI) system that is built to predict and generate metal-organic frameworks (MOFs). By leveraging a large-scale language model (GPT-4 and GPT-3.5-turbo), ChatMOF extracts key details from textual inputs and delivers appropriate responses, thus eliminating the necessity for rigid structured queries. The system is comprised of three core components (i.e. an agent, a toolkit, and an evaluator) and it forms a robust pipeline that manages a variety of tasks, including data retrieval, property prediction, and structure generations. The study further explores the merits and constraints of using large language models (LLMs) AI system in material sciences using and showcases its transformative potential for future advancements.",
+    "published": "2023-08-01",
+    "authors": [
+      "Yeonghun Kang",
+      "Jihan Kim"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.LG",
+      "physics.chem-ph"
+    ],
+    "pdf": "https://arxiv.org/pdf/2308.01423v2",
+    "url": "https://arxiv.org/abs/2308.01423v2"
+  },
+  {
+    "id": "2305.16291v2",
+    "title": "Voyager: An Open-Ended Embodied Agent with Large Language Models",
+    "abstract": "We introduce Voyager, the first LLM-powered embodied lifelong learning agent in Minecraft that continuously explores the world, acquires diverse skills, and makes novel discoveries without human intervention. Voyager consists of three key components: 1) an automatic curriculum that maximizes exploration, 2) an ever-growing skill library of executable code for storing and retrieving complex behaviors, and 3) a new iterative prompting mechanism that incorporates environment feedback, execution errors, and self-verification for program improvement. Voyager interacts with GPT-4 via blackbox queries, which bypasses the need for model parameter fine-tuning. The skills developed by Voyager are temporally extended, interpretable, and compositional, which compounds the agent's abilities rapidly and alleviates catastrophic forgetting. Empirically, Voyager shows strong in-context lifelong learning capability and exhibits exceptional proficiency in playing Minecraft. It obtains 3.3x more unique items, travels 2.3x longer distances, and unlocks key tech tree milestones up to 15.3x faster than prior SOTA. Voyager is able to utilize the learned skill library in a new Minecraft world to solve novel tasks from scratch, while other techniques struggle to generalize. We open-source our full codebase and prompts at https://voyager.minedojo.org/.",
+    "published": "2023-05-25",
+    "authors": [
+      "Guanzhi Wang",
+      "Yuqi Xie",
+      "Yunfan Jiang",
+      "Ajay Mandlekar",
+      "Chaowei Xiao",
+      "Yuke Zhu",
+      "Linxi Fan",
+      "Anima Anandkumar"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2305.16291v2",
+    "url": "https://arxiv.org/abs/2305.16291v2"
+  },
+  {
+    "id": "2305.18323v1",
+    "title": "ReWOO: Decoupling Reasoning from Observations for Efficient Augmented Language Models",
+    "abstract": "Augmented Language Models (ALMs) blend the reasoning capabilities of Large Language Models (LLMs) with tools that allow for knowledge retrieval and action execution. Existing ALM systems trigger LLM thought processes while pulling observations from these tools in an interleaved fashion. Specifically, an LLM reasons to call an external tool, gets halted to fetch the tool's response, and then decides the next action based on all preceding response tokens. Such a paradigm, though straightforward and easy to implement, often leads to huge computation complexity from redundant prompts and repeated execution. This study addresses such challenges for the first time, proposing a modular paradigm ReWOO (Reasoning WithOut Observation) that detaches the reasoning process from external observations, thus significantly reducing token consumption. Comprehensive evaluations across six public NLP benchmarks and a curated dataset reveal consistent performance enhancements with our proposed methodology. Notably, ReWOO achieves 5x token efficiency and 4% accuracy improvement on HotpotQA, a multi-step reasoning benchmark. Furthermore, ReWOO demonstrates robustness under tool-failure scenarios. Beyond prompt efficiency, decoupling parametric modules from non-parametric tool calls enables instruction fine-tuning to offload LLMs into smaller language models, thus substantially reducing model parameters. Our illustrative work offloads reasoning ability from 175B GPT3.5 into 7B LLaMA, demonstrating the significant potential for truly efficient and scalable ALM systems.",
+    "published": "2023-05-23",
+    "authors": [
+      "Binfeng Xu",
+      "Zhiyuan Peng",
+      "Bowen Lei",
+      "Subhabrata Mukherjee",
+      "Yuchen Liu",
+      "Dongkuan Xu"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2305.18323v1",
+    "url": "https://arxiv.org/abs/2305.18323v1"
+  },
+  {
+    "id": "2311.05766v1",
+    "title": "Quantization of spherically symmetric loop quantum gravity coupled to a scalar field and a clock: the asymptotic limit",
+    "abstract": "We continue our work on the study of spherically symmetric loop quantum gravity coupled to two spherically symmetric scalar fields, one which acts as a clock. As a consequence of the presence of the latter, we can define a true Hamiltonian for the theory. The spherically symmetric context allows to carry out precise detailed calculations. Here we study the theory for regions of large values of the radial coordinate. This allows us to define in detail the vacuum of the theory and study its quantum states, yielding a quantum field theory on a quantum space time that makes contact with the usual treatment on classical space times.",
+    "published": "2023-11-09",
+    "authors": [
+      "Rodolfo Gambini",
+      "Jorge Pullin"
+    ],
+    "categories": [
+      "gr-qc"
+    ],
+    "pdf": "https://arxiv.org/pdf/2311.05766v1",
+    "url": "https://arxiv.org/abs/2311.05766v1"
+  },
+  {
+    "id": "2310.06770v3",
+    "title": "SWE-bench: Can Language Models Resolve Real-World GitHub Issues?",
+    "abstract": "Language models have outpaced our ability to evaluate them effectively, but for their future development it is essential to study the frontier of their capabilities. We find real-world software engineering to be a rich, sustainable, and challenging testbed for evaluating the next generation of language models. To this end, we introduce SWE-bench, an evaluation framework consisting of $2,294$ software engineering problems drawn from real GitHub issues and corresponding pull requests across $12$ popular Python repositories. Given a codebase along with a description of an issue to be resolved, a language model is tasked with editing the codebase to address the issue. Resolving issues in SWE-bench frequently requires understanding and coordinating changes across multiple functions, classes, and even files simultaneously, calling for models to interact with execution environments, process extremely long contexts and perform complex reasoning that goes far beyond traditional code generation tasks. Our evaluations show that both state-of-the-art proprietary models and our fine-tuned model SWE-Llama can resolve only the simplest issues. The best-performing model, Claude 2, is able to solve a mere $1.96$% of the issues. Advances on SWE-bench represent steps towards LMs that are more practical, intelligent, and autonomous.",
+    "published": "2023-10-10",
+    "authors": [
+      "Carlos E. Jimenez",
+      "John Yang",
+      "Alexander Wettig",
+      "Shunyu Yao",
+      "Kexin Pei",
+      "Ofir Press",
+      "Karthik Narasimhan"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.SE"
+    ],
+    "pdf": "https://arxiv.org/pdf/2310.06770v3",
+    "url": "https://arxiv.org/abs/2310.06770v3"
+  },
+  {
+    "id": "2302.04761v1",
+    "title": "Toolformer: Language Models Can Teach Themselves to Use Tools",
+    "abstract": "Language models (LMs) exhibit remarkable abilities to solve new tasks from just a few examples or textual instructions, especially at scale. They also, paradoxically, struggle with basic functionality, such as arithmetic or factual lookup, where much simpler and smaller models excel. In this paper, we show that LMs can teach themselves to use external tools via simple APIs and achieve the best of both worlds. We introduce Toolformer, a model trained to decide which APIs to call, when to call them, what arguments to pass, and how to best incorporate the results into future token prediction. This is done in a self-supervised way, requiring nothing more than a handful of demonstrations for each API. We incorporate a range of tools, including a calculator, a Q\\&A system, two different search engines, a translation system, and a calendar. Toolformer achieves substantially improved zero-shot performance across a variety of downstream tasks, often competitive with much larger models, without sacrificing its core language modeling abilities.",
+    "published": "2023-02-09",
+    "authors": [
+      "Timo Schick",
+      "Jane Dwivedi-Yu",
+      "Roberto Dessì",
+      "Roberta Raileanu",
+      "Maria Lomeli",
+      "Luke Zettlemoyer",
+      "Nicola Cancedda",
+      "Thomas Scialom"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2302.04761v1",
+    "url": "https://arxiv.org/abs/2302.04761v1"
+  },
+  {
+    "id": "2305.15334v1",
+    "title": "Gorilla: Large Language Model Connected with Massive APIs",
+    "abstract": "Large Language Models (LLMs) have seen an impressive wave of advances recently, with models now excelling in a variety of tasks, such as mathematical reasoning and program synthesis. However, their potential to effectively use tools via API calls remains unfulfilled. This is a challenging task even for today's state-of-the-art LLMs such as GPT-4, largely due to their inability to generate accurate input arguments and their tendency to hallucinate the wrong usage of an API call. We release Gorilla, a finetuned LLaMA-based model that surpasses the performance of GPT-4 on writing API calls. When combined with a document retriever, Gorilla demonstrates a strong capability to adapt to test-time document changes, enabling flexible user updates or version changes. It also substantially mitigates the issue of hallucination, commonly encountered when prompting LLMs directly. To evaluate the model's ability, we introduce APIBench, a comprehensive dataset consisting of HuggingFace, TorchHub, and TensorHub APIs. The successful integration of the retrieval system with Gorilla demonstrates the potential for LLMs to use tools more accurately, keep up with frequently updated documentation, and consequently increase the reliability and applicability of their outputs. Gorilla's code, model, data, and demo are available at https://gorilla.cs.berkeley.edu",
+    "published": "2023-05-24",
+    "authors": [
+      "Shishir G. Patil",
+      "Tianjun Zhang",
+      "Xin Wang",
+      "Joseph E. Gonzalez"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2305.15334v1",
+    "url": "https://arxiv.org/abs/2305.15334v1"
+  },
+  {
+    "id": "2305.14992v2",
+    "title": "Reasoning with Language Model is Planning with World Model",
+    "abstract": "Large language models (LLMs) have shown remarkable reasoning capabilities, especially when prompted to generate intermediate reasoning steps (e.g., Chain-of-Thought, CoT). However, LLMs can still struggle with problems that are easy for humans, such as generating action plans for executing tasks in a given environment, or performing complex math, logical, and commonsense reasoning. The deficiency stems from the key fact that LLMs lack an internal $\\textit{world model}$ to predict the world $\\textit{state}$ (e.g., environment status, intermediate variable values) and simulate long-term outcomes of actions. This prevents LLMs from performing deliberate planning akin to human brains, which involves exploring alternative reasoning paths, anticipating future states and rewards, and iteratively refining existing reasoning steps. To overcome the limitations, we propose a new LLM reasoning framework, $\\underline{R}$easoning vi$\\underline{a}$ $\\underline{P}$lanning $\\textbf{(RAP)}$. RAP repurposes the LLM as both a world model and a reasoning agent, and incorporates a principled planning algorithm (based on Monto Carlo Tree Search) for strategic exploration in the vast reasoning space. During reasoning, the LLM (as agent) incrementally builds a reasoning tree under the guidance of the LLM (as world model) and task-specific rewards, and obtains a high-reward reasoning path efficiently with a proper balance between exploration $\\textit{vs.}$ exploitation. We apply RAP to a variety of challenging reasoning problems including plan generation, math reasoning, and logical inference. Empirical results on these tasks demonstrate the superiority of RAP over various strong baselines, including CoT and least-to-most prompting with self-consistency. RAP on LLAMA-33B surpasses CoT on GPT-4 with 33% relative improvement in a plan generation setting.",
+    "published": "2023-05-24",
+    "authors": [
+      "Shibo Hao",
+      "Yi Gu",
+      "Haodi Ma",
+      "Joshua Jiahua Hong",
+      "Zhen Wang",
+      "Daisy Zhe Wang",
+      "Zhiting Hu"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2305.14992v2",
+    "url": "https://arxiv.org/abs/2305.14992v2"
+  },
+  {
+    "id": "2305.10601v2",
+    "title": "Tree of Thoughts: Deliberate Problem Solving with Large Language Models",
+    "abstract": "Language models are increasingly being deployed for general problem solving across a wide range of tasks, but are still confined to token-level, left-to-right decision-making processes during inference. This means they can fall short in tasks that require exploration, strategic lookahead, or where initial decisions play a pivotal role. To surmount these challenges, we introduce a new framework for language model inference, Tree of Thoughts (ToT), which generalizes over the popular Chain of Thought approach to prompting language models, and enables exploration over coherent units of text (thoughts) that serve as intermediate steps toward problem solving. ToT allows LMs to perform deliberate decision making by considering multiple different reasoning paths and self-evaluating choices to decide the next course of action, as well as looking ahead or backtracking when necessary to make global choices. Our experiments show that ToT significantly enhances language models' problem-solving abilities on three novel tasks requiring non-trivial planning or search: Game of 24, Creative Writing, and Mini Crosswords. For instance, in Game of 24, while GPT-4 with chain-of-thought prompting only solved 4% of tasks, our method achieved a success rate of 74%. Code repo with all prompts: https://github.com/princeton-nlp/tree-of-thought-llm.",
+    "published": "2023-05-17",
+    "authors": [
+      "Shunyu Yao",
+      "Dian Yu",
+      "Jeffrey Zhao",
+      "Izhak Shafran",
+      "Thomas L. Griffiths",
+      "Yuan Cao",
+      "Karthik Narasimhan"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2305.10601v2",
+    "url": "https://arxiv.org/abs/2305.10601v2"
+  },
+  {
+    "id": "2305.03720v1",
+    "title": "Training Is Everything: Artificial Intelligence, Copyright, and Fair Training",
+    "abstract": "To learn how to behave, the current revolutionary generation of AIs must be trained on vast quantities of published images, written works, and sounds, many of which fall within the core subject matter of copyright law. To some, the use of copyrighted works as training sets for AI is merely a transitory and non-consumptive use that does not materially interfere with owners' content or copyrights protecting it. Companies that use such content to train their AI engine often believe such usage should be considered \"fair use\" under United States law (sometimes known as \"fair dealing\" in other countries). By contrast, many copyright owners, as well as their supporters, consider the incorporation of copyrighted works into training sets for AI to constitute misappropriation of owners' intellectual property, and, thus, decidedly not fair use under the law. This debate is vital to the future trajectory of AI and its applications.\n  In this article, we analyze the arguments in favor of, and against, viewing the use of copyrighted works in training sets for AI as fair use. We call this form of fair use \"fair training\". We identify both strong and spurious arguments on both sides of this debate. In addition, we attempt to take a broader perspective, weighing the societal costs (e.g., replacement of certain forms of human employment) and benefits (e.g., the possibility of novel AI-based approaches to global issues such as environmental disruption) of allowing AI to make easy use of copyrighted works as training sets to facilitate the development, improvement, adoption, and diffusion of AI. Finally, we suggest that the debate over AI and copyrighted works may be a tempest in a teapot when placed in the wider context of massive societal challenges such as poverty, equality, climate change, and loss of biodiversity, to which AI may be part of the solution.",
+    "published": "2023-05-04",
+    "authors": [
+      "Andrew W. Torrance",
+      "Bill Tomlinson"
+    ],
+    "categories": [
+      "cs.CY",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2305.03720v1",
+    "url": "https://arxiv.org/abs/2305.03720v1"
+  },
+  {
+    "id": "2308.04026v1",
+    "title": "AgentSims: An Open-Source Sandbox for Large Language Model Evaluation",
+    "abstract": "With ChatGPT-like large language models (LLM) prevailing in the community, how to evaluate the ability of LLMs is an open question. Existing evaluation methods suffer from following shortcomings: (1) constrained evaluation abilities, (2) vulnerable benchmarks, (3) unobjective metrics. We suggest that task-based evaluation, where LLM agents complete tasks in a simulated environment, is a one-for-all solution to solve above problems. We present AgentSims, an easy-to-use infrastructure for researchers from all disciplines to test the specific capacities they are interested in. Researchers can build their evaluation tasks by adding agents and buildings on an interactive GUI or deploy and test new support mechanisms, i.e. memory, planning and tool-use systems, by a few lines of codes. Our demo is available at https://agentsims.com .",
+    "published": "2023-08-08",
+    "authors": [
+      "Jiaju Lin",
+      "Haoran Zhao",
+      "Aochi Zhang",
+      "Yiting Wu",
+      "Huqiuyue Ping",
+      "Qin Chen"
+    ],
+    "categories": [
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2308.04026v1",
+    "url": "https://arxiv.org/abs/2308.04026v1"
+  },
+  {
+    "id": "2308.00352v7",
+    "title": "MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework",
+    "abstract": "Remarkable progress has been made on automated problem solving through societies of agents based on large language models (LLMs). Existing LLM-based multi-agent systems can already solve simple dialogue tasks. Solutions to more complex tasks, however, are complicated through logic inconsistencies due to cascading hallucinations caused by naively chaining LLMs. Here we introduce MetaGPT, an innovative meta-programming framework incorporating efficient human workflows into LLM-based multi-agent collaborations. MetaGPT encodes Standardized Operating Procedures (SOPs) into prompt sequences for more streamlined workflows, thus allowing agents with human-like domain expertise to verify intermediate results and reduce errors. MetaGPT utilizes an assembly line paradigm to assign diverse roles to various agents, efficiently breaking down complex tasks into subtasks involving many agents working together. On collaborative software engineering benchmarks, MetaGPT generates more coherent solutions than previous chat-based multi-agent systems. Our project can be found at https://github.com/geekan/MetaGPT",
+    "published": "2023-08-01",
+    "authors": [
+      "Sirui Hong",
+      "Mingchen Zhuge",
+      "Jiaqi Chen",
+      "Xiawu Zheng",
+      "Yuheng Cheng",
+      "Ceyao Zhang",
+      "Jinlin Wang",
+      "Zili Wang",
+      "Steven Ka Shing Yau",
+      "Zijuan Lin",
+      "Liyang Zhou",
+      "Chenyu Ran",
+      "Lingfeng Xiao",
+      "Chenglin Wu",
+      "Jürgen Schmidhuber"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.MA"
+    ],
+    "pdf": "https://arxiv.org/pdf/2308.00352v7",
+    "url": "https://arxiv.org/abs/2308.00352v7"
+  },
+  {
+    "id": "2310.03714v1",
+    "title": "DSPy: Compiling Declarative Language Model Calls into Self-Improving Pipelines",
+    "abstract": "The ML community is rapidly exploring techniques for prompting language models (LMs) and for stacking them into pipelines that solve complex tasks. Unfortunately, existing LM pipelines are typically implemented using hard-coded \"prompt templates\", i.e. lengthy strings discovered via trial and error. Toward a more systematic approach for developing and optimizing LM pipelines, we introduce DSPy, a programming model that abstracts LM pipelines as text transformation graphs, i.e. imperative computational graphs where LMs are invoked through declarative modules. DSPy modules are parameterized, meaning they can learn (by creating and collecting demonstrations) how to apply compositions of prompting, finetuning, augmentation, and reasoning techniques. We design a compiler that will optimize any DSPy pipeline to maximize a given metric. We conduct two case studies, showing that succinct DSPy programs can express and optimize sophisticated LM pipelines that reason about math word problems, tackle multi-hop retrieval, answer complex questions, and control agent loops. Within minutes of compiling, a few lines of DSPy allow GPT-3.5 and llama2-13b-chat to self-bootstrap pipelines that outperform standard few-shot prompting (generally by over 25% and 65%, respectively) and pipelines with expert-created demonstrations (by up to 5-46% and 16-40%, respectively). On top of that, DSPy programs compiled to open and relatively small LMs like 770M-parameter T5 and llama2-13b-chat are competitive with approaches that rely on expert-written prompt chains for proprietary GPT-3.5. DSPy is available at https://github.com/stanfordnlp/dspy",
+    "published": "2023-10-05",
+    "authors": [
+      "Omar Khattab",
+      "Arnav Singhvi",
+      "Paridhi Maheshwari",
+      "Zhiyuan Zhang",
+      "Keshav Santhanam",
+      "Sri Vardhamanan",
+      "Saiful Haq",
+      "Ashutosh Sharma",
+      "Thomas T. Joshi",
+      "Hanna Moazam",
+      "Heather Miller",
+      "Matei Zaharia",
+      "Christopher Potts"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.IR",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2310.03714v1",
+    "url": "https://arxiv.org/abs/2310.03714v1"
+  },
+  {
+    "id": "2310.12823v2",
+    "title": "AgentTuning: Enabling Generalized Agent Abilities for LLMs",
+    "abstract": "Open large language models (LLMs) with great performance in various tasks have significantly advanced the development of LLMs. However, they are far inferior to commercial models such as ChatGPT and GPT-4 when acting as agents to tackle complex tasks in the real world. These agent tasks employ LLMs as the central controller responsible for planning, memorization, and tool utilization, necessitating both fine-grained prompting methods and robust LLMs to achieve satisfactory performance. Though many prompting methods have been proposed to complete particular agent tasks, there is lack of research focusing on improving the agent capabilities of LLMs themselves without compromising their general abilities. In this work, we present AgentTuning, a simple and general method to enhance the agent abilities of LLMs while maintaining their general LLM capabilities. We construct AgentInstruct, a lightweight instruction-tuning dataset containing high-quality interaction trajectories. We employ a hybrid instruction-tuning strategy by combining AgentInstruct with open-source instructions from general domains. AgentTuning is used to instruction-tune the Llama 2 series, resulting in AgentLM. Our evaluations show that AgentTuning enables LLMs' agent capabilities without compromising general abilities. The AgentLM-70B is comparable to GPT-3.5-turbo on unseen agent tasks, demonstrating generalized agent capabilities. We open source the AgentInstruct and AgentLM-7B, 13B, and 70B models at https://github.com/THUDM/AgentTuning, serving open and powerful alternatives to commercial LLMs for agent tasks.",
+    "published": "2023-10-19",
+    "authors": [
+      "Aohan Zeng",
+      "Mingdao Liu",
+      "Rui Lu",
+      "Bowen Wang",
+      "Xiao Liu",
+      "Yuxiao Dong",
+      "Jie Tang"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2310.12823v2",
+    "url": "https://arxiv.org/abs/2310.12823v2"
+  },
+  {
+    "id": "2304.03442v2",
+    "title": "Generative Agents: Interactive Simulacra of Human Behavior",
+    "abstract": "Believable proxies of human behavior can empower interactive applications ranging from immersive environments to rehearsal spaces for interpersonal communication to prototyping tools. In this paper, we introduce generative agents--computational software agents that simulate believable human behavior. Generative agents wake up, cook breakfast, and head to work; artists paint, while authors write; they form opinions, notice each other, and initiate conversations; they remember and reflect on days past as they plan the next day. To enable generative agents, we describe an architecture that extends a large language model to store a complete record of the agent's experiences using natural language, synthesize those memories over time into higher-level reflections, and retrieve them dynamically to plan behavior. We instantiate generative agents to populate an interactive sandbox environment inspired by The Sims, where end users can interact with a small town of twenty five agents using natural language. In an evaluation, these generative agents produce believable individual and emergent social behaviors: for example, starting with only a single user-specified notion that one agent wants to throw a Valentine's Day party, the agents autonomously spread invitations to the party over the next two days, make new acquaintances, ask each other out on dates to the party, and coordinate to show up for the party together at the right time. We demonstrate through ablation that the components of our agent architecture--observation, planning, and reflection--each contribute critically to the believability of agent behavior. By fusing large language models with computational, interactive agents, this work introduces architectural and interaction patterns for enabling believable simulations of human behavior.",
+    "published": "2023-04-07",
+    "authors": [
+      "Joon Sung Park",
+      "Joseph C. O'Brien",
+      "Carrie J. Cai",
+      "Meredith Ringel Morris",
+      "Percy Liang",
+      "Michael S. Bernstein"
+    ],
+    "categories": [
+      "cs.HC",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2304.03442v2",
+    "url": "https://arxiv.org/abs/2304.03442v2"
+  },
+  {
+    "id": "2303.11366v4",
+    "title": "Reflexion: Language Agents with Verbal Reinforcement Learning",
+    "abstract": "Large language models (LLMs) have been increasingly used to interact with external environments (e.g., games, compilers, APIs) as goal-driven agents. However, it remains challenging for these language agents to quickly and efficiently learn from trial-and-error as traditional reinforcement learning methods require extensive training samples and expensive model fine-tuning. We propose Reflexion, a novel framework to reinforce language agents not by updating weights, but instead through linguistic feedback. Concretely, Reflexion agents verbally reflect on task feedback signals, then maintain their own reflective text in an episodic memory buffer to induce better decision-making in subsequent trials. Reflexion is flexible enough to incorporate various types (scalar values or free-form language) and sources (external or internally simulated) of feedback signals, and obtains significant improvements over a baseline agent across diverse tasks (sequential decision-making, coding, language reasoning). For example, Reflexion achieves a 91% pass@1 accuracy on the HumanEval coding benchmark, surpassing the previous state-of-the-art GPT-4 that achieves 80%. We also conduct ablation and analysis studies using different feedback signals, feedback incorporation methods, and agent types, and provide insights into how they affect performance.",
+    "published": "2023-03-20",
+    "authors": [
+      "Noah Shinn",
+      "Federico Cassano",
+      "Edward Berman",
+      "Ashwin Gopinath",
+      "Karthik Narasimhan",
+      "Shunyu Yao"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CL",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2303.11366v4",
+    "url": "https://arxiv.org/abs/2303.11366v4"
+  },
+  {
+    "id": "2303.10187v2",
+    "title": "Modelling stellar evolution in mass-transferring binaries and gravitational-wave progenitors with METISSE",
+    "abstract": "Massive binaries are vital sources of various transient processes, including gravitational-wave mergers. However, large uncertainties in the evolution of massive stars, both physical and numerical, present a major challenge to the understanding of their binary evolution. In this paper, we upgrade our interpolation-based stellar evolution code METISSE to include the effects of mass changes, such as binary mass transfer or wind-driven mass loss, not already included within the input stellar tracks. METISSE's implementation of mass loss (applied to tracks without mass loss) shows excellent agreement with the SSE fitting formulae and with detailed MESA tracks, except in cases where the mass transfer is too rapid for the star to maintain equilibrium. We use this updated version of METISSE within the binary population synthesis code BSE to demonstrate the impact of varying stellar evolution parameters, particularly core overshooting, on the evolution of a massive (25M$_\\odot$ and 15M$_\\odot$) binary system with an orbital period of 1800 days. Depending on the input tracks, we find that the binary system can form a binary black hole or a black hole-neutron star system, with primary(secondary) remnant masses ranging between 4.47(1.36)M$_\\odot$ and 12.30(10.89)M$_\\odot$, and orbital periods ranging from 6 days to the binary becoming unbound. Extending this analysis to a population of isolated binaries uniformly distributed in mass and orbital period, we show that the input stellar models play an important role in determining which regions of the binary parameter space can produce compact binary mergers, paving the way for predictions for current and future gravitational-wave observatories.",
+    "published": "2023-03-17",
+    "authors": [
+      "Poojan Agrawal",
+      "Jarrod Hurley",
+      "Simon Stevenson",
+      "Carl L. Rodriguez",
+      "Dorottya Szecsi",
+      "Alex Kemp"
+    ],
+    "categories": [
+      "astro-ph.SR"
+    ],
+    "pdf": "https://arxiv.org/pdf/2303.10187v2",
+    "url": "https://arxiv.org/abs/2303.10187v2"
+  },
+  {
+    "id": "2308.08155v2",
+    "title": "AutoGen: Enabling Next-Gen LLM Applications via Multi-Agent Conversation",
+    "abstract": "AutoGen is an open-source framework that allows developers to build LLM applications via multiple agents that can converse with each other to accomplish tasks. AutoGen agents are customizable, conversable, and can operate in various modes that employ combinations of LLMs, human inputs, and tools. Using AutoGen, developers can also flexibly define agent interaction behaviors. Both natural language and computer code can be used to program flexible conversation patterns for different applications. AutoGen serves as a generic infrastructure to build diverse applications of various complexities and LLM capacities. Empirical studies demonstrate the effectiveness of the framework in many example applications, with domains ranging from mathematics, coding, question answering, operations research, online decision-making, entertainment, etc.",
+    "published": "2023-08-16",
+    "authors": [
+      "Qingyun Wu",
+      "Gagan Bansal",
+      "Jieyu Zhang",
+      "Yiran Wu",
+      "Beibin Li",
+      "Erkang Zhu",
+      "Li Jiang",
+      "Xiaoyun Zhang",
+      "Shaokun Zhang",
+      "Jiale Liu",
+      "Ahmed Hassan Awadallah",
+      "Ryen W White",
+      "Doug Burger",
+      "Chi Wang"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2308.08155v2",
+    "url": "https://arxiv.org/abs/2308.08155v2"
+  },
+  {
+    "id": "2303.17580v4",
+    "title": "HuggingGPT: Solving AI Tasks with ChatGPT and its Friends in Hugging Face",
+    "abstract": "Solving complicated AI tasks with different domains and modalities is a key step toward artificial general intelligence. While there are numerous AI models available for various domains and modalities, they cannot handle complicated AI tasks autonomously. Considering large language models (LLMs) have exhibited exceptional abilities in language understanding, generation, interaction, and reasoning, we advocate that LLMs could act as a controller to manage existing AI models to solve complicated AI tasks, with language serving as a generic interface to empower this. Based on this philosophy, we present HuggingGPT, an LLM-powered agent that leverages LLMs (e.g., ChatGPT) to connect various AI models in machine learning communities (e.g., Hugging Face) to solve AI tasks. Specifically, we use ChatGPT to conduct task planning when receiving a user request, select models according to their function descriptions available in Hugging Face, execute each subtask with the selected AI model, and summarize the response according to the execution results. By leveraging the strong language capability of ChatGPT and abundant AI models in Hugging Face, HuggingGPT can tackle a wide range of sophisticated AI tasks spanning different modalities and domains and achieve impressive results in language, vision, speech, and other challenging tasks, which paves a new way towards the realization of artificial general intelligence.",
+    "published": "2023-03-30",
+    "authors": [
+      "Yongliang Shen",
+      "Kaitao Song",
+      "Xu Tan",
+      "Dongsheng Li",
+      "Weiming Lu",
+      "Yueting Zhuang"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.CV",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2303.17580v4",
+    "url": "https://arxiv.org/abs/2303.17580v4"
+  },
+  {
+    "id": "2304.11477v3",
+    "title": "LLM+P: Empowering Large Language Models with Optimal Planning Proficiency",
+    "abstract": "Large language models (LLMs) have demonstrated remarkable zero-shot generalization abilities: state-of-the-art chatbots can provide plausible answers to many common questions that arise in daily life. However, so far, LLMs cannot reliably solve long-horizon planning problems. By contrast, classical planners, once a problem is given in a formatted way, can use efficient search algorithms to quickly identify correct, or even optimal, plans. In an effort to get the best of both worlds, this paper introduces LLM+P, the first framework that incorporates the strengths of classical planners into LLMs. LLM+P takes in a natural language description of a planning problem, then returns a correct (or optimal) plan for solving that problem in natural language. LLM+P does so by first converting the language description into a file written in the planning domain definition language (PDDL), then leveraging classical planners to quickly find a solution, and then translating the found solution back into natural language. Along with LLM+P, we define a diverse set of different benchmark problems taken from common planning scenarios. Via a comprehensive set of experiments on these benchmark problems, we find that LLM+P is able to provide optimal solutions for most problems, while LLMs fail to provide even feasible plans for most problems.\\footnote{The code and results are publicly available at https://github.com/Cranial-XIX/llm-pddl.git.",
+    "published": "2023-04-22",
+    "authors": [
+      "Bo Liu",
+      "Yuqian Jiang",
+      "Xiaohan Zhang",
+      "Qiang Liu",
+      "Shiqi Zhang",
+      "Joydeep Biswas",
+      "Peter Stone"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.RO"
+    ],
+    "pdf": "https://arxiv.org/pdf/2304.11477v3",
+    "url": "https://arxiv.org/abs/2304.11477v3"
+  },
+  {
+    "id": "2310.10724v1",
+    "title": "Quiver Tails and Brane Webs",
+    "abstract": "A new type of quiver theories, denoted twin quivers, was recently introduced for studying $5d$ SCFTs engineered by webs of 5-branes ending on 7-branes. Twin quivers provide an alternative perspective on various aspects of such webs, including Hanany-Witten moves and the $s$-rule. More ambitiously, they can be regarded as a first step towards the construction of combinatorial objects, generalizing brane tilings, encoding the corresponding BPS quivers. This paper continues the investigation of twin quivers, focusing on their non-uniqueness, which stems from the multiplicity of toric phases for a given toric Calabi-Yau 3-fold. We find that the different twin quivers are necessary for describing what we call quiver tails, which in turn correspond to certain sub-configurations in the webs. More generally, the multiplicity of twin quivers captures the roots of the Higgs branch in the extended Coulomb branch of $5d$ theories.",
+    "published": "2023-10-16",
+    "authors": [
+      "Sebastian Franco",
+      "Diego Rodriguez-Gomez"
+    ],
+    "categories": [
+      "hep-th"
+    ],
+    "pdf": "https://arxiv.org/pdf/2310.10724v1",
+    "url": "https://arxiv.org/abs/2310.10724v1"
+  },
+  {
+    "id": "2402.07456v2",
+    "title": "OS-Copilot: Towards Generalist Computer Agents with Self-Improvement",
+    "abstract": "Autonomous interaction with the computer has been a longstanding challenge with great potential, and the recent proliferation of large language models (LLMs) has markedly accelerated progress in building digital agents. However, most of these agents are designed to interact with a narrow domain, such as a specific software or website. This narrow focus constrains their applicability for general computer tasks. To this end, we introduce OS-Copilot, a framework to build generalist agents capable of interfacing with comprehensive elements in an operating system (OS), including the web, code terminals, files, multimedia, and various third-party applications. We use OS-Copilot to create FRIDAY, a self-improving embodied agent for automating general computer tasks. On GAIA, a general AI assistants benchmark, FRIDAY outperforms previous methods by 35%, showcasing strong generalization to unseen applications via accumulated skills from previous tasks. We also present numerical and quantitative evidence that FRIDAY learns to control and self-improve on Excel and Powerpoint with minimal supervision. Our OS-Copilot framework and empirical findings provide infrastructure and insights for future research toward more capable and general-purpose computer agents.",
+    "published": "2024-02-12",
+    "authors": [
+      "Zhiyong Wu",
+      "Chengcheng Han",
+      "Zichen Ding",
+      "Zhenmin Weng",
+      "Zhoumianze Liu",
+      "Shunyu Yao",
+      "Tao Yu",
+      "Lingpeng Kong"
+    ],
+    "categories": [
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2402.07456v2",
+    "url": "https://arxiv.org/abs/2402.07456v2"
+  },
+  {
+    "id": "2312.04511v3",
+    "title": "An LLM Compiler for Parallel Function Calling",
+    "abstract": "The reasoning capabilities of the recent LLMs enable them to execute external function calls to overcome their inherent limitations, such as knowledge cutoffs, poor arithmetic skills, or lack of access to private data. This development has allowed LLMs to select and coordinate multiple functions based on the context to tackle more complex problems. However, current methods for function calling often require sequential reasoning and acting for each function which can result in high latency, cost, and sometimes inaccurate behavior. To address this, we introduce LLMCompiler, which executes functions in parallel to efficiently orchestrate multiple function calls. Drawing inspiration from the principles of classical compilers, LLMCompiler enables parallel function calling with three components: (i) a Function Calling Planner, formulating execution plans for function calling; (ii) a Task Fetching Unit, dispatching function calling tasks; and (iii) an Executor, executing these tasks in parallel. LLMCompiler automatically generates an optimized orchestration for the function calls and can be used with both open-source and closed-source models. We have benchmarked LLMCompiler on a range of tasks with different patterns of function calling. We observe consistent latency speedup of up to 3.7x, cost savings of up to 6.7x, and accuracy improvement of up to ~9% compared to ReAct. Our code is available at https://github.com/SqueezeAILab/LLMCompiler.",
+    "published": "2023-12-07",
+    "authors": [
+      "Sehoon Kim",
+      "Suhong Moon",
+      "Ryan Tabrizi",
+      "Nicholas Lee",
+      "Michael W. Mahoney",
+      "Kurt Keutzer",
+      "Amir Gholami"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2312.04511v3",
+    "url": "https://arxiv.org/abs/2312.04511v3"
+  },
+  {
+    "id": "2310.10634v1",
+    "title": "OpenAgents: An Open Platform for Language Agents in the Wild",
+    "abstract": "Language agents show potential in being capable of utilizing natural language for varied and intricate tasks in diverse environments, particularly when built upon large language models (LLMs). Current language agent frameworks aim to facilitate the construction of proof-of-concept language agents while neglecting the non-expert user access to agents and paying little attention to application-level designs. We present OpenAgents, an open platform for using and hosting language agents in the wild of everyday life. OpenAgents includes three agents: (1) Data Agent for data analysis with Python/SQL and data tools; (2) Plugins Agent with 200+ daily API tools; (3) Web Agent for autonomous web browsing. OpenAgents enables general users to interact with agent functionalities through a web user interface optimized for swift responses and common failures while offering developers and researchers a seamless deployment experience on local setups, providing a foundation for crafting innovative language agents and facilitating real-world evaluations. We elucidate the challenges and opportunities, aspiring to set a foundation for future research and development of real-world language agents.",
+    "published": "2023-10-16",
+    "authors": [
+      "Tianbao Xie",
+      "Fan Zhou",
+      "Zhoujun Cheng",
+      "Peng Shi",
+      "Luoxuan Weng",
+      "Yitao Liu",
+      "Toh Jing Hua",
+      "Junning Zhao",
+      "Qian Liu",
+      "Che Liu",
+      "Leo Z. Liu",
+      "Yiheng Xu",
+      "Hongjin Su",
+      "Dongchan Shin",
+      "Caiming Xiong",
+      "Tao Yu"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI"
+    ],
+    "pdf": "https://arxiv.org/pdf/2310.10634v1",
+    "url": "https://arxiv.org/abs/2310.10634v1"
+  },
+  {
+    "id": "2404.03648v2",
+    "title": "AutoWebGLM: A Large Language Model-based Web Navigating Agent",
+    "abstract": "Large language models (LLMs) have fueled many intelligent web agents, but most existing ones perform far from satisfying in real-world web navigation tasks due to three factors: (1) the complexity of HTML text data (2) versatility of actions on webpages, and (3) task difficulty due to the open-domain nature of the web. In light of these challenges, we develop the open AutoWebGLM based on ChatGLM3-6B. AutoWebGLM can serve as a powerful automated web navigation agent that outperform GPT-4. Inspired by human browsing patterns, we first design an HTML simplification algorithm to represent webpages with vital information preserved succinctly. We then employ a hybrid human-AI method to build web browsing data for curriculum training. Finally, we bootstrap the model by reinforcement learning and rejection sampling to further facilitate webpage comprehension, browser operations, and efficient task decomposition by itself. For comprehensive evaluation, we establish a bilingual benchmark -- AutoWebBench -- for real-world web navigation tasks. We evaluate AutoWebGLM across diverse web navigation benchmarks, demonstrating its potential to tackle challenging tasks in real environments. Related code, model, and data are released at \\url{https://github.com/THUDM/AutoWebGLM}.",
+    "published": "2024-04-04",
+    "authors": [
+      "Hanyu Lai",
+      "Xiao Liu",
+      "Iat Long Iong",
+      "Shuntian Yao",
+      "Yuxuan Chen",
+      "Pengbo Shen",
+      "Hao Yu",
+      "Hanchen Zhang",
+      "Xiaohan Zhang",
+      "Yuxiao Dong",
+      "Jie Tang"
+    ],
+    "categories": [
+      "cs.CL"
+    ],
+    "pdf": "https://arxiv.org/pdf/2404.03648v2",
+    "url": "https://arxiv.org/abs/2404.03648v2"
+  },
+  {
+    "id": "2501.12326v1",
+    "title": "UI-TARS: Pioneering Automated GUI Interaction with Native Agents",
+    "abstract": "This paper introduces UI-TARS, a native GUI agent model that solely perceives the screenshots as input and performs human-like interactions (e.g., keyboard and mouse operations). Unlike prevailing agent frameworks that depend on heavily wrapped commercial models (e.g., GPT-4o) with expert-crafted prompts and workflows, UI-TARS is an end-to-end model that outperforms these sophisticated frameworks. Experiments demonstrate its superior performance: UI-TARS achieves SOTA performance in 10+ GUI agent benchmarks evaluating perception, grounding, and GUI task execution. Notably, in the OSWorld benchmark, UI-TARS achieves scores of 24.6 with 50 steps and 22.7 with 15 steps, outperforming Claude (22.0 and 14.9 respectively). In AndroidWorld, UI-TARS achieves 46.6, surpassing GPT-4o (34.5). UI-TARS incorporates several key innovations: (1) Enhanced Perception: leveraging a large-scale dataset of GUI screenshots for context-aware understanding of UI elements and precise captioning; (2) Unified Action Modeling, which standardizes actions into a unified space across platforms and achieves precise grounding and interaction through large-scale action traces; (3) System-2 Reasoning, which incorporates deliberate reasoning into multi-step decision making, involving multiple reasoning patterns such as task decomposition, reflection thinking, milestone recognition, etc. (4) Iterative Training with Reflective Online Traces, which addresses the data bottleneck by automatically collecting, filtering, and reflectively refining new interaction traces on hundreds of virtual machines. Through iterative training and reflection tuning, UI-TARS continuously learns from its mistakes and adapts to unforeseen situations with minimal human intervention. We also analyze the evolution path of GUI agents to guide the further development of this domain.",
+    "published": "2025-01-21",
+    "authors": [
+      "Yujia Qin",
+      "Yining Ye",
+      "Junjie Fang",
+      "Haoming Wang",
+      "Shihao Liang",
+      "Shizuo Tian",
+      "Junda Zhang",
+      "Jiahao Li",
+      "Yunxin Li",
+      "Shijue Huang",
+      "Wanjun Zhong",
+      "Kuanye Li",
+      "Jiale Yang",
+      "Yu Miao",
+      "Woyu Lin",
+      "Longxiang Liu",
+      "Xu Jiang",
+      "Qianli Ma",
+      "Jingyu Li",
+      "Xiaojun Xiao",
+      "Kai Cai",
+      "Chuang Li",
+      "Yaowei Zheng",
+      "Chaolin Jin",
+      "Chen Li",
+      "Xiao Zhou",
+      "Minchao Wang",
+      "Haoli Chen",
+      "Zhaojian Li",
+      "Haihua Yang",
+      "Haifeng Liu",
+      "Feng Lin",
+      "Tao Peng",
+      "Xin Liu",
+      "Guang Shi"
+    ],
+    "categories": [
+      "cs.AI",
+      "cs.CL",
+      "cs.CV",
+      "cs.HC"
+    ],
+    "pdf": "https://arxiv.org/pdf/2501.12326v1",
+    "url": "https://arxiv.org/abs/2501.12326v1"
+  },
+  {
+    "id": "2501.12948v2",
+    "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning",
+    "abstract": "General reasoning represents a long-standing and formidable challenge in artificial intelligence. Recent breakthroughs, exemplified by large language models (LLMs) and chain-of-thought prompting, have achieved considerable success on foundational reasoning tasks. However, this success is heavily contingent upon extensive human-annotated demonstrations, and models' capabilities are still insufficient for more complex problems. Here we show that the reasoning abilities of LLMs can be incentivized through pure reinforcement learning (RL), obviating the need for human-labeled reasoning trajectories. The proposed RL framework facilitates the emergent development of advanced reasoning patterns, such as self-reflection, verification, and dynamic strategy adaptation. Consequently, the trained model achieves superior performance on verifiable tasks such as mathematics, coding competitions, and STEM fields, surpassing its counterparts trained via conventional supervised learning on human demonstrations. Moreover, the emergent reasoning patterns exhibited by these large-scale models can be systematically harnessed to guide and enhance the reasoning capabilities of smaller models.",
+    "published": "2025-01-22",
+    "authors": [
+      " DeepSeek-AI",
+      "Daya Guo",
+      "Dejian Yang",
+      "Haowei Zhang",
+      "Junxiao Song",
+      "Peiyi Wang",
+      "Qihao Zhu",
+      "Runxin Xu",
+      "Ruoyu Zhang",
+      "Shirong Ma",
+      "Xiao Bi",
+      "Xiaokang Zhang",
+      "Xingkai Yu",
+      "Yu Wu",
+      "Z. F. Wu",
+      "Zhibin Gou",
+      "Zhihong Shao",
+      "Zhuoshu Li",
+      "Ziyi Gao",
+      "Aixin Liu",
+      "Bing Xue",
+      "Bingxuan Wang",
+      "Bochao Wu",
+      "Bei Feng",
+      "Chengda Lu",
+      "Chenggang Zhao",
+      "Chengqi Deng",
+      "Chenyu Zhang",
+      "Chong Ruan",
+      "Damai Dai",
+      "Deli Chen",
+      "Dongjie Ji",
+      "Erhang Li",
+      "Fangyun Lin",
+      "Fucong Dai",
+      "Fuli Luo",
+      "Guangbo Hao",
+      "Guanting Chen",
+      "Guowei Li",
+      "H. Zhang",
+      "Han Bao",
+      "Hanwei Xu",
+      "Haocheng Wang",
+      "Honghui Ding",
+      "Huajian Xin",
+      "Huazuo Gao",
+      "Hui Qu",
+      "Hui Li",
+      "Jianzhong Guo",
+      "Jiashi Li",
+      "Jiawei Wang",
+      "Jingchang Chen",
+      "Jingyang Yuan",
+      "Junjie Qiu",
+      "Junlong Li",
+      "J. L. Cai",
+      "Jiaqi Ni",
+      "Jian Liang",
+      "Jin Chen",
+      "Kai Dong",
+      "Kai Hu",
+      "Kaige Gao",
+      "Kang Guan",
+      "Kexin Huang",
+      "Kuai Yu",
+      "Lean Wang",
+      "Lecong Zhang",
+      "Liang Zhao",
+      "Litong Wang",
+      "Liyue Zhang",
+      "Lei Xu",
+      "Leyi Xia",
+      "Mingchuan Zhang",
+      "Minghua Zhang",
+      "Minghui Tang",
+      "Meng Li",
+      "Miaojun Wang",
+      "Mingming Li",
+      "Ning Tian",
+      "Panpan Huang",
+      "Peng Zhang",
+      "Qiancheng Wang",
+      "Qinyu Chen",
+      "Qiushi Du",
+      "Ruiqi Ge",
+      "Ruisong Zhang",
+      "Ruizhe Pan",
+      "Runji Wang",
+      "R. J. Chen",
+      "R. L. Jin",
+      "Ruyi Chen",
+      "Shanghao Lu",
+      "Shangyan Zhou",
+      "Shanhuang Chen",
+      "Shengfeng Ye",
+      "Shiyu Wang",
+      "Shuiping Yu",
+      "Shunfeng Zhou",
+      "Shuting Pan",
+      "S. S. Li",
+      "Shuang Zhou",
+      "Shaoqing Wu",
+      "Shengfeng Ye",
+      "Tao Yun",
+      "Tian Pei",
+      "Tianyu Sun",
+      "T. Wang",
+      "Wangding Zeng",
+      "Wanjia Zhao",
+      "Wen Liu",
+      "Wenfeng Liang",
+      "Wenjun Gao",
+      "Wenqin Yu",
+      "Wentao Zhang",
+      "W. L. Xiao",
+      "Wei An",
+      "Xiaodong Liu",
+      "Xiaohan Wang",
+      "Xiaokang Chen",
+      "Xiaotao Nie",
+      "Xin Cheng",
+      "Xin Liu",
+      "Xin Xie",
+      "Xingchao Liu",
+      "Xinyu Yang",
+      "Xinyuan Li",
+      "Xuecheng Su",
+      "Xuheng Lin",
+      "X. Q. Li",
+      "Xiangyue Jin",
+      "Xiaojin Shen",
+      "Xiaosha Chen",
+      "Xiaowen Sun",
+      "Xiaoxiang Wang",
+      "Xinnan Song",
+      "Xinyi Zhou",
+      "Xianzu Wang",
+      "Xinxia Shan",
+      "Y. K. Li",
+      "Y. Q. Wang",
+      "Y. X. Wei",
+      "Yang Zhang",
+      "Yanhong Xu",
+      "Yao Li",
+      "Yao Zhao",
+      "Yaofeng Sun",
+      "Yaohui Wang",
+      "Yi Yu",
+      "Yichao Zhang",
+      "Yifan Shi",
+      "Yiliang Xiong",
+      "Ying He",
+      "Yishi Piao",
+      "Yisong Wang",
+      "Yixuan Tan",
+      "Yiyang Ma",
+      "Yiyuan Liu",
+      "Yongqiang Guo",
+      "Yuan Ou",
+      "Yuduan Wang",
+      "Yue Gong",
+      "Yuheng Zou",
+      "Yujia He",
+      "Yunfan Xiong",
+      "Yuxiang Luo",
+      "Yuxiang You",
+      "Yuxuan Liu",
+      "Yuyang Zhou",
+      "Y. X. Zhu",
+      "Yanhong Xu",
+      "Yanping Huang",
+      "Yaohui Li",
+      "Yi Zheng",
+      "Yuchen Zhu",
+      "Yunxian Ma",
+      "Ying Tang",
+      "Yukun Zha",
+      "Yuting Yan",
+      "Z. Z. Ren",
+      "Zehui Ren",
+      "Zhangli Sha",
+      "Zhe Fu",
+      "Zhean Xu",
+      "Zhenda Xie",
+      "Zhengyan Zhang",
+      "Zhewen Hao",
+      "Zhicheng Ma",
+      "Zhigang Yan",
+      "Zhiyu Wu",
+      "Zihui Gu",
+      "Zijia Zhu",
+      "Zijun Liu",
+      "Zilin Li",
+      "Ziwei Xie",
+      "Ziyang Song",
+      "Zizheng Pan",
+      "Zhen Huang",
+      "Zhipeng Xu",
+      "Zhongyu Zhang",
+      "Zhen Zhang"
+    ],
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf": "https://arxiv.org/pdf/2501.12948v2",
+    "url": "https://arxiv.org/abs/2501.12948v2"
+  }
+]

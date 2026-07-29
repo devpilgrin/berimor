@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  rust:
+    name: Rust · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace
+
+  bootstrap:
+    name: Bootstrap (TypeScript)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: bootstrap/package-lock.json
+      - name: install (без postinstall — dist ещё не собран)
+        working-directory: bootstrap
+        run: npm install --ignore-scripts
+      - name: build
+        working-directory: bootstrap
+        run: npm run build
+
+# Кросс-компиляционная матрица под платформенные артефакты (D1), подпись
+# (D2, sigstore/cosign) и провенанс (D7) добавляются вместе с этими задачами
+# ROADMAP.md — этот workflow пока покрывает только проверку самого кода.
