@@ -74,6 +74,7 @@ version = "0.1.0"
 dependencies = [
  "berimor-types",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

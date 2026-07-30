@@ -8,3 +8,4 @@ description = "Deny-статика, jail, сетевой гейт, режимы 
 [dependencies]
 berimor-types = { path = "../berimor-types" }
 serde = { workspace = true }
+serde_json.workspace = true

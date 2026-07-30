@@ -1,8 +1,13 @@
 //! `berimor-capability` — deny-статика, jail, сетевой гейт, подтверждения, ACL плагинов.
 //!
 //! Источник: `docs/arch/security-model.md` §2 (L3), §3, §4. ROADMAP: F5, S1–S6.
+//!
+//! - `deny` (S1) — анализатор deny-статики: безусловный запрет пяти классов
+//!   операций до выполнения.
 
 use berimor_types::capability::{CapabilityDecision, ConfirmationMode, ProposedAction};
+
+pub mod deny;
 
 /// Единая точка проверки перед любым мутирующим вызовом инструмента
 /// (`process-engine.md` §4). `Deny` безусловен — обходить этот трейт
