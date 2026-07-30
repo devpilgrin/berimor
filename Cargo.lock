@@ -149,9 +149,11 @@ dependencies = [
 name = "berimor-memory"
 version = "0.1.0"
 dependencies = [
+ "berimor-mediation",
  "berimor-storage",
  "berimor-types",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

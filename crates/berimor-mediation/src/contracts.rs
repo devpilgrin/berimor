@@ -101,6 +101,44 @@ impl Contract for WorkingMemorySummary {
     // эпизодической памяти (§4). Значение по умолчанию трейта — Null.
 }
 
+/// Предложение факта (`memory-model.md` §2: контракт «предложение факта»
+/// {субъект, предикат, объект, уверенность, источник}, дословно все пять
+/// полей). ROADMAP: MEM3.
+///
+/// Инвариант I1 («модель не решает, что помнить») не нарушается тем, что
+/// модель заполняет эти поля: контракт — только ПРЕДЛОЖЕНИЕ. Запись в
+/// семантический слой происходит лишь после дедупликации кода
+/// (`berimor_memory::semantic::dedup`), которую модель не видит и не
+/// контролирует — сам факт того, что предложение прошло валидацию формы,
+/// ещё не значит «записано».
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct FactProposal {
+    #[validate(length(min = 1, max = 200))]
+    pub subject: String,
+    #[validate(length(min = 1, max = 200))]
+    pub predicate: String,
+    #[validate(length(min = 1, max = 500))]
+    pub object: String,
+    #[validate(range(min = 0.0, max = 1.0))]
+    pub confidence: f32,
+    /// Обязателен (§2: «источник факта обязателен») — защита от
+    /// отравления памяти начинается с того, что у факта вообще есть
+    /// заявленное происхождение, не анонимное «модель так сказала».
+    #[validate(length(min = 1, max = 200))]
+    pub source: String,
+}
+
+impl Contract for FactProposal {
+    const SCHEMA_VERSION: u32 = 1;
+    const NAME: &'static str = "FactProposal";
+
+    // Предложение факта — внутренний кандидат на запись, не то, что
+    // предъявляется пользователю; публикуется (если вообще имеет смысл
+    // публиковать факт) только после commit в семантический слой —
+    // задача вызывающего кода, не этого контракта.
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,5 +272,50 @@ mod tests {
         let raw = json!({"summary": "текст", "extra": true});
         let result: Result<WorkingMemorySummary, _> = serde_json::from_value(raw);
         assert!(result.is_err());
+    }
+
+    fn fact() -> FactProposal {
+        FactProposal {
+            subject: "клиент c-1".into(),
+            predicate: "предпочитает_канал".into(),
+            object: "email".into(),
+            confidence: 0.8,
+            source: "session:run-1/step:answer".into(),
+        }
+    }
+
+    #[test]
+    fn fact_proposal_round_trips() {
+        let value = fact();
+        let json = serde_json::to_value(&value).unwrap();
+        let back: FactProposal = serde_json::from_value(json).unwrap();
+        assert_eq!(value, back);
+    }
+
+    #[test]
+    fn fact_proposal_rejects_unknown_field() {
+        let mut raw = serde_json::to_value(fact()).unwrap();
+        raw["extra"] = json!(true);
+        let result: Result<FactProposal, _> = serde_json::from_value(raw);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fact_proposal_rejects_empty_source() {
+        use validator::Validate;
+        let mut value = fact();
+        value.source = String::new();
+        assert!(
+            value.validate().is_err(),
+            "источник обязателен (memory-model.md §2)"
+        );
+    }
+
+    #[test]
+    fn fact_proposal_rejects_confidence_outside_unit_range() {
+        use validator::Validate;
+        let mut value = fact();
+        value.confidence = 1.5;
+        assert!(value.validate().is_err());
     }
 }
