@@ -47,9 +47,12 @@ pub struct FsJail {
 impl FsJail {
     /// Корень обязан существовать и быть каталогом — jail над
     /// несуществующим корнем не имеет смысла (канонизировать нечего).
-    /// Корень ФС (`/`) отклоняется: jail, внутри которого лежит всё,
-    /// ничего не изолирует, и его молчаливое создание — почти наверняка
-    /// ошибка конфигурации (находка m11 XL-ревью).
+    /// Корень ФС отклоняется: jail, внутри которого лежит всё, ничего не
+    /// изолирует, и его молчаливое создание — почти наверняка ошибка
+    /// конфигурации (находка m11 XL-ревью). Проверка — `parent().is_none()`,
+    /// а не сравнение с `/` буквально: на Windows `canonicalize("/")`
+    /// возвращает путь текущего диска (`\\?\C:\`), не `/`, но у него так же
+    /// нет родителя — тот же признак корня, что и на Unix.
     pub fn new(root: &Path) -> Result<Self, JailError> {
         let canonical = std::fs::canonicalize(root).map_err(|err| JailError::RootUnavailable {
             path: root.to_path_buf(),
@@ -61,7 +64,7 @@ impl FsJail {
                 reason: "не каталог".into(),
             });
         }
-        if canonical == Path::new("/") {
+        if canonical.parent().is_none() {
             return Err(JailError::RootUnavailable {
                 path: root.to_path_buf(),
                 reason: "корень jail не может быть корнем файловой системы".into(),

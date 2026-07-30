@@ -485,8 +485,7 @@ fn classify_write_target(target: &str, workspace_root: &Path) -> Option<DenyMatc
 /// стабильные пути к тем же устройствам). `/dev/null` и подобные
 /// сознательно НЕ блокируются — они не хранят данные ФС.
 fn is_block_device(path: &str) -> bool {
-    let normalized = normalize_lexically(Path::new(path));
-    let normalized = normalized.to_string_lossy();
+    let normalized = normalize_unix_style(path);
     let Some(name) = normalized.strip_prefix("/dev/") else {
         return false;
     };
@@ -498,9 +497,32 @@ fn is_block_device(path: &str) -> bool {
 }
 
 fn is_harmless_device(path: &str) -> bool {
-    let normalized = normalize_lexically(Path::new(path));
-    let normalized = normalized.to_string_lossy();
-    HARMLESS_CHAR_DEVICES.contains(&normalized.as_ref())
+    HARMLESS_CHAR_DEVICES.contains(&normalize_unix_style(path).as_str())
+}
+
+/// Строковая (не через `std::path`) нормализация путей POSIX-синтаксиса
+/// (`/dev/./sda`, `/dev//sda`) — цели здесь принадлежат тексту shell-команды
+/// целевого агента, не хосту, на котором собирается этот бинарник: на
+/// Windows `Component::RootDir::as_os_str()` отдаёт `\`, а не `/`, и
+/// path-based нормализация ломает распознавание `/dev/*`, даже когда сам
+/// анализ выполняется исключительно над текстом, без обращения к ФС.
+fn normalize_unix_style(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    let mut segments: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            other => segments.push(other),
+        }
+    }
+    if absolute {
+        format!("/{}", segments.join("/"))
+    } else {
+        segments.join("/")
+    }
 }
 
 /// Программы, разрушающие ФС. `fdisk`/`parted`/`gdisk`/`sfdisk` работают
