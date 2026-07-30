@@ -152,8 +152,11 @@ dependencies = [
  "berimor-mediation",
  "berimor-storage",
  "berimor-types",
+ "serde",
  "serde_json",
+ "serde_norway",
  "sha2",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
