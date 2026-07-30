@@ -20,9 +20,9 @@
 
 ## Статус
 
-Архитектурная стадия завершена (принципы, диаграммы, решения, план). Реализация: **Milestone 0** (`docs/ROADMAP.md` §3) закрыт — Process Engine (парсер деклараций, граф control-flow, атомарное состояние, цикл исполнения с восстановлением после сбоя из журнала) и Mediation (типы контрактов, parse, schema, commit) реально работают и протестированы на golden-фикстуре, `ToolOnly`-исполнитель резолвит шаблоны и вызывает инструмент по-настоящему.
+Архитектурная стадия завершена (принципы, диаграммы, решения, план). Реализация: **Milestone 0** (`docs/ROADMAP.md` §3) и **Milestone 1** (§18) закрыты — `berimor run <process.yaml>` реально исполняет декларативный процесс от начала до конца: Process Engine (парсер, граф control-flow, атомарное состояние, восстановление из журнала после сбоя), Mediation целиком (parse → schema → policy → commit → retry/эскалация → телеметрия), Capability (deny-статика, jail файловой системы, сетевой гейт, режимы подтверждений), Model Pool с HTTP-клиентом удалённых провайдеров, минимальный Context Engine и исполнители `ToolOnly`/`StructuredLLM` — всё связано в CLI, включая `--resume` и обработку `human_gate` в терминале. Подтверждено e2e-тестом через настоящий бинарник на golden-фикстуре, зелёным CI на Linux/macOS/Windows.
 
-Ещё не реализовано: policy и повторы/эскалация в Mediation (M4, M6), Capability (deny-статика/jail/сетевой гейт — S1–S6), Model Pool и исполнители с моделью (`StructuredLLM`/`CodeAct`/`AgentStep` — E2–E9), поэтому `berimor run` в CLI пока не единая команда, а отдельные проверенные компоненты, ждущие своей фазы по `docs/ROADMAP.md`.
+Ещё не реализовано: Memory (Фаза 6), Actors & Scheduler (Фаза 7), Tool Runtime/MCP (Фаза 8), Eval & Observability (Фаза 9), исполнители `CodeAct`/`AgentStep` (E6–E9) — см. `docs/ROADMAP.md` для полного графа задач.
 
 ## Лицензия
 

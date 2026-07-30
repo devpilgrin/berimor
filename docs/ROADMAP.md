@@ -304,18 +304,35 @@ CLI не требует Memory (Фаза 6), Actors/Scheduler (Фаза 7), Tool
 | CLI3 | `berimor run --resume <instance-id>`: `recover()` (уже реализован, P3) от журнала, продолжить `run()` | M | Средний | CLI1 |
 | CLI4 | End-to-end тест: реальный прогон `card-delivery-support.yaml` через `main()` (не через вызов функций напрямую, как в тестах `engine.rs`) — `assert_cmd` или эквивалент, с `E5`, направленным на локальный мок-сервер вместо реального провайдера (не тратить реальные токены/деньги в CI) | M | Средний | CLI1, CLI2, CLI3 |
 
-### 18.5. Definition of Done Milestone 1
+### 18.5. Definition of Done Milestone 1 — ВЫПОЛНЕНО
 
-- `cargo test --workspace` зелёный, включая CLI4.
-- `berimor run fixtures/golden/processes/card-delivery-support.yaml` с
-  реальным (или мок-) провайдером доходит до `Finished`, проходя через
-  `classify` (E2, реальная модель) → `check_risk` (P2, ветвление) →
-  `fetch_card_status` (E1, ToolOnly через Capability) → `answer` (E2).
-- Прерывание процесса между шагами и `berimor run --resume` восстанавливает
-  то же состояние, что и непрерывный прогон (то же свойство, что уже
-  доказано в `engine.rs` тестами P3, но теперь — через реальный CLI, не
-  через вызов функций теста).
-- `clippy -D warnings`, `fmt --check` чисты.
+Подтверждено реальным CI на всех трёх ОС (`gh run view 30545287702`,
+коммит `673a0d1`), не только локальным прогоном:
+
+- [x] `cargo test --workspace` зелёный, включая CLI4 (189 тестов).
+- [x] `berimor run fixtures/golden/processes/card-delivery-support.yaml` с
+  провайдером (в CLI4 — мок, локальный HTTP-сервер на `std::net`; с
+  реальным провайдером — та же цепочка, конфигурация отличается только
+  `base_url`/`api_key_env`) доходит до `Finished`, проходя через
+  `classify` (E2) → `check_risk` (P2, ветвление) → `fetch_card_status`
+  (E1, ToolOnly через Capability) → `answer` (E2). Тест:
+  `crates/berimor-cli/tests/e2e_run.rs::full_run_through_finished_produces_expected_state`.
+- [x] Прерывание процесса на `human_gate` и `berimor run --resume`
+  восстанавливают то же состояние, что и непрерывный прогон того же
+  сценария — доказано через реальный CLI-процесс (не вызов функций теста,
+  как в P3). Тест:
+  `crates/berimor-cli/tests/e2e_run.rs::interrupted_run_resumes_to_same_final_state_as_continuous_run`.
+- [x] `clippy -D warnings`, `fmt --check` чисты на ubuntu/macOS/Windows.
+
+Побочный результат: тройная проверка на реальном Windows CI вскрыла два
+платформенных бага в `berimor-capability`, отсутствовавших в локальных
+прогонах на Linux — `FsJail::new` сравнивал корень ФС буквально с `/`
+(на Windows `canonicalize` даёт путь диска), и `/dev`-детектор deny-статики
+нормализовал пути через `std::path`, чей `RootDir` на Windows отдаёт `\`
+вместо `/`. Оба исправлены строковой, платформо-независимой логикой
+(коммит `fa762f4`) — урок: код, работающий с текстом shell-команд
+целевого агента, не должен идти через `std::path`, даже когда выглядит
+как путь.
 
 ### 18.6. Как работать (важные уроки из разработки Milestone 0)
 
