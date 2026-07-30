@@ -8,6 +8,7 @@ use berimor_types::{
     step::{Patch, Process},
 };
 
+pub mod graph;
 pub mod parser;
 pub mod state;
 
