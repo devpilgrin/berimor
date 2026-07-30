@@ -12,8 +12,16 @@
 //!
 //! Блокируемые диапазоны — приватные, loopback, link-local (включая
 //! `169.254.169.254` — стандартная цель SSRF на метаданные облака),
-//! CGNAT, unspecified; IPv4-mapped IPv6 приводится к IPv4 до проверки,
-//! иначе `::ffff:127.0.0.1` был бы бесплатным обходом.
+//! CGNAT, unspecified; IPv4-mapped и устаревший IPv4-compatible IPv6
+//! приводятся к IPv4 до проверки, иначе `::ffff:127.0.0.1` и `::127.0.0.1`
+//! были бы бесплатным обходом.
+//!
+//! Out of scope (задокументировано по находке m8 XL-ревью): DNS-rebinding —
+//! ответ резолвера на проверке может отличаться от адреса реального
+//! соединения. Полное закрытие — гейт непосредственно на сокете (pin
+//! resolved address), задача за пределами этого milestone; для
+//! OpenAI-совместимых endpoint'ов из статической конфигурации владельца
+//! риск ограничен компрометацией DNS в момент проверки.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 
@@ -79,11 +87,31 @@ pub fn check_host(host: &str, port: u16) -> NetworkDecision {
 fn is_private(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_private_v4(v4),
-        // IPv4-mapped IPv6 (::ffff:a.b.c.d) — приводим к v4 до проверки.
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => is_private_v4(v4),
-            None => is_private_v6(v6),
-        },
+        // IPv4-mapped (::ffff:a.b.c.d) и устаревший IPv4-compatible
+        // (::a.b.c.d) — приводим к v4 до проверки (находка m8 XL-ревью:
+        // `::127.0.0.1` проходил). `to_ipv4_mapped` compatible-форму не
+        // ловит, поэтому разбор сегментами вручную. Порядок важен: сначала
+        // собственно v6-проверки (`::1`, `::`, ULA, link-local), иначе
+        // `::1` «превратился» бы в публичный 0.0.0.1.
+        IpAddr::V6(v6) => {
+            if is_private_v6(v6) {
+                return true;
+            }
+            let segments = v6.segments();
+            let compatible = segments[..6].iter().all(|s| *s == 0);
+            let mapped = segments[..5].iter().all(|s| *s == 0) && segments[5] == 0xffff;
+            if compatible || mapped {
+                let v4 = Ipv4Addr::new(
+                    (segments[6] >> 8) as u8,
+                    segments[6] as u8,
+                    (segments[7] >> 8) as u8,
+                    segments[7] as u8,
+                );
+                is_private_v4(v4)
+            } else {
+                false
+            }
+        }
     }
 }
 

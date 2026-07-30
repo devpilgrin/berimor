@@ -48,9 +48,11 @@ pub fn evaluate(
     let mutates = policy.mutates.unwrap_or(action.mutates);
 
     // Внешний деструктив — всегда подтверждение, независимо от режима
-    // (включая off и явное requires_confirmation=false: декларация
-    // read-only не может отменить внешний эффект той же декларации).
-    if mutates && policy.external_effect {
+    // (включая off и явное requires_confirmation=false). Декларация
+    // `external_effect` сама по себе достаточна — противоречивая политика
+    // (`external_effect: true` при `mutates: Some(false)`) разрешается в
+    // безопасную сторону, не молча в опасную (находка m9 XL-ревью).
+    if policy.external_effect {
         return CapabilityDecision::ConfirmRequired {
             reason: format!(
                 "'{}' — деструктивное действие над внешней системой: подтверждение обязательно в любом режиме",
@@ -259,6 +261,32 @@ mod tests {
                 evaluate(mode, &action("deploy.production", true), &policy),
                 CapabilityDecision::ConfirmRequired { .. }
             ));
+        }
+    }
+
+    #[test]
+    fn contradictory_external_effect_declaration_resolves_to_safe_side() {
+        // Находка m9 XL-ревью: `mutates: Some(false)` + `external_effect:
+        // true` — противоречие; разрешается в подтверждение, не в Allow.
+        let policy = ToolPolicy {
+            mutates: Some(false),
+            external_effect: true,
+            ..Default::default()
+        };
+        for mode in [
+            ConfirmationMode::Deny,
+            ConfirmationMode::Smart,
+            ConfirmationMode::Manual,
+            ConfirmationMode::Off,
+        ] {
+            let decision = evaluate(mode, &action("external.read", false), &policy);
+            assert!(
+                matches!(
+                    decision,
+                    CapabilityDecision::ConfirmRequired { .. } | CapabilityDecision::Deny { .. }
+                ),
+                "противоречивая декларация не должна разрешаться в Allow, {mode:?}"
+            );
         }
     }
 

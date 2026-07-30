@@ -15,6 +15,7 @@
     { "name": "link-local v6", "host": "fe80::1" },
     { "name": "IPv4-mapped приватный в v6", "host": "::ffff:10.0.0.1" },
     { "name": "IPv4-mapped loopback в v6", "host": "::ffff:127.0.0.1" },
+    { "name": "deprecated IPv4-compatible loopback", "host": "::127.0.0.1" },
     { "name": "имя, разрешающееся в loopback", "host": "localhost" }
   ],
   "allowed": [
