@@ -4,10 +4,13 @@
 //!
 //! - `deny` (S1) — анализатор deny-статики: безусловный запрет пяти классов
 //!   операций до выполнения.
+//! - `jail` (S2) — jail файловой системы: канонизация путей, защита от
+//!   symlink-обхода.
 
 use berimor_types::capability::{CapabilityDecision, ConfirmationMode, ProposedAction};
 
 pub mod deny;
+pub mod jail;
 
 /// Единая точка проверки перед любым мутирующим вызовом инструмента
 /// (`process-engine.md` §4). `Deny` безусловен — обходить этот трейт
