@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MediationStage {
     Parse,
     Schema,
@@ -13,7 +13,7 @@ pub enum MediationStage {
     Commit,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediationRejection {
     pub stage: MediationStage,
     pub reason: String,
@@ -25,7 +25,7 @@ pub struct MediationRejection {
 /// Итог одного прохода Mediation. `Escalate` всегда ведёт в `human_gate` —
 /// путь «модель решила спросить человека» в архитектуре не существует
 /// (эскалация — код, `mediation.md` §5).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MediationOutcome<T> {
     Committed(T),
     Retry(MediationRejection),

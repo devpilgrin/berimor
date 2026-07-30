@@ -2,12 +2,12 @@
 //!
 //! Источник: `docs/arch/mediation.md` §4.4. ROADMAP: M5.
 //!
-//! Milestone 0 (`docs/ROADMAP.md` §3) явно допускает M5 без M4: полноценные
-//! межполевые правила политики (риск ≥7 => категория ≠ other, ссылки на
-//! состояние, контроль утечек) сюда не входят — только то, что стадия
-//! `schema` (M3) уже гарантирует, попадает в патч. `check_policy` в
-//! `MediationPipeline` остаётся стабом до M4, здесь на него никто не
-//! ссылается.
+//! `commit` вызывается только после того, как `policy` (M4, `policy.rs`)
+//! пропустила вывод — коммит сам по себе не проверяет межполевые правила
+//! или ссылки на состояние, это ответственность предыдущей стадии.
+//! Собранный здесь `Patch` полагается на то, что содержимое `contract`
+//! уже прошло весь путь `parse -> schema -> policy` (см. `pipeline.rs`, M6,
+//! который и связывает стадии в одну последовательность с повторами).
 
 use berimor_types::{contract::Contract, model::ModelTier, step::Patch};
 use serde_json::Value;
@@ -115,21 +115,22 @@ mod tests {
     }
 
     #[test]
-    fn support_reply_publishes_its_reply_field() {
+    fn support_reply_publishes_card_id_and_reply_fields() {
         let contract = SupportReply {
+            card_id: "card_1029".into(),
             reply: "Ваш вопрос решён.".into(),
         };
         let outcome = commit("answer", &contract, Some(ModelTier::Medium));
         assert_eq!(
             outcome.publishable,
-            serde_json::json!({"reply": "Ваш вопрос решён."})
+            serde_json::json!({"card_id": "card_1029", "reply": "Ваш вопрос решён."})
         );
     }
 
     /// Композиция всей цепочки M1-M2-M3-M5 на реалистичном сыром выводе.
     #[test]
     fn full_pipeline_from_raw_model_text_to_commit() {
-        let raw = "```json\n{\"reply\": \"Готово.\"}\n```";
+        let raw = "```json\n{\"card_id\": \"card_1029\", \"reply\": \"Готово.\"}\n```";
         let parsed = crate::parse::parse(raw).unwrap();
         let contract: SupportReply = crate::schema::validate(parsed).unwrap();
         let outcome = commit("answer", &contract, Some(ModelTier::Weak));

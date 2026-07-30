@@ -1,24 +1,20 @@
 //! `berimor-mediation` — parse → schema → policy → commit.
 //!
 //! Источник: `docs/arch/mediation.md`. ROADMAP: M1–M7.
-
-use berimor_types::{contract::Contract, mediation::MediationOutcome, step::Patch};
+//!
+//! - `contracts` (M1) — конкретные типы контрактов (`ClassificationOut`, `SupportReply`).
+//! - `parse` (M2) — снятие markdown-обёртки, без эвристик поверх содержимого.
+//! - `schema` (M3) — диапазоны и длины сверх того, что проверяет serde derive.
+//! - `policy` (M4) — межполевые правила, ссылки на состояние, контроль утечек.
+//! - `commit` (M5) — патч / provenance-метаданные / публикуемые поля.
+//! - `pipeline` (M6) — связывает всё выше в один проход с решением
+//!   Retry/Escalate по таблице `mediation.md` §5.
+//! - `telemetry` (M7) — событие журнала на исход + агрегация доли отказов.
 
 pub mod commit;
 pub mod contracts;
 pub mod parse;
+pub mod pipeline;
+pub mod policy;
 pub mod schema;
-
-/// Реализация `berimor_types::executor::MediationGate` для конкретных
-/// правил политики и телеметрии — единственная точка, где вывод модели
-/// становится состоянием (инвариант I3).
-pub trait MediationPipeline {
-    fn parse(&self, raw: &str) -> Result<serde_json::Value, String>;
-    fn validate_schema<C: Contract>(&self, value: serde_json::Value) -> Result<C, String>;
-    fn check_policy<C: Contract>(
-        &self,
-        contract: &C,
-        state: &serde_json::Value,
-    ) -> Result<(), String>;
-    fn commit(&self, step_id: &str, changes: serde_json::Value) -> MediationOutcome<Patch>;
-}
+pub mod telemetry;

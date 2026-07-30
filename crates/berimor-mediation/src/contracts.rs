@@ -49,13 +49,20 @@ impl Contract for ClassificationOut {
 }
 
 /// Второй контракт из golden-фикстуры процесса (`fixtures/golden/processes/
-/// card-delivery-support.yaml`, шаг `answer`). Поля не описаны ни в одном
-/// документе — минимальная, явно предположительная форма, согласованная
-/// с тем, что уже использовал фейковый исполнитель в тестах P3 (`engine.rs`:
-/// `"answer" => json!({"reply": "..."})`), а не выдуманная заново.
+/// card-delivery-support.yaml`, шаг `answer`). `reply` — минимальная,
+/// явно предположительная форма, согласованная с тем, что уже использовал
+/// фейковый исполнитель в тестах P3. `card_id` добавлен вместе с M4: без
+/// него нечего проверять в `fixtures/golden/malicious-inputs/
+/// state-reference-forgery.json` (фикстура была подготовлена заранее
+/// именно под эту стадию, шаблон её `raw_model_output` уже содержал
+/// `card_id` — контракт дополнен, чтобы соответствовать, не выдуман заново).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct SupportReply {
+    /// Ссылка на состояние (`state.user.card_id`) — модель обязана
+    /// повторить уже известный из состояния id, не придумать свой
+    /// (mediation.md §4.3, проверяется на стадии `policy`, M4).
+    pub card_id: String,
     pub reply: String,
 }
 
@@ -63,10 +70,11 @@ impl Contract for SupportReply {
     const SCHEMA_VERSION: u32 = 1;
     const NAME: &'static str = "SupportReply";
 
-    /// В отличие от `ClassificationOut`, это буквально то, что видит
-    /// пользователь — весь контракт и есть публикуемая часть.
+    /// В отличие от `ClassificationOut`, это то, что видит пользователь —
+    /// весь контракт публикуется, включая `card_id` (безвредная
+    /// информация, которую пользователь и так знает — это его карта).
     fn publishable(&self) -> serde_json::Value {
-        serde_json::json!({"reply": self.reply})
+        serde_json::json!({"card_id": self.card_id, "reply": self.reply})
     }
 }
 
@@ -171,6 +179,7 @@ mod tests {
     #[test]
     fn support_reply_round_trips() {
         let value = SupportReply {
+            card_id: "card_1029".into(),
             reply: "Готово.".into(),
         };
         let json = serde_json::to_value(&value).unwrap();
