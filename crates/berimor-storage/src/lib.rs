@@ -610,9 +610,11 @@ impl SemanticStore for SqliteEventLog {
 pub struct EnvelopeId(pub String);
 
 /// Конверт — единица межакторной коммуникации (ADR-0009, A1). Подпись
-/// (A2, заблокирована S6 — схема ACL-манифеста ещё не реализована)
-/// добавляется поверх этой структуры вызывающим кодом; здесь только то,
-/// что нужно для адресации и доставки.
+/// (A2, `berimor_actors::signing`/`berimor_actors::bus`) — поверх этой
+/// структуры, отдельно от вызова публикации, не поле здесь: подпись
+/// проверяется один раз на шине, дальше конверт в системе — уже
+/// доверенные данные, таскать подпись вместе с ним незачем. Здесь —
+/// только то, что нужно для адресации и доставки.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Envelope {
     pub id: EnvelopeId,
@@ -730,6 +732,12 @@ pub trait ScheduleStore {
     /// одноразовые — удаляются. Возвращает расписания в состоянии ДО
     /// продвижения — то, что реально сработало на этом тике.
     fn tick(&self, now_ms: i64) -> Result<Vec<Schedule>, StorageError>;
+    /// То же, что [`ScheduleStore::tick`] по выборке, но БЕЗ продвижения
+    /// или удаления — peek, не pop (A4, ADR-0015): гейт `human_gate`
+    /// проверяет, что было бы due, не потребляя срабатывание, пока
+    /// очередь подтверждений не разобрана — расписание остаётся due и
+    /// попробует снова на следующем тике.
+    fn due(&self, now_ms: i64) -> Result<Vec<Schedule>, StorageError>;
 }
 
 impl ScheduleStore for SqliteEventLog {
@@ -800,6 +808,33 @@ impl ScheduleStore for SqliteEventLog {
         }
         tx.commit()?;
         Ok(fired)
+    }
+
+    fn due(&self, now_ms: i64) -> Result<Vec<Schedule>, StorageError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, next_fire_ms, interval_ms, payload FROM schedules
+             WHERE next_fire_ms <= ?1 ORDER BY next_fire_ms ASC",
+        )?;
+        let rows = stmt.query_map(params![now_ms], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut schedules = Vec::new();
+        for row in rows {
+            let (id, next_fire_ms, interval_ms, payload_json) = row?;
+            schedules.push(Schedule {
+                id: ScheduleId(id),
+                next_fire_ms,
+                interval_ms,
+                payload: serde_json::from_str(&payload_json)?,
+            });
+        }
+        Ok(schedules)
     }
 }
 
@@ -1370,5 +1405,38 @@ mod tests {
 
         assert!(log.tick(1000).unwrap().is_empty());
         assert_eq!(log.tick(2000).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn due_finds_a_ready_schedule_without_consuming_it() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_schedule(&one_shot("s-1", 1000)).unwrap();
+
+        let peeked = log.due(1000).unwrap();
+        assert_eq!(peeked.len(), 1);
+        assert_eq!(peeked[0].id, ScheduleId("s-1".into()));
+
+        // due() не продвинул и не удалил расписание — tick() всё ещё его находит.
+        let fired = log.tick(1000).unwrap();
+        assert_eq!(fired.len(), 1);
+    }
+
+    #[test]
+    fn due_ignores_schedules_not_yet_due() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_schedule(&one_shot("s-1", 5000)).unwrap();
+
+        assert!(log.due(1000).unwrap().is_empty());
+    }
+
+    #[test]
+    fn due_can_be_called_repeatedly_without_side_effects() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_schedule(&recurring("s-1", 1000, 500)).unwrap();
+
+        let first = log.due(1000).unwrap();
+        let second = log.due(1000).unwrap();
+
+        assert_eq!(first, second);
     }
 }

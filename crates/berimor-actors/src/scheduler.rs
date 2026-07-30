@@ -1,13 +1,21 @@
-//! Планировщик: персистентный min-heap времён срабатывания, защита от двойного тика.
+//! Планировщик: персистентный min-heap времён срабатывания, защита от
+//! двойного тика, статус `throttled` при заблокированной очереди `human_gate`.
 //!
-//! Источник: `ideal-agent-architecture.md` §3.8, `stack.md` §69. ROADMAP: A5.
+//! Источник: `ideal-agent-architecture.md` §3.8, `stack.md` §69,
+//! `process-engine.md` §5, ADR-0015. ROADMAP: A5 · A4 (вторая половина —
+//! `throttled`, первая — `crate::dispatcher::Dispatcher::with_human_gate_limit`).
 //!
 //! Персистентность и защита от двойного тика — уже в
 //! `berimor_storage::ScheduleStore` (одна SQL-транзакция атомарно
 //! выбирает и продвигает сработавшие расписания). Этот модуль — то, что
 //! стоит НАД хранилищем: валидация расписания при создании
-//! («невозможное расписание отклоняется... а не тикает вечно», §3.8) и
-//! периодический тик через таймер tokio.
+//! («невозможное расписание отклоняется... а не тикает вечно», §3.8),
+//! периодический тик через таймер tokio, и (A4) гейт `human_gate`:
+//! «расписания, упирающиеся в неразобранные human_gate, получают статус
+//! throttled, а не отменяются и не продолжают тикать вхолостую» (§5) —
+//! реализовано через `ScheduleStore::due` (peek, не pop): при закрытом
+//! гейте расписание остаётся due в хранилище и пробует снова на
+//! следующем тике, вместо того чтобы быть продвинутым/удалённым вхолостую.
 
 use berimor_storage::{Schedule, ScheduleId, ScheduleStore, StorageError};
 use std::sync::Arc;
@@ -68,6 +76,26 @@ impl<S: ScheduleStore + Send + Sync> Scheduler<S> {
         self.store.tick(now_ms)
     }
 
+    /// Тик с учётом гейта `human_gate` (A4, ADR-0015). `is_throttled` —
+    /// решение вызывающего кода на этот момент (обычно
+    /// `dispatcher.open_escalations_count() >= limit`); планировщик сам не
+    /// знает о диспетчере, только реагирует на булев сигнал. Когда
+    /// закрыт — расписания, готовые сработать, НЕ продвигаются
+    /// (`ScheduleStore::due`, не `tick`): они остаются due и будут снова
+    /// предложены на следующем тике, когда гейт откроется — «не
+    /// отменяются и не тикают вхолостую» (§5).
+    pub fn tick_at_gated(
+        &self,
+        now_ms: i64,
+        is_throttled: bool,
+    ) -> Result<TickOutcome, StorageError> {
+        if is_throttled {
+            Ok(TickOutcome::Throttled(self.store.due(now_ms)?))
+        } else {
+            Ok(TickOutcome::Fired(self.store.tick(now_ms)?))
+        }
+    }
+
     /// Бесконечный цикл тиков на интервале `period` — задача tokio (тот
     /// же приём, что `Actor::run`, A1). `on_fire` вызывается на каждое
     /// сработавшее расписание каждого тика; ошибка хранилища на
@@ -84,6 +112,47 @@ impl<S: ScheduleStore + Send + Sync> Scheduler<S> {
             }
         }
     }
+
+    /// Вариант [`Scheduler::run`] с гейтом `human_gate` (A4): `is_throttled`
+    /// вызывается заново на каждом тике — отражает актуальное состояние
+    /// очереди диспетчера на этот момент, не снимок на момент запуска.
+    /// `on_fire` — как в `run`; `on_throttled` вызывается на каждое
+    /// расписание, которое было due, но не продвинуто из-за закрытого
+    /// гейта.
+    pub async fn run_gated(
+        &self,
+        period: Duration,
+        is_throttled: impl Fn() -> bool + Send + Sync,
+        on_fire: impl Fn(Schedule) + Send + Sync,
+        on_throttled: impl Fn(&Schedule) + Send + Sync,
+    ) {
+        let mut interval = tokio::time::interval(period);
+        loop {
+            interval.tick().await;
+            match self.tick_at_gated(now_ms(), is_throttled()) {
+                Ok(TickOutcome::Fired(fired)) => {
+                    for schedule in fired {
+                        on_fire(schedule);
+                    }
+                }
+                Ok(TickOutcome::Throttled(due)) => {
+                    for schedule in &due {
+                        on_throttled(schedule);
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+    }
+}
+
+/// Результат [`Scheduler::tick_at_gated`] — сработало реально
+/// (продвинуто/удалено в хранилище) или было бы due, но заблокировано
+/// закрытым гейтом `human_gate` (ничего не изменилось в хранилище).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TickOutcome {
+    Fired(Vec<Schedule>),
+    Throttled(Vec<Schedule>),
 }
 
 fn now_ms() -> i64 {
@@ -201,5 +270,99 @@ mod tests {
         run.abort();
 
         assert_eq!(fired.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn tick_at_gated_not_throttled_behaves_like_tick_at() {
+        let store = Arc::new(SqliteEventLog::open_in_memory().unwrap());
+        let scheduler = Scheduler::new(store);
+        scheduler.submit(one_shot("s-1", 1000)).unwrap();
+
+        let outcome = scheduler.tick_at_gated(1000, false).unwrap();
+
+        assert_eq!(outcome, TickOutcome::Fired(vec![one_shot("s-1", 1000)]));
+    }
+
+    #[test]
+    fn tick_at_gated_throttled_does_not_consume_the_schedule() {
+        let store = Arc::new(SqliteEventLog::open_in_memory().unwrap());
+        let scheduler = Scheduler::new(store);
+        scheduler.submit(one_shot("s-1", 1000)).unwrap();
+
+        let outcome = scheduler.tick_at_gated(1000, true).unwrap();
+        assert_eq!(outcome, TickOutcome::Throttled(vec![one_shot("s-1", 1000)]));
+
+        // Не потреблено гейтом — обычный тик всё ещё находит и продвигает его.
+        let fired = scheduler.tick_at(1000).unwrap();
+        assert_eq!(fired.len(), 1);
+    }
+
+    #[test]
+    fn tick_at_gated_throttled_with_nothing_due_returns_empty_throttled() {
+        let store = Arc::new(SqliteEventLog::open_in_memory().unwrap());
+        let scheduler = Scheduler::new(store);
+        scheduler.submit(one_shot("s-1", 5000)).unwrap();
+
+        let outcome = scheduler.tick_at_gated(1000, true).unwrap();
+
+        assert_eq!(outcome, TickOutcome::Throttled(vec![]));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_gated_throttled_calls_on_throttled_and_never_on_fire() {
+        let store = Arc::new(SqliteEventLog::open_in_memory().unwrap());
+        let scheduler = Scheduler::new(store);
+        scheduler.submit(one_shot("s-1", 1)).unwrap();
+
+        let fired: Arc<Mutex<Vec<Schedule>>> = Arc::new(Mutex::new(Vec::new()));
+        let throttled: Arc<Mutex<Vec<Schedule>>> = Arc::new(Mutex::new(Vec::new()));
+        let fired_clone = fired.clone();
+        let throttled_clone = throttled.clone();
+        let run = tokio::spawn(async move {
+            scheduler
+                .run_gated(
+                    Duration::from_millis(10),
+                    || true,
+                    move |schedule| fired_clone.lock().unwrap().push(schedule),
+                    move |schedule| throttled_clone.lock().unwrap().push(schedule.clone()),
+                )
+                .await;
+        });
+
+        tokio::time::advance(Duration::from_millis(15)).await;
+        tokio::task::yield_now().await;
+        run.abort();
+
+        assert!(fired.lock().unwrap().is_empty());
+        assert_eq!(throttled.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_gated_not_throttled_fires_and_never_calls_on_throttled() {
+        let store = Arc::new(SqliteEventLog::open_in_memory().unwrap());
+        let scheduler = Scheduler::new(store);
+        scheduler.submit(one_shot("s-1", 1)).unwrap();
+
+        let fired: Arc<Mutex<Vec<Schedule>>> = Arc::new(Mutex::new(Vec::new()));
+        let throttled: Arc<Mutex<Vec<Schedule>>> = Arc::new(Mutex::new(Vec::new()));
+        let fired_clone = fired.clone();
+        let throttled_clone = throttled.clone();
+        let run = tokio::spawn(async move {
+            scheduler
+                .run_gated(
+                    Duration::from_millis(10),
+                    || false,
+                    move |schedule| fired_clone.lock().unwrap().push(schedule),
+                    move |schedule| throttled_clone.lock().unwrap().push(schedule.clone()),
+                )
+                .await;
+        });
+
+        tokio::time::advance(Duration::from_millis(15)).await;
+        tokio::task::yield_now().await;
+        run.abort();
+
+        assert_eq!(fired.lock().unwrap().len(), 1);
+        assert!(throttled.lock().unwrap().is_empty());
     }
 }
