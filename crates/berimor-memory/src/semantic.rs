@@ -3,15 +3,19 @@
 //! Источник: `docs/arch/memory-model.md` §2–3, ADR-0005. ROADMAP: MEM3 (дедупликация) ·
 //! MEM4 (sqlite-vec, гибридный поиск) · MEM5 (конфликт-события).
 //!
-//! MEM3 — только дедупликация: точное совпадение по хэшу решается здесь
+//! MEM3 — дедупликация: точное совпадение по хэшу решается здесь
 //! детерминированно, без внешних зависимостей; близкое совпадение
 //! («косинусная близость выше порога», §2) делегируется трейту
 //! [`SimilaritySource`] — реальная реализация на эмбеддингах/`sqlite-vec`
-//! появится в MEM4. Этот модуль не хранит факты сам (персистентность —
-//! MEM4) и не решает конфликты противоречащих фактов (конфликт-события —
-//! MEM5) — работает с уже загруженным вызывающим кодом срезом уже
-//! существующих фактов, как `working::collapse` (MEM1) работает со
-//! срезом уже загруженной истории.
+//! появится в MEM4. MEM5 — конфликт-события: [`detect_conflict`] находит
+//! факт с тем же субъектом/предикатом, но другим объектом, [`resolve`]
+//! объединяет дедупликацию и обнаружение конфликта в одно решение с
+//! правильным порядком проверок. Этот модуль не хранит факты сам
+//! (персистентность — MEM4) и не решает конфликт САМ (кому и как
+//! показать конфликт-событие — задача вызывающего кода/CLI-интеграции,
+//! как и вызов модели в `pipeline::mediate`, M6) — работает со срезом уже
+//! загруженных вызывающим кодом фактов, как `working::collapse` (MEM1)
+//! работает со срезом уже загруженной истории.
 
 use berimor_mediation::contracts::FactProposal;
 use sha2::{Digest, Sha256};
@@ -28,12 +32,21 @@ pub struct FactId(pub String);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FactHash([u8; 32]);
 
+/// Нормализация текстового поля факта для сравнения по смыслу, не по
+/// байтам: обрезка пробелов по краям + нижний регистр. Общая для точного
+/// хэша ([`fact_hash`]) и структурного сравнения отношений
+/// ([`detect_conflict`]) — оба должны считать один и тот же текст
+/// «тем же самым» одинаково.
+fn normalize(text: &str) -> String {
+    text.trim().to_lowercase()
+}
+
 fn fact_hash(subject: &str, predicate: &str, object: &str) -> FactHash {
     let normalized = format!(
         "{}\u{1}{}\u{1}{}",
-        subject.trim().to_lowercase(),
-        predicate.trim().to_lowercase(),
-        object.trim().to_lowercase()
+        normalize(subject),
+        normalize(predicate),
+        normalize(object)
     );
     FactHash(Sha256::digest(normalized.as_bytes()).into())
 }
@@ -115,36 +128,137 @@ pub enum DedupOutcome {
     New,
 }
 
+fn dedup_exact(candidate: &FactProposal, existing: &[StoredFact]) -> Option<FactId> {
+    let candidate_hash = fact_hash(&candidate.subject, &candidate.predicate, &candidate.object);
+    existing
+        .iter()
+        .find(|f| f.hash == candidate_hash)
+        .map(|f| f.id.clone())
+}
+
+fn dedup_near(
+    candidate: &FactProposal,
+    existing: &[StoredFact],
+    similarity: &dyn SimilaritySource,
+    threshold: f32,
+) -> Option<(FactId, f32)> {
+    existing
+        .iter()
+        .map(|f| (f, similarity.similarity(candidate, f)))
+        .filter(|(_, score)| *score >= threshold)
+        .max_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(f, score)| (f.id.clone(), score))
+}
+
 /// Решает судьбу предложенного факта относительно уже существующих —
 /// дословно порядок §2: точное совпадение по хэшу → близкое совпадение
 /// выше порога → новый факт. Точное совпадение проверяется первым и
 /// безусловно: оно детерминировано и не зависит от качества
 /// `similarity`, поэтому не может быть перекрыто близким совпадением.
+///
+/// Не обнаруживает противоречия (MEM5, [`detect_conflict`]) — вызывающий
+/// код, которому нужна защита и от дублей, и от противоречий разом,
+/// использует [`resolve`], не эту функцию напрямую.
 pub fn dedup(
     candidate: &FactProposal,
     existing: &[StoredFact],
     similarity: &dyn SimilaritySource,
     threshold: f32,
 ) -> DedupOutcome {
-    let candidate_hash = fact_hash(&candidate.subject, &candidate.predicate, &candidate.object);
-    if let Some(exact) = existing.iter().find(|f| f.hash == candidate_hash) {
-        return DedupOutcome::Duplicate {
-            existing: exact.id.clone(),
-        };
+    if let Some(id) = dedup_exact(candidate, existing) {
+        return DedupOutcome::Duplicate { existing: id };
     }
-
-    let best = existing
-        .iter()
-        .map(|f| (f, similarity.similarity(candidate, f)))
-        .filter(|(_, score)| *score >= threshold)
-        .max_by(|(_, a), (_, b)| a.total_cmp(b));
-
-    match best {
-        Some((fact, score)) => DedupOutcome::Merge {
-            existing: fact.id.clone(),
+    match dedup_near(candidate, existing, similarity, threshold) {
+        Some((id, score)) => DedupOutcome::Merge {
+            existing: id,
             similarity: score,
         },
         None => DedupOutcome::New,
+    }
+}
+
+/// Факт, структурно противоречащий кандидату (§2: «Противоречие нового
+/// факта существующему» — инвариант I2, «не молчаливая перезапись»).
+/// ROADMAP: MEM5.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FactConflict {
+    pub existing: FactId,
+    pub existing_object: String,
+    pub candidate_object: String,
+}
+
+/// Ищет факт с тем же субъектом и предикатом, что и кандидат, но другим
+/// объектом — то же отношение утверждает разные вещи. Проверяется по
+/// нормализованному ТЕКСТУ (`normalize`), не через `SimilaritySource`:
+/// доверять оценке близости здесь нельзя — эмбеддинг-модель вполне может
+/// счесть два взаимоисключающих утверждения «похожими» (общая тема,
+/// противоположное значение — «клиент живёт в Москве» и «клиент живёт в
+/// Париже» лексически близки), тогда как совпадение субъекта и
+/// предиката — надёжный структурный сигнал: это одно и то же отношение,
+/// значит два разных объекта не могут быть оба верны одновременно.
+///
+/// Возвращает первое найденное противоречие, не все — одного достаточно,
+/// чтобы не писать кандидата молча; остальные всплывут при следующей
+/// попытке записи после того, как человек разрешит это противоречие.
+pub fn detect_conflict(candidate: &FactProposal, existing: &[StoredFact]) -> Option<FactConflict> {
+    let subject = normalize(&candidate.subject);
+    let predicate = normalize(&candidate.predicate);
+    let object = normalize(&candidate.object);
+    existing.iter().find_map(|fact| {
+        let same_relation =
+            normalize(&fact.subject) == subject && normalize(&fact.predicate) == predicate;
+        let different_object = normalize(&fact.object) != object;
+        if same_relation && different_object {
+            Some(FactConflict {
+                existing: fact.id.clone(),
+                existing_object: fact.object.clone(),
+                candidate_object: candidate.object.clone(),
+            })
+        } else {
+            None
+        }
+    })
+}
+
+/// Полное решение по предложенному факту — MEM3 (дедупликация) и MEM5
+/// (конфликт) вместе.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Resolution {
+    Duplicate {
+        existing: FactId,
+    },
+    /// Между точным совпадением и близким — раньше близкого совпадения:
+    /// см. [`detect_conflict`] о том, почему `similarity` не годится для
+    /// обнаружения противоречий (могла бы ошибочно классифицировать
+    /// конфликт как `Merge`, если модель близости сочла тему похожей).
+    Conflict(FactConflict),
+    Merge {
+        existing: FactId,
+        similarity: f32,
+    },
+    New,
+}
+
+/// Точный порядок §2 целиком, с врезанной проверкой противоречия между
+/// точным и близким совпадением (см. [`Resolution::Conflict`]).
+pub fn resolve(
+    candidate: &FactProposal,
+    existing: &[StoredFact],
+    similarity: &dyn SimilaritySource,
+    threshold: f32,
+) -> Resolution {
+    if let Some(id) = dedup_exact(candidate, existing) {
+        return Resolution::Duplicate { existing: id };
+    }
+    if let Some(conflict) = detect_conflict(candidate, existing) {
+        return Resolution::Conflict(conflict);
+    }
+    match dedup_near(candidate, existing, similarity, threshold) {
+        Some((id, score)) => Resolution::Merge {
+            existing: id,
+            similarity: score,
+        },
+        None => Resolution::New,
     }
 }
 
@@ -313,5 +427,102 @@ mod tests {
             false,
         );
         assert!(!untrusted.trusted_channel);
+    }
+
+    #[test]
+    fn detect_conflict_finds_same_relation_with_different_object() {
+        let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6)];
+        let candidate = proposal("клиент c-1", "живёт_в", "Париж", 0.7);
+
+        let conflict = detect_conflict(&candidate, &existing).unwrap();
+
+        assert_eq!(conflict.existing, FactId("f-1".into()));
+        assert_eq!(conflict.existing_object, "Москва");
+        assert_eq!(conflict.candidate_object, "Париж");
+    }
+
+    #[test]
+    fn detect_conflict_is_case_and_whitespace_insensitive_on_the_relation() {
+        let existing = [stored("f-1", "Клиент C-1", "ЖИВЁТ_В", "Москва", 0.6)];
+        let candidate = proposal("  клиент c-1  ", "живёт_в", "Париж", 0.7);
+
+        assert!(detect_conflict(&candidate, &existing).is_some());
+    }
+
+    #[test]
+    fn detect_conflict_none_when_object_matches() {
+        // Тот же объект — не противоречие, это дело dedup (Duplicate/Merge).
+        let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6)];
+        let candidate = proposal("клиент c-1", "живёт_в", "Москва", 0.7);
+
+        assert!(detect_conflict(&candidate, &existing).is_none());
+    }
+
+    #[test]
+    fn detect_conflict_none_when_relation_differs() {
+        let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6)];
+        // Другой предикат — не то же отношение, значит не противоречие.
+        let candidate = proposal("клиент c-1", "работает_в", "Москва", 0.7);
+
+        assert!(detect_conflict(&candidate, &existing).is_none());
+    }
+
+    #[test]
+    fn resolve_reports_conflict_even_when_similarity_would_have_suggested_merge() {
+        let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6)];
+        let candidate = proposal("клиент c-1", "живёт_в", "Париж", 0.7);
+
+        // FixedSimilarity(1.0) доказывает: будь порядок «similarity раньше
+        // конфликта», это ошибочно стало бы Merge — resolve обязан
+        // отдать Conflict первым.
+        let outcome = resolve(&candidate, &existing, &FixedSimilarity(1.0), 0.9);
+
+        assert_eq!(
+            outcome,
+            Resolution::Conflict(FactConflict {
+                existing: FactId("f-1".into()),
+                existing_object: "Москва".into(),
+                candidate_object: "Париж".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn resolve_matches_dedup_for_exact_and_merge_cases() {
+        let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6)];
+
+        let exact = proposal("клиент c-1", "живёт_в", "Москва", 0.9);
+        assert_eq!(
+            resolve(&exact, &existing, &NoSimilarity, 0.9),
+            Resolution::Duplicate {
+                existing: FactId("f-1".into())
+            }
+        );
+
+        // Другой субъект — не конфликт (другое отношение вовсе), близкое
+        // совпадение проходит как обычно.
+        let unrelated_but_similar = proposal("клиент c-2", "живёт_в", "Питер", 0.7);
+        assert_eq!(
+            resolve(
+                &unrelated_but_similar,
+                &existing,
+                &FixedSimilarity(0.95),
+                0.9
+            ),
+            Resolution::Merge {
+                existing: FactId("f-1".into()),
+                similarity: 0.95
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_is_new_when_nothing_matches_or_conflicts() {
+        let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6)];
+        let candidate = proposal("клиент c-1", "любит", "чай", 0.7);
+
+        let outcome = resolve(&candidate, &existing, &FixedSimilarity(0.1), 0.9);
+
+        assert_eq!(outcome, Resolution::New);
     }
 }
