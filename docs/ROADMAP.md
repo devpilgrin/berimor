@@ -109,7 +109,7 @@ P6, честная граница: `token_budget`/`cost_budget` не прину�
 | P2 | ✅ Типы шагов без модели: `sequential`/`parallel`/`loop`/`branch`/`checkpoint` | M | Средний | P1 | `arch/process-engine.md` §2 |
 | P3 | ✅ Цикл исполнения движка (instantiate/next/apply/emit) + снапшот при мутации | L | Сильный | P1, P2, F2 | `arch/process-engine.md` §4 |
 | P4 | ✅ Восстановление после сбоя (replay) + property-тест «свёртка журнала = состояние» | L | Сильный | P3 | `arch/process-engine.md` §7 |
-| P5 | Конкурентность: один писатель на инстанс, неймспейсы parallel-шагов, join-барьер | XL | Сильный | P3 | `arch/process-engine.md` §4 |
+| P5 | 🔍 Конкурентность: один писатель на инстанс, неймспейсы parallel-шагов, join-барьер — реализовано, ждёт обязательного независимого ревью (XL, §16 п.3) | XL | Сильный | P3 | `arch/process-engine.md` §4 |
 | P6 | ✅ Детерминированные прерыватели: `max_steps`/`timeout` (движок), `latency_budget` (SLA отбора провайдера, ADR-0011) | M | Средний | P3 | `arch/process-engine.md` §4, ADR-0011 |
 | P7 | ✅ Шаг `human_gate` + политика таймаута эскалации | M | Средний | P3 | `arch/process-engine.md` §5 |
 | P8 | ✅ Привязка версии к инстансу + операция `migrate_version` | L | Сильный | P3, P4 | `arch/process-engine.md` §2, ADR-0012 |

@@ -31,6 +31,13 @@ fn describe(event: &Event) -> TraceEntry {
     let (kind, summary) = match &event.kind {
         EventKind::Instantiated => ("instantiated", "инстанс создан".to_string()),
         EventKind::StepApplied { step_id } => ("step_applied", format!("шаг '{step_id}' применён")),
+        EventKind::ParallelStepApplied {
+            fork_step_id,
+            branch_step_id,
+        } => (
+            "parallel_step_applied",
+            format!("ветвь '{branch_step_id}' форка '{fork_step_id}' применена"),
+        ),
         EventKind::MediationParsed => ("mediation_parsed", "вывод модели разобран".to_string()),
         EventKind::MediationValidated => (
             "mediation_validated",

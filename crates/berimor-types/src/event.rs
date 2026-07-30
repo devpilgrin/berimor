@@ -67,6 +67,15 @@ pub enum EventKind {
     StepApplied {
         step_id: String,
     },
+    /// P5: патч ОДНОЙ ветви parallel-шага — пишется в изолированный
+    /// неймспейс `state.parallel.<fork_step_id>.<branch_step_id>`
+    /// (`process-engine.md` §4), не в `state.<branch_step_id>` напрямую:
+    /// одноимённый шаг вне parallel-контекста не должен быть перезаписан
+    /// или перезаписать результат ветви.
+    ParallelStepApplied {
+        fork_step_id: String,
+        branch_step_id: String,
+    },
     MediationParsed,
     MediationValidated,
     MediationCommitted,

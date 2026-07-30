@@ -6,11 +6,19 @@
 //! Область этого модуля — граф без исполнителей и без движка: дать
 //! `compile` (проверка графа при загрузке — «компилируется в исполняемый
 //! граф», дословно из §2) и `next_step` (чистая функция состояние → следующий
-//! шаг). Подключение к журналу/Mediation/Capability — задача P3; join-барьер
-//! `parallel` по неймспейсам `state.parallel.<step_id>` — задача P5 (§4:
-//! «Параллельные шаги пишут в разделённые неймспейсы... join мержит по
-//! барьеру после завершения всех ветвей») — здесь только видно, что фаза
-//! наступила, само слияние не реализовано.
+//! шаг). Подключение к журналу/Mediation/Capability — задача P3.
+//!
+//! `parallel` (P5, §4: «параллельные шаги пишут в разделённые
+//! неймспейсы... join мержит по барьеру после завершения всех ветвей») —
+//! барьер решается ЗДЕСЬ, состоянием, а не отдельным полем движка:
+//! `next_step` смотрит, какие ветви `parallel`-шага уже оставили патч в
+//! `state.parallel.<fork_step_id>.<branch_step_id>` (реальное исполнение
+//! ветвей — движок, P3/P5), и возвращает `Fork` с ТОЛЬКО оставшимися —
+//! пустой остаток означает «барьер пройден», обычный переход к
+//! следующему объявленному шагу, тот же путь, что у любого другого типа
+//! шага. Один вызов `next_step` двигает не больше чем на одну ветвь за
+//! раз — движок сам решает, сколько раз вызвать (`один писатель на
+//! инстанс», §4 — синхронный цикл, не параллельные потоки).
 
 use berimor_types::state_path;
 use berimor_types::step::{Process, StepKind};
@@ -20,9 +28,9 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NextStep {
     Single(String),
-    /// `parallel`: набор шагов для одновременного запуска. Что происходит
-    /// после — join-барьер по `state.parallel.<step_id>` — не решается
-    /// здесь (P5).
+    /// `parallel`: ветви, ещё не оставившие патч в
+    /// `state.parallel.<fork_step_id>.*` — не обязательно все объявленные
+    /// ветви шага, если часть уже выполнена в предыдущих вызовах.
     Fork(Vec<String>),
     Finished,
 }
@@ -39,6 +47,18 @@ pub enum GraphError {
     DanglingBranchTarget { step_id: String, target: String },
     #[error("parallel-шаг '{step_id}' ссылается на несуществующий шаг '{target}'")]
     DanglingParallelBranch { step_id: String, target: String },
+    /// P5, v1: ветвь parallel-шага обязана быть мутирующим «листовым»
+    /// шагом (`tool`/`llm_structured`/`codeact`/`agent_step`) —
+    /// control-flow внутри ветви (`sequential`/`branch`/`checkpoint`/
+    /// `human_gate`/`loop`/вложенный `parallel`) не разрешён в этой
+    /// версии: неймспейс `state.parallel.<fork>.<branch>` рассчитан на
+    /// один патч на ветвь, не на цепочку шагов с собственным
+    /// управлением — расширение до цепочек является отдельной будущей
+    /// задачей, не выдуманной здесь.
+    #[error(
+        "parallel-шаг '{step_id}': ветвь '{target}' не является мутирующим шагом (tool/llm_structured/codeact/agent_step)"
+    )]
+    ParallelBranchNotMutating { step_id: String, target: String },
     #[error("не удалось вычислить условие ветвления в шаге '{step_id}': {reason}")]
     ConditionEvaluation { step_id: String, reason: String },
     #[error("ни один case ветвления не совпал для шага '{step_id}' (значение состояния: {value})")]
@@ -77,8 +97,14 @@ pub fn compile(process: &Process) -> Result<(), GraphError> {
             }
             StepKind::Parallel { branches } => {
                 for target in branches {
-                    if !seen.contains(target.as_str()) {
+                    let Some(target_step) = process.steps.iter().find(|s| s.id == *target) else {
                         return Err(GraphError::DanglingParallelBranch {
+                            step_id: step.id.clone(),
+                            target: target.clone(),
+                        });
+                    };
+                    if !is_mutating_leaf(&target_step.kind) {
+                        return Err(GraphError::ParallelBranchNotMutating {
                             step_id: step.id.clone(),
                             target: target.clone(),
                         });
@@ -90,6 +116,19 @@ pub fn compile(process: &Process) -> Result<(), GraphError> {
     }
 
     Ok(())
+}
+
+/// Шаги, которые вызывают исполнителя и производят ровно один патч —
+/// единственные допустимые ветви `parallel` в v1 (см.
+/// [`GraphError::ParallelBranchNotMutating`]).
+fn is_mutating_leaf(kind: &StepKind) -> bool {
+    matches!(
+        kind,
+        StepKind::Tool { .. }
+            | StepKind::LlmStructured { .. }
+            | StepKind::CodeAct { .. }
+            | StepKind::AgentStep { .. }
+    )
 }
 
 /// `state.classify.risk` → следующий шаг: `Single` для sequential-подобных
@@ -121,7 +160,31 @@ pub fn next_step(
             let target = evaluate_branch(&step.id, on, cases, state)?;
             Ok(NextStep::Single(target))
         }
-        StepKind::Parallel { branches } => Ok(NextStep::Fork(branches.clone())),
+        StepKind::Parallel { branches } => {
+            let remaining: Vec<String> = branches
+                .iter()
+                .filter(|branch| !parallel_branch_done(state, &step.id, branch))
+                .cloned()
+                .collect();
+            if remaining.is_empty() {
+                // Барьер пройден. Шаги-ветви объявлены в том же плоском
+                // списке шагов процесса (другого места для их объявления
+                // нет) — «следующий по индексу» шаг чаще всего оказался бы
+                // одной из них, не настоящим продолжением. Продолжение —
+                // первый шаг ПОСЛЕ текущего, чей id не входит в список
+                // ветвей этого forка, независимо от того, где именно
+                // ветви объявлены относительно него.
+                Ok(process
+                    .steps
+                    .iter()
+                    .skip(current_index + 1)
+                    .find(|s| !branches.contains(&s.id))
+                    .map(|s| NextStep::Single(s.id.clone()))
+                    .unwrap_or(NextStep::Finished))
+            } else {
+                Ok(NextStep::Fork(remaining))
+            }
+        }
         StepKind::Loop { .. } => Err(GraphError::Unsupported {
             step_id: step.id.clone(),
             reason: "у Loop нет поля цели повтора — process-engine.md не даёт рабочего примера \
@@ -203,6 +266,18 @@ fn value_equals_literal(value: &Value, literal: &str) -> bool {
         Value::Bool(b) => literal.parse::<bool>().ok() == Some(*b),
         _ => false,
     }
+}
+
+/// Ветвь `parallel`-шага уже выполнена, если под её ключом в
+/// `state.parallel.<fork_step_id>` вообще что-то есть — сам факт наличия
+/// ключа, не его значение (даже `null`/`false` от исполнителя — валидный
+/// патч, не «ветвь не выполнена»).
+fn parallel_branch_done(state: &Value, fork_step_id: &str, branch_step_id: &str) -> bool {
+    state
+        .get("parallel")
+        .and_then(|p| p.get(fork_step_id))
+        .and_then(|f| f.get(branch_step_id))
+        .is_some()
 }
 
 /// Порядок обхода `cases` — по ключам `BTreeMap` (детерминированно), но не
@@ -446,6 +521,73 @@ mod tests {
             result,
             NextStep::Fork(vec!["classify".into(), "answer".into()])
         );
+    }
+
+    fn with_fanout(branches: Vec<&str>) -> Process {
+        let mut process = golden();
+        process.steps.push(Step {
+            id: "fanout".into(),
+            kind: StepKind::Parallel {
+                branches: branches.into_iter().map(String::from).collect(),
+            },
+        });
+        process
+    }
+
+    #[test]
+    fn fork_lists_only_branches_not_yet_done() {
+        let process = with_fanout(vec!["classify", "answer"]);
+        let state = json!({"parallel": {"fanout": {"classify": {"risk": 1}}}});
+
+        let result = next_step(&process, Some("fanout"), &state).unwrap();
+
+        assert_eq!(result, NextStep::Fork(vec!["answer".into()]));
+    }
+
+    #[test]
+    fn fork_barrier_passes_once_every_branch_is_done() {
+        let process = with_fanout(vec!["classify", "answer"]);
+        let state = json!({"parallel": {"fanout": {
+            "classify": {"risk": 1},
+            "answer": {"reply": "ok"}
+        }}});
+
+        let result = next_step(&process, Some("fanout"), &state).unwrap();
+
+        // "fanout" объявлен последним шагом golden-процесса — после барьера
+        // process.steps.get(index+1) не находит ничего дальше.
+        assert_eq!(result, NextStep::Finished);
+    }
+
+    #[test]
+    fn a_falsy_branch_result_still_counts_as_done() {
+        // `false`/`null` — валидный патч, не "ветвь не выполнена":
+        // проверка идёт по наличию ключа, не по его значению.
+        let process = with_fanout(vec!["classify", "answer"]);
+        let state = json!({"parallel": {"fanout": {
+            "classify": false,
+            "answer": {"reply": "ok"}
+        }}});
+
+        let result = next_step(&process, Some("fanout"), &state).unwrap();
+
+        assert_eq!(result, NextStep::Finished);
+    }
+
+    #[test]
+    fn compile_rejects_a_parallel_branch_that_is_not_a_mutating_leaf() {
+        let process = with_fanout(vec!["check_risk"]); // check_risk — branch, не лист
+        assert!(matches!(
+            compile(&process),
+            Err(GraphError::ParallelBranchNotMutating { ref step_id, ref target })
+                if step_id == "fanout" && target == "check_risk"
+        ));
+    }
+
+    #[test]
+    fn compile_accepts_a_parallel_branch_that_is_a_mutating_leaf() {
+        let process = with_fanout(vec!["classify", "answer"]);
+        assert!(compile(&process).is_ok());
     }
 
     #[test]

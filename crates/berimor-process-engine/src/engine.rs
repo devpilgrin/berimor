@@ -249,10 +249,23 @@ pub fn run(
         )?;
         let step_id = match next {
             graph::NextStep::Finished => return Ok(RunOutcome::Finished),
-            graph::NextStep::Fork(_) => {
-                return Err(EngineError::Unsupported(
-                    "parallel: join-барьер по неймспейсам — задача P5, не реализовано".into(),
-                ))
+            graph::NextStep::Fork(remaining_branches) => {
+                // `graph::next_step` уже отфильтровал выполненные ветви —
+                // здесь просто исполняем ОДНУ из оставшихся за итерацию
+                // («один писатель на инстанс», §4: цикл синхронный, не
+                // параллельные потоки). `current_step` НЕ трогаем — он
+                // остаётся на самом parallel-шаге, следующая итерация
+                // снова спросит `next_step`: ещё есть ветви — форкнет
+                // дальше, барьер пройден — пройдёт мимо как обычный шаг.
+                let fork_step_id = instance.current_step.clone().expect(
+                    "Fork возвращается только когда current указывает на существующий parallel-шаг",
+                );
+                let branch_step_id = remaining_branches
+                    .first()
+                    .expect("graph::next_step не возвращает Fork с пустым списком")
+                    .clone();
+                execute_fork_branch(storage, executor, instance, &fork_step_id, &branch_step_id)?;
+                continue;
             }
             graph::NextStep::Single(id) => id,
         };
@@ -267,11 +280,12 @@ pub fn run(
             );
 
         match &step.kind {
-            StepKind::Sequential | StepKind::Branch { .. } => {
-                // Ни то ни другое не мутирует состояние и не вызывает
-                // исполнителя — сюда попадаем только чтобы сдвинуть
-                // current_step; следующая итерация корректно разрешит
-                // branch через graph::next_step с новым current.
+            StepKind::Sequential | StepKind::Branch { .. } | StepKind::Parallel { .. } => {
+                // Ни один не мутирует состояние и не вызывает исполнителя
+                // здесь — сюда попадаем только чтобы сдвинуть current_step
+                // на сам parallel-шаг; следующая итерация `graph::next_step`
+                // либо разрешит branch, либо начнёт форк (реальное
+                // исполнение ветвей — ветка `Fork` выше, не эта).
             }
             StepKind::Checkpoint => {
                 let seq = latest_seq(storage, &instance.id)?;
@@ -296,11 +310,6 @@ pub fn run(
                 return Err(EngineError::Unsupported(
                     "loop: нет поля цели повтора — открытый вопрос архитектуры (см. graph.rs)"
                         .into(),
-                ))
-            }
-            StepKind::Parallel { .. } => {
-                return Err(EngineError::Unsupported(
-                    "parallel как текущий шаг: join-барьер — задача P5, не реализовано".into(),
                 ))
             }
             StepKind::Tool { .. }
@@ -328,6 +337,52 @@ pub fn run(
 
         instance.current_step = Some(step_id);
     }
+}
+
+/// Исполняет ОДНУ ветвь parallel-шага (P5): вызывает исполнителя как для
+/// обычного мутирующего шага, но журналирует `ParallelStepApplied`
+/// (не `StepApplied`) и применяет патч в изолированный неймспейс
+/// `state.parallel.<fork_step_id>.<branch_step_id>`
+/// ([`state::apply_parallel_patch`]), не в `state.<branch_step_id>`
+/// напрямую. Тип ветви гарантирован `graph::compile`
+/// (`GraphError::ParallelBranchNotMutating`) — здесь не перепроверяется.
+fn execute_fork_branch(
+    storage: &dyn EventLog,
+    executor: &dyn StepExecutor,
+    instance: &mut ProcessInstance,
+    fork_step_id: &str,
+    branch_step_id: &str,
+) -> Result<(), EngineError> {
+    let branch_step = instance
+        .process
+        .steps
+        .iter()
+        .find(|s| s.id == branch_step_id)
+        .expect("ветви parallel-шага проверены graph::compile — существуют и валидны по типу");
+
+    let patch = executor.execute(branch_step, &instance.state)?;
+    let event = Event::new(
+        instance.id.clone(),
+        instance.process.version,
+        EventKind::ParallelStepApplied {
+            fork_step_id: fork_step_id.to_string(),
+            branch_step_id: branch_step_id.to_string(),
+        },
+        patch.changes.clone(),
+    );
+    let seq = storage.append(event)?;
+    instance.state = state::apply_parallel_patch(
+        &instance.state,
+        fork_step_id,
+        branch_step_id,
+        &patch.changes,
+    );
+    storage.write_snapshot(Snapshot {
+        process_instance: instance.id.clone(),
+        seq,
+        state: instance.state.clone(),
+    })?;
+    Ok(())
 }
 
 fn latest_seq(
@@ -743,6 +798,253 @@ mod tests {
             "неудачный вызов исполнителя не должен оставлять StepApplied в журнале \
              (Instantiated от самого instantiate() — не в счёт, это отдельное событие)"
         );
+    }
+
+    // --- P5: parallel/join-барьер -----------------------------------------
+
+    const FANOUT_YAML: &str = "
+process: p
+version: 1
+limits:
+  max_steps: 10
+  timeout: 10m
+steps:
+  - id: fanout
+    type: parallel
+    branches: [branch_a, branch_b]
+  - id: branch_a
+    type: tool
+    tool: some.tool
+    args: {}
+  - id: branch_b
+    type: tool
+    tool: some.tool
+    args: {}
+  - id: after
+    type: tool
+    tool: some.tool
+    args: {}
+";
+
+    struct FanoutExecutor {
+        /// Если задано — исполнитель падает на этом шаге ровно один раз
+        /// (для проверки восстановления посреди форка).
+        fail_once_on: std::cell::RefCell<Option<&'static str>>,
+    }
+
+    impl FanoutExecutor {
+        fn new() -> Self {
+            Self {
+                fail_once_on: std::cell::RefCell::new(None),
+            }
+        }
+
+        fn failing_once_on(step_id: &'static str) -> Self {
+            Self {
+                fail_once_on: std::cell::RefCell::new(Some(step_id)),
+            }
+        }
+    }
+
+    impl StepExecutor for FanoutExecutor {
+        fn execute(&self, step: &Step, _state: &Value) -> Result<Patch, ExecutorError> {
+            if self.fail_once_on.borrow().as_deref() == Some(step.id.as_str()) {
+                *self.fail_once_on.borrow_mut() = None;
+                return Err(ExecutorError {
+                    step_id: step.id.clone(),
+                    reason: "намеренный сбой теста".into(),
+                });
+            }
+            let changes = match step.id.as_str() {
+                "branch_a" => json!({"result": "a"}),
+                "branch_b" => json!({"result": "b"}),
+                "after" => json!({"done": true}),
+                other => {
+                    return Err(ExecutorError {
+                        step_id: other.into(),
+                        reason: "FanoutExecutor не знает этот шаг".into(),
+                    })
+                }
+            };
+            Ok(Patch {
+                step_id: step.id.clone(),
+                changes,
+            })
+        }
+    }
+
+    #[test]
+    fn parallel_step_runs_to_completion_through_the_barrier() {
+        let (storage, mut inst) = instance_with_process(FANOUT_YAML, "fanout-run");
+        let executor = FanoutExecutor::new();
+
+        let outcome = run(&storage, &executor, &mut inst).unwrap();
+
+        assert_eq!(outcome, RunOutcome::Finished);
+        assert_eq!(
+            inst.state,
+            json!({
+                "parallel": {"fanout": {
+                    "branch_a": {"result": "a"},
+                    "branch_b": {"result": "b"}
+                }},
+                "after": {"done": true}
+            })
+        );
+    }
+
+    #[test]
+    fn parallel_branches_are_journaled_under_their_own_namespace_not_top_level() {
+        let (storage, mut inst) = instance_with_process(FANOUT_YAML, "fanout-namespace");
+        let executor = FanoutExecutor::new();
+
+        run(&storage, &executor, &mut inst).unwrap();
+
+        assert_eq!(
+            inst.state["parallel"]["fanout"]["branch_a"],
+            json!({"result": "a"})
+        );
+        assert_eq!(
+            inst.state["parallel"]["fanout"]["branch_b"],
+            json!({"result": "b"})
+        );
+        // Ветви НЕ появляются как обычные top-level шаги.
+        assert!(inst.state.get("branch_a").is_none());
+        assert!(inst.state.get("branch_b").is_none());
+        assert_eq!(inst.state["after"], json!({"done": true}));
+    }
+
+    #[test]
+    fn parallel_branches_journal_parallel_step_applied_not_step_applied() {
+        let (storage, mut inst) = instance_with_process(FANOUT_YAML, "fanout-events");
+        let executor = FanoutExecutor::new();
+
+        run(&storage, &executor, &mut inst).unwrap();
+
+        let events = storage.replay(&inst.id).unwrap();
+        let parallel_events: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EventKind::ParallelStepApplied { branch_step_id, .. } => {
+                    Some(branch_step_id.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(parallel_events, vec!["branch_a", "branch_b"]);
+
+        let step_applied: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match &e.kind {
+                EventKind::StepApplied { step_id } => Some(step_id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            step_applied,
+            vec!["after"],
+            "ветви форка не должны порождать обычный StepApplied"
+        );
+    }
+
+    #[test]
+    fn each_fork_branch_counts_toward_max_steps() {
+        let mut process = parse(FANOUT_YAML).unwrap();
+        // Шаг 1 — переход на сам "fanout" (Single, без исполнения), шаг 2 —
+        // первая ветвь; бюджета на вторую ветвь уже не хватает.
+        process.limits.max_steps = 2;
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let mut inst = instantiate(
+            &storage,
+            ProcessInstanceId("fanout-max-steps".into()),
+            process,
+            json!({}),
+        )
+        .unwrap();
+        let executor = FanoutExecutor::new();
+
+        let result = run(&storage, &executor, &mut inst);
+
+        assert!(matches!(result, Err(EngineError::LimitExceeded(_))));
+        // Первая ветвь успела примениться до того, как лимит остановил цикл.
+        assert_eq!(
+            inst.state["parallel"]["fanout"]["branch_a"],
+            json!({"result": "a"})
+        );
+        assert!(inst.state["parallel"]["fanout"].get("branch_b").is_none());
+    }
+
+    #[test]
+    fn failed_branch_does_not_advance_and_can_be_retried() {
+        let (storage, mut inst) = instance_with_process(FANOUT_YAML, "fanout-retry");
+        let executor = FanoutExecutor::failing_once_on("branch_b");
+
+        let first = run(&storage, &executor, &mut inst);
+        assert!(
+            first.is_err(),
+            "branch_b намеренно падает на первой попытке"
+        );
+        assert_eq!(
+            inst.state["parallel"]["fanout"]["branch_a"],
+            json!({"result": "a"}),
+            "branch_a уже применилась до отказа branch_b"
+        );
+        assert!(inst.state["parallel"]["fanout"].get("branch_b").is_none());
+
+        // Повторный run() с тем же (уже не падающим) исполнителем
+        // доисполняет только оставшуюся ветвь, не переисполняет branch_a.
+        let second = run(&storage, &executor, &mut inst).unwrap();
+        assert_eq!(second, RunOutcome::Finished);
+        assert_eq!(
+            inst.state["parallel"]["fanout"]["branch_b"],
+            json!({"result": "b"})
+        );
+
+        let events = storage.replay(&inst.id).unwrap();
+        let branch_a_events = events
+            .iter()
+            .filter(
+                |e| matches!(&e.kind, EventKind::ParallelStepApplied { branch_step_id, .. } if branch_step_id == "branch_a"),
+            )
+            .count();
+        assert_eq!(
+            branch_a_events, 1,
+            "branch_a не должна исполниться повторно"
+        );
+    }
+
+    #[test]
+    fn recover_mid_fork_resumes_only_the_remaining_branch() {
+        let process = parse(FANOUT_YAML).unwrap();
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let id = ProcessInstanceId("fanout-recover".into());
+
+        {
+            let mut inst = instantiate(&storage, id.clone(), process.clone(), json!({})).unwrap();
+            let executor = FanoutExecutor::failing_once_on("branch_b");
+            let _ = run(&storage, &executor, &mut inst); // падает на branch_b, branch_a уже в журнале
+        }
+
+        // "перезапуск процесса" — восстановление из журнала, без связи с
+        // предыдущим инстансом (тот же приём, что и P4).
+        let mut recovered = recover(&storage, process, id).unwrap();
+        assert_eq!(
+            recovered.state["parallel"]["fanout"]["branch_a"],
+            json!({"result": "a"})
+        );
+        assert!(recovered.state["parallel"]["fanout"]
+            .get("branch_b")
+            .is_none());
+
+        let executor = FanoutExecutor::new();
+        let outcome = run(&storage, &executor, &mut recovered).unwrap();
+
+        assert_eq!(outcome, RunOutcome::Finished);
+        assert_eq!(
+            recovered.state["parallel"]["fanout"]["branch_b"],
+            json!({"result": "b"})
+        );
+        assert_eq!(recovered.state["after"], json!({"done": true}));
     }
 
     // --- P8: migrate_version --------------------------------------------

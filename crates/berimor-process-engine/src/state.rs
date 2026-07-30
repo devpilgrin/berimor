@@ -33,6 +33,39 @@ pub fn apply_patch(state: &Value, patch: &Patch) -> Value {
     Value::Object(map)
 }
 
+/// Атомарно применяет патч ОДНОЙ ветви parallel-шага в изолированный
+/// неймспейс `state.parallel.<fork_step_id>.<branch_step_id>` (P5,
+/// `process-engine.md` §4: «параллельные шаги пишут в разделённые
+/// неймспейсы»). Единственное осознанное исключение из «не глубокое
+/// слияние» у [`apply_patch`]: здесь ровно один дополнительный уровень
+/// вложенности (`parallel.<fork>.<branch>`), не общий deep-merge всего
+/// состояния — остальные ключи `parallel.<fork>.*` (другие ветви того же
+/// forка, уже завершённые) сохраняются, остальные ключи состояния вне
+/// `parallel` не трогаются вовсе.
+pub fn apply_parallel_patch(
+    state: &Value,
+    fork_step_id: &str,
+    branch_step_id: &str,
+    changes: &Value,
+) -> Value {
+    let mut root = match state {
+        Value::Object(map) => map.clone(),
+        _ => Map::new(),
+    };
+    let mut parallel = match root.remove("parallel") {
+        Some(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+    let mut fork = match parallel.remove(fork_step_id) {
+        Some(Value::Object(map)) => map,
+        _ => Map::new(),
+    };
+    fork.insert(branch_step_id.to_string(), changes.clone());
+    parallel.insert(fork_step_id.to_string(), Value::Object(fork));
+    root.insert("parallel".to_string(), Value::Object(parallel));
+    Value::Object(root)
+}
+
 /// Свёртка журнала событий инстанса в состояние — детерминированно, без
 /// моделей (инвариант I7). Мутируют состояние два вида событий:
 /// `Instantiated` (единожды, первым — сидирует состояние исходным `input`
@@ -62,6 +95,12 @@ pub fn fold(events: &[Event]) -> Value {
                     changes: event.payload.clone(),
                 };
                 state = apply_patch(&state, &patch);
+            }
+            EventKind::ParallelStepApplied {
+                fork_step_id,
+                branch_step_id,
+            } => {
+                state = apply_parallel_patch(&state, fork_step_id, branch_step_id, &event.payload);
             }
             _ => {}
         }
@@ -137,6 +176,85 @@ mod tests {
     #[test]
     fn fold_of_empty_log_is_empty_object() {
         assert_eq!(fold(&[]), json!({}));
+    }
+
+    #[test]
+    fn apply_parallel_patch_writes_under_the_fork_and_branch_namespace() {
+        let state = Value::Object(Map::new());
+        let next = apply_parallel_patch(&state, "fanout", "classify", &json!({"risk": 7}));
+        assert_eq!(
+            next,
+            json!({"parallel": {"fanout": {"classify": {"risk": 7}}}})
+        );
+    }
+
+    #[test]
+    fn apply_parallel_patch_of_a_second_branch_keeps_the_first() {
+        let state = apply_parallel_patch(
+            &Value::Object(Map::new()),
+            "fanout",
+            "classify",
+            &json!({"risk": 7}),
+        );
+        let next = apply_parallel_patch(&state, "fanout", "answer", &json!({"reply": "ok"}));
+        assert_eq!(
+            next,
+            json!({"parallel": {"fanout": {
+                "classify": {"risk": 7},
+                "answer": {"reply": "ok"}
+            }}})
+        );
+    }
+
+    #[test]
+    fn apply_parallel_patch_does_not_disturb_top_level_state() {
+        let state = json!({"user": {"card_id": "c-1"}});
+        let next = apply_parallel_patch(&state, "fanout", "classify", &json!({"risk": 7}));
+        assert_eq!(next["user"], json!({"card_id": "c-1"}));
+    }
+
+    #[test]
+    fn apply_parallel_patch_does_not_mutate_the_original() {
+        let original = Value::Object(Map::new());
+        let before = original.clone();
+        let _ = apply_parallel_patch(&original, "fanout", "classify", &json!({"risk": 7}));
+        assert_eq!(original, before);
+    }
+
+    #[test]
+    fn fold_handles_parallel_step_applied_events() {
+        let events = vec![
+            Event {
+                seq: EventSeq(1),
+                process_instance: ProcessInstanceId("inst".into()),
+                process_version: 1,
+                kind: EventKind::ParallelStepApplied {
+                    fork_step_id: "fanout".into(),
+                    branch_step_id: "classify".into(),
+                },
+                payload: json!({"risk": 7}),
+                ts_ms: 0,
+            },
+            Event {
+                seq: EventSeq(2),
+                process_instance: ProcessInstanceId("inst".into()),
+                process_version: 1,
+                kind: EventKind::ParallelStepApplied {
+                    fork_step_id: "fanout".into(),
+                    branch_step_id: "answer".into(),
+                },
+                payload: json!({"reply": "ok"}),
+                ts_ms: 0,
+            },
+        ];
+
+        assert_eq!(
+            fold(&events),
+            json!({"parallel": {"fanout": {
+                "classify": {"risk": 7},
+                "answer": {"reply": "ok"}
+            }}})
+        );
     }
 
     #[test]

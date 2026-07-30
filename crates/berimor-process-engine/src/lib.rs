@@ -9,9 +9,15 @@
 //! - `engine` (P3) — цикл исполнения, соединяющий три модуля выше с журналом
 //!   (`berimor-storage`) и с точкой расширения [`engine::StepExecutor`] —
 //!   единственным местом, куда движок передаёт исполнение шагов с моделью.
+//!   Включает P5 (`parallel`-форк, join-барьер по неймспейсам
+//!   `state.parallel.<fork>.<branch>`), P6 (`max_steps`/`timeout`), P7
+//!   (`human_gate`), P8 (`migrate_version`).
+//! - `instance_lock` (P5) — гарантия «один писатель на инстанс» между
+//!   независимыми вызывающими (не про заимствование внутри одного).
 
 pub mod engine;
 pub mod graph;
+pub mod instance_lock;
 pub mod parser;
 pub mod state;
 
