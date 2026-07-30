@@ -6,11 +6,13 @@
 //!   операций до выполнения.
 //! - `jail` (S2) — jail файловой системы: канонизация путей, защита от
 //!   symlink-обхода.
+//! - `net_gate` (S3) — сетевой гейт: приватные адреса — через подтверждение.
 
 use berimor_types::capability::{CapabilityDecision, ConfirmationMode, ProposedAction};
 
 pub mod deny;
 pub mod jail;
+pub mod net_gate;
 
 /// Единая точка проверки перед любым мутирующим вызовом инструмента
 /// (`process-engine.md` §4). `Deny` безусловен — обходить этот трейт
