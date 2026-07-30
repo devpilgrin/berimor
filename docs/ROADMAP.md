@@ -112,7 +112,7 @@ P6, честная граница: `token_budget`/`cost_budget` не прину�
 | P5 | Конкурентность: один писатель на инстанс, неймспейсы parallel-шагов, join-барьер | XL | Сильный | P3 | `arch/process-engine.md` §4 |
 | P6 | ✅ Детерминированные прерыватели: `max_steps`/`timeout` (движок), `latency_budget` (SLA отбора провайдера, ADR-0011) | M | Средний | P3 | `arch/process-engine.md` §4, ADR-0011 |
 | P7 | ✅ Шаг `human_gate` + политика таймаута эскалации | M | Средний | P3 | `arch/process-engine.md` §5 |
-| P8 | Привязка версии к инстансу + операция `migrate_version` | L | Сильный | P3, P4 | `arch/process-engine.md` §2, ADR-0012 |
+| P8 | ✅ Привязка версии к инстансу + операция `migrate_version` | L | Сильный | P3, P4 | `arch/process-engine.md` §2, ADR-0012 |
 
 ## 6. Фаза 2 — Mediation
 

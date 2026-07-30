@@ -81,6 +81,10 @@ pub enum EngineError {
     HumanGateTimeout { step_id: String },
     #[error("шаг '{0}' не human_gate — таймаут human_gate к нему неприменим")]
     NotAHumanGate(String),
+    /// P8 (ADR-0012): текущий шаг инстанса не существует в графе новой
+    /// версии — продолжать выполнение было бы некуда.
+    #[error("миграция несовместима: шаг '{step_id}', на котором остановлен инстанс, отсутствует в новой версии графа")]
+    MigrationIncompatible { step_id: String },
 }
 
 /// Создаёт новый инстанс и пишет `Instantiated` первым событием журнала —
@@ -144,6 +148,55 @@ pub fn recover(
         state,
         current_step,
     })
+}
+
+/// Переводит работающий инстанс на новую версию графа (P8, ADR-0012).
+///
+/// Подтверждение человека (I2: «любое изменение системы только через
+/// событие и подтверждение») — ответственность ВЫЗЫВАЮЩЕГО кода, не этой
+/// функции: тот же приём, что и у `resume_after_human_gate_timeout`
+/// («время вышло» — решение снаружи, функция применяет последствие).
+/// Вызов `migrate_version` уже означает «подтверждение получено» — перед
+/// вызовом стоит `ConfirmationHandler`/аналог, эта функция сама
+/// диалогов не ведёт (I5: ядро не владеет UI).
+///
+/// «Проверка текущего состояния против схемы новой версии» —
+/// `graph::compile` нового графа (сам по себе обязан быть валиден) плюс
+/// проверка, что шаг, на котором остановлен инстанс, существует и в
+/// новом графе: продолжать выполнение с несуществующего шага — не
+/// восстановление, а порча состояния. Более глубокая совместимость схем
+/// состояния (типы полей, обязательность) — вне этой проверки: Process
+/// Engine не хранит схему состояния отдельно от шагов, которые его
+/// пишут (`process-engine.md` §3).
+pub fn migrate_version(
+    storage: &dyn EventLog,
+    instance: &mut ProcessInstance,
+    new_process: Process,
+) -> Result<(), EngineError> {
+    graph::compile(&new_process)?;
+
+    if let Some(step_id) = &instance.current_step {
+        if !new_process.steps.iter().any(|s| &s.id == step_id) {
+            return Err(EngineError::MigrationIncompatible {
+                step_id: step_id.clone(),
+            });
+        }
+    }
+
+    let from_version = instance.process.version;
+    let to_version = new_process.version;
+    storage.append(Event::new(
+        instance.id.clone(),
+        to_version,
+        EventKind::VersionMigrated {
+            from_version,
+            to_version,
+        },
+        Value::Null,
+    ))?;
+
+    instance.process = new_process;
+    Ok(())
 }
 
 /// Прогоняет цикл `next → execute → apply → emit → snapshot` до
@@ -690,6 +743,120 @@ mod tests {
             "неудачный вызов исполнителя не должен оставлять StepApplied в журнале \
              (Instantiated от самого instantiate() — не в счёт, это отдельное событие)"
         );
+    }
+
+    // --- P8: migrate_version --------------------------------------------
+
+    const UNRELATED_PROCESS_YAML: &str = "
+process: p
+version: 99
+limits:
+  max_steps: 10
+  timeout: 10m
+steps:
+  - id: unrelated_step
+    type: sequential
+";
+
+    #[test]
+    fn migrate_version_updates_the_instance_process_and_journals_the_event() {
+        let (storage, mut inst, executor) = instance("migrate", 8);
+        run(&storage, &executor, &mut inst).unwrap(); // пауза на human_review
+
+        let mut new_process = parse(GOLDEN_FIXTURE).unwrap();
+        new_process.version = 99;
+
+        migrate_version(&storage, &mut inst, new_process).unwrap();
+
+        assert_eq!(inst.process.version, 99);
+        let events = storage.replay(&inst.id).unwrap();
+        assert!(events.iter().any(|e| matches!(
+            &e.kind,
+            EventKind::VersionMigrated { from_version, to_version }
+                if *from_version == 3 && *to_version == 99
+        )));
+    }
+
+    #[test]
+    fn migrate_version_rejects_a_graph_missing_the_current_step() {
+        let (storage, mut inst, executor) = instance("migrate-incompatible", 8);
+        run(&storage, &executor, &mut inst).unwrap(); // пауза на human_review
+
+        let new_process = parse(UNRELATED_PROCESS_YAML).unwrap();
+
+        let result = migrate_version(&storage, &mut inst, new_process);
+
+        assert!(matches!(
+            result,
+            Err(EngineError::MigrationIncompatible { ref step_id }) if step_id == "human_review"
+        ));
+        // Отказ не должен был поменять версию инстанса.
+        assert_eq!(inst.process.version, 3);
+    }
+
+    #[test]
+    fn migrate_version_propagates_an_invalid_new_graph() {
+        let (storage, mut inst, executor) = instance("migrate-bad-graph", 8);
+        run(&storage, &executor, &mut inst).unwrap();
+
+        let empty_process = Process {
+            name: "p".into(),
+            version: 99,
+            steps: vec![],
+            limits: inst.process.limits.clone(),
+        };
+
+        let result = migrate_version(&storage, &mut inst, empty_process);
+
+        assert!(matches!(result, Err(EngineError::Graph(_))));
+    }
+
+    #[test]
+    fn instance_can_resume_after_migrating_to_a_compatible_new_version() {
+        let (storage, mut inst, executor) = instance("migrate-resume", 8);
+        run(&storage, &executor, &mut inst).unwrap(); // пауза на human_review
+
+        let mut new_process = parse(GOLDEN_FIXTURE).unwrap();
+        new_process.version = 99;
+        migrate_version(&storage, &mut inst, new_process).unwrap();
+
+        // «ответ возобновляет выполнение» — тот же приём, что и без миграции.
+        let outcome = run(&storage, &executor, &mut inst).unwrap();
+
+        assert_eq!(outcome, RunOutcome::Finished);
+    }
+
+    #[test]
+    fn recover_after_migration_restores_the_instance_on_the_new_version() {
+        // low-risk (не human_gate): `recover()` выводит `current_step` из
+        // последнего `StepApplied`, `human_gate` его не журналирует (тот
+        // же пробел, что у `HumanGateOpened` без `step_id` — не эта
+        // задача, см. заметку в handoff), поэтому здесь — путь, где
+        // `current_step` однозначен без этого пробела.
+        let (storage, mut inst, executor) = instance("migrate-recover", 2);
+        run(&storage, &executor, &mut inst).unwrap();
+        let mut new_process = parse(GOLDEN_FIXTURE).unwrap();
+        new_process.version = 99;
+        migrate_version(&storage, &mut inst, new_process.clone()).unwrap();
+
+        let recovered = recover(&storage, new_process, inst.id.clone()).unwrap();
+
+        assert_eq!(recovered.current_step.as_deref(), Some("answer"));
+        assert_eq!(recovered.process.version, 99);
+    }
+
+    #[test]
+    fn recover_with_the_old_version_after_migration_is_a_version_mismatch() {
+        let (storage, mut inst, executor) = instance("migrate-stale-recover", 8);
+        run(&storage, &executor, &mut inst).unwrap();
+        let mut new_process = parse(GOLDEN_FIXTURE).unwrap();
+        new_process.version = 99;
+        let old_process = parse(GOLDEN_FIXTURE).unwrap();
+        migrate_version(&storage, &mut inst, new_process).unwrap();
+
+        let result = recover(&storage, old_process, inst.id.clone());
+
+        assert!(matches!(result, Err(EngineError::VersionMismatch { .. })));
     }
 
     // --- P7: resume_after_human_gate_timeout --------------------------------

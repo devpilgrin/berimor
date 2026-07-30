@@ -60,6 +60,13 @@ fn describe(event: &Event) -> TraceEntry {
         EventKind::SecurityEvent { detail } => {
             ("security_event", format!("событие безопасности: {detail}"))
         }
+        EventKind::VersionMigrated {
+            from_version,
+            to_version,
+        } => (
+            "version_migrated",
+            format!("инстанс переведён с версии {from_version} на {to_version}"),
+        ),
     };
     TraceEntry {
         seq: event.seq,
