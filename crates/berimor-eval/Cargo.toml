@@ -6,7 +6,11 @@ license.workspace = true
 description = "Трассировка/replay событий, офлайн-оценка на золотых наборах, здоровье навыков, онлайн-метрики."
 
 [dependencies]
+berimor-mediation = { path = "../berimor-mediation" }
 berimor-process-engine = { path = "../berimor-process-engine" }
 berimor-storage = { path = "../berimor-storage" }
 berimor-types = { path = "../berimor-types" }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+berimor-memory = { path = "../berimor-memory" }
