@@ -78,6 +78,32 @@ CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
     kind_text,
     payload_text
 );
+-- Семантическая память (MEM4, memory-model.md §3): персистентность
+-- фактов (MEM3, berimor-memory::semantic) + гибридный поиск. `embedding`
+-- хранится как JSON-массив в обычном текстовом столбце, не в
+-- vec0-виртуальной таблице: скалярная функция `vec_distance_cosine` из
+-- sqlite-vec покрывает всё, что нужно этому milestone (парная близость,
+-- ранжирование по близости в WHERE/ORDER BY) без обязательства заранее
+-- фиксировать размерность эмбеддинга в DDL, которое потребовал бы vec0.
+-- ANN-индексация vec0 — оптимизация масштаба, не корректности; отложена
+-- до реального сценария, где полный скан таблицы фактов станет узким
+-- местом (сейчас такого сценария нет).
+CREATE TABLE IF NOT EXISTS facts (
+    id               TEXT PRIMARY KEY,
+    subject          TEXT NOT NULL,
+    predicate        TEXT NOT NULL,
+    object           TEXT NOT NULL,
+    confidence       REAL NOT NULL,
+    source           TEXT NOT NULL,
+    trusted_channel  INTEGER NOT NULL,
+    embedding        TEXT
+);
+CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+    fact_id UNINDEXED,
+    subject,
+    predicate,
+    object
+);
 ";
 
 /// Встраиваемая реализация [`EventLog`] на SQLite (ADR-0021).
@@ -90,6 +116,7 @@ impl SqliteEventLog {
     /// применяет схему. WAL — условие «один писатель, читатели не
     /// блокируются» (`process-engine.md` §4).
     pub fn open(path: &std::path::Path) -> Result<Self, StorageError> {
+        register_vec_extension();
         let conn = Connection::open(path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         Self::from_connection(conn)
@@ -98,6 +125,7 @@ impl SqliteEventLog {
     /// In-memory журнал — для тестов и для Milestone 0 (`docs/ROADMAP.md` §3).
     /// WAL для `:memory:` не имеет смысла (нет файла) — не включается.
     pub fn open_in_memory() -> Result<Self, StorageError> {
+        register_vec_extension();
         let conn = Connection::open_in_memory()?;
         Self::from_connection(conn)
     }
@@ -313,6 +341,240 @@ impl EpisodicSearch for SqliteEventLog {
                 ts_ms,
             });
         }
+        Ok(hits)
+    }
+}
+
+/// Регистрирует расширение `sqlite-vec` (MEM4) для всех СОЕДИНЕНИЙ,
+/// открытых ПОСЛЕ вызова — `sqlite3_auto_extension` в SQLite глобален на
+/// процесс и не действует на уже открытые соединения, поэтому вызывается
+/// в начале `open`/`open_in_memory`, до `Connection::open*`. SQLite
+/// дедуплицирует повторную регистрацию той же точки входа сама, но
+/// `Once` — дешевле и явнее, чем полагаться на это молча при каждом
+/// вызове `open`.
+fn register_vec_extension() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| unsafe {
+        rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut rusqlite::ffi::sqlite3,
+                *mut *mut std::os::raw::c_char,
+                *const rusqlite::ffi::sqlite3_api_routines,
+            ) -> std::os::raw::c_int,
+        >(
+            sqlite_vec::sqlite3_vec_init as *const ()
+        )));
+    });
+}
+
+/// Факт семантической памяти (MEM3, `berimor_memory::semantic::StoredFact`)
+/// в форме хранилища — те же поля, без типа `FactId`/`FactHash`
+/// `berimor-memory` (эта крейта не зависит от `berimor-memory`, только
+/// наоборот, ADR-0021: хранилище — общий фундамент, не наоборот).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FactRecord {
+    pub id: String,
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub confidence: f32,
+    pub source: String,
+    pub trusted_channel: bool,
+}
+
+/// Одно совпадение гибридного поиска (MEM4, `memory-model.md` §3):
+/// векторная близость + полнотекстовое совпадение, объединённые
+/// фиксированными весами в `combined_score`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HybridHit {
+    pub fact_id: String,
+    pub vector_score: f32,
+    pub text_matched: bool,
+    pub combined_score: f32,
+}
+
+/// Веса гибридного поиска — `memory-model.md` §3 требует «фиксированные
+/// веса», но не называет числа. Вектор — основной сигнал (уже
+/// нормализован в `[0.0, 1.0]`, при наличии эмбеддинга обычно
+/// информативнее одного факта совпадения текста), полнотекст —
+/// усиливающий буст поверх него. Стартовые константы кода до
+/// офлайн-калибровки (Фаза 9), как `DEFAULT_SIMILARITY_THRESHOLD` (MEM3)
+/// и `context_engine::budget_chars` (C3).
+pub const VECTOR_WEIGHT: f32 = 0.7;
+pub const TEXT_WEIGHT: f32 = 0.3;
+
+/// Персистентность и гибридный поиск семантической памяти (MEM4).
+/// Работает с [`FactRecord`] — простыми полями хранилища, не с типами
+/// `berimor-memory` (та зависит от этой крейты, не наоборот).
+pub trait SemanticStore {
+    /// Пишет факт целиком; `embedding: None` не стирает уже сохранённый
+    /// эмбеддинг (обновление остальных полей без эмбеддинга — обычный
+    /// случай, пока не появился провайдер эмбеддингов), `Some` —
+    /// заменяет его полностью.
+    fn upsert_fact(&self, fact: &FactRecord, embedding: Option<&[f32]>)
+        -> Result<(), StorageError>;
+    /// Все факты — сырьё для `berimor_memory::semantic::resolve`, которая
+    /// сама решает точное/близкое совпадение и конфликт по срезу,
+    /// который эта функция загружает из хранилища.
+    fn all_facts(&self) -> Result<Vec<FactRecord>, StorageError>;
+    /// Косинусная близость `[0.0, 1.0]` уже сохранённого эмбеддинга факта
+    /// к `query_embedding`. `None` — факта нет или у него нет эмбеддинга
+    /// (не 0.0 — отсутствие данных не то же самое, что доказанная
+    /// непохожесть).
+    fn cosine_similarity(
+        &self,
+        fact_id: &str,
+        query_embedding: &[f32],
+    ) -> Result<Option<f32>, StorageError>;
+    /// Гибридный поиск по всем фактам с известным эмбеддингом: векторная
+    /// близость к `query_embedding` + полнотекстовое совпадение
+    /// `query_text` по subject/predicate/object, объединённые
+    /// [`VECTOR_WEIGHT`]/[`TEXT_WEIGHT`]. Убывающий порядок по
+    /// `combined_score`, не более `limit`.
+    fn hybrid_search(
+        &self,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<HybridHit>, StorageError>;
+}
+
+fn embedding_to_json(embedding: &[f32]) -> String {
+    let values: Vec<String> = embedding.iter().map(|v| v.to_string()).collect();
+    format!("[{}]", values.join(","))
+}
+
+impl SemanticStore for SqliteEventLog {
+    fn upsert_fact(
+        &self,
+        fact: &FactRecord,
+        embedding: Option<&[f32]>,
+    ) -> Result<(), StorageError> {
+        let conn = self.lock()?;
+        let embedding_json = embedding.map(embedding_to_json);
+        conn.execute(
+            "INSERT INTO facts (id, subject, predicate, object, confidence, source, trusted_channel, embedding)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(id) DO UPDATE SET
+                subject = excluded.subject,
+                predicate = excluded.predicate,
+                object = excluded.object,
+                confidence = excluded.confidence,
+                source = excluded.source,
+                trusted_channel = excluded.trusted_channel,
+                embedding = COALESCE(excluded.embedding, facts.embedding)",
+            params![
+                fact.id,
+                fact.subject,
+                fact.predicate,
+                fact.object,
+                fact.confidence,
+                fact.source,
+                fact.trusted_channel,
+                embedding_json
+            ],
+        )?;
+
+        // facts_fts не поддерживает UPDATE по значению неиндексируемого
+        // ключа напрямую — пересоздаём запись целиком, как events_fts (MEM2)
+        // делает при каждом append (там — вставка новой, здесь —
+        // потенциальное обновление уже существующей).
+        conn.execute("DELETE FROM facts_fts WHERE fact_id = ?1", params![fact.id])?;
+        conn.execute(
+            "INSERT INTO facts_fts (fact_id, subject, predicate, object) VALUES (?1, ?2, ?3, ?4)",
+            params![fact.id, fact.subject, fact.predicate, fact.object],
+        )?;
+        Ok(())
+    }
+
+    fn all_facts(&self) -> Result<Vec<FactRecord>, StorageError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, subject, predicate, object, confidence, source, trusted_channel FROM facts",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(FactRecord {
+                id: row.get(0)?,
+                subject: row.get(1)?,
+                predicate: row.get(2)?,
+                object: row.get(3)?,
+                confidence: row.get::<_, f64>(4)? as f32,
+                source: row.get(5)?,
+                trusted_channel: row.get(6)?,
+            })
+        })?;
+        let mut facts = Vec::new();
+        for row in rows {
+            facts.push(row?);
+        }
+        Ok(facts)
+    }
+
+    fn cosine_similarity(
+        &self,
+        fact_id: &str,
+        query_embedding: &[f32],
+    ) -> Result<Option<f32>, StorageError> {
+        let conn = self.lock()?;
+        let distance: Option<f64> = conn
+            .query_row(
+                "SELECT vec_distance_cosine(embedding, ?2) FROM facts
+                 WHERE id = ?1 AND embedding IS NOT NULL",
+                params![fact_id, embedding_to_json(query_embedding)],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(distance.map(|d| (1.0 - d as f32).clamp(0.0, 1.0)))
+    }
+
+    fn hybrid_search(
+        &self,
+        query_text: &str,
+        query_embedding: &[f32],
+        limit: usize,
+    ) -> Result<Vec<HybridHit>, StorageError> {
+        let conn = self.lock()?;
+
+        let sanitized = sanitize_query(query_text);
+        let matched_ids: std::collections::HashSet<String> = if sanitized.is_empty() {
+            Default::default()
+        } else {
+            let mut stmt =
+                conn.prepare("SELECT fact_id FROM facts_fts WHERE facts_fts MATCH ?1")?;
+            let rows = stmt.query_map(params![sanitized], |row| row.get::<_, String>(0))?;
+            let mut ids = std::collections::HashSet::new();
+            for row in rows {
+                ids.insert(row?);
+            }
+            ids
+        };
+
+        let embedding_json = embedding_to_json(query_embedding);
+        let mut stmt = conn.prepare(
+            "SELECT id, vec_distance_cosine(embedding, ?1) FROM facts WHERE embedding IS NOT NULL",
+        )?;
+        let rows = stmt.query_map(params![embedding_json], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        })?;
+
+        let mut hits = Vec::new();
+        for row in rows {
+            let (fact_id, distance) = row?;
+            let vector_score = (1.0 - distance as f32).clamp(0.0, 1.0);
+            let text_matched = matched_ids.contains(&fact_id);
+            let combined_score =
+                VECTOR_WEIGHT * vector_score + TEXT_WEIGHT * if text_matched { 1.0 } else { 0.0 };
+            hits.push(HybridHit {
+                fact_id,
+                vector_score,
+                text_matched,
+                combined_score,
+            });
+        }
+
+        hits.sort_by(|a, b| b.combined_score.total_cmp(&a.combined_score));
+        hits.truncate(limit);
         Ok(hits)
     }
 }
@@ -582,6 +844,172 @@ mod tests {
         }
 
         let hits = log.search_episodes("общийтермин", 2).unwrap();
+        assert_eq!(hits.len(), 2);
+    }
+
+    fn fact(id: &str, subject: &str, predicate: &str, object: &str) -> FactRecord {
+        FactRecord {
+            id: id.into(),
+            subject: subject.into(),
+            predicate: predicate.into(),
+            object: object.into(),
+            confidence: 0.8,
+            source: "session:run-1/step:answer".into(),
+            trusted_channel: true,
+        }
+    }
+
+    #[test]
+    fn upsert_fact_round_trips_through_all_facts() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_fact(&fact("f-1", "клиент c-1", "живёт_в", "Москва"), None)
+            .unwrap();
+
+        let facts = log.all_facts().unwrap();
+
+        assert_eq!(facts, vec![fact("f-1", "клиент c-1", "живёт_в", "Москва")]);
+    }
+
+    #[test]
+    fn upsert_fact_updates_existing_id_not_duplicates_it() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_fact(&fact("f-1", "клиент c-1", "живёт_в", "Москва"), None)
+            .unwrap();
+        log.upsert_fact(&fact("f-1", "клиент c-1", "живёт_в", "Париж"), None)
+            .unwrap();
+
+        let facts = log.all_facts().unwrap();
+
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].object, "Париж");
+    }
+
+    #[test]
+    fn upsert_fact_with_none_embedding_preserves_previously_stored_embedding() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_fact(
+            &fact("f-1", "клиент c-1", "живёт_в", "Москва"),
+            Some(&[1.0, 0.0, 0.0]),
+        )
+        .unwrap();
+        // Обновление без эмбеддинга не обязано его стирать.
+        log.upsert_fact(&fact("f-1", "клиент c-1", "живёт_в", "Москва"), None)
+            .unwrap();
+
+        let similarity = log
+            .cosine_similarity("f-1", &[1.0, 0.0, 0.0])
+            .unwrap()
+            .expect("эмбеддинг обязан был сохраниться");
+        assert!((similarity - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn cosine_similarity_of_identical_direction_is_one() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_fact(
+            &fact("f-1", "клиент c-1", "живёт_в", "Москва"),
+            Some(&[2.0, 0.0, 0.0]),
+        )
+        .unwrap();
+
+        let similarity = log
+            .cosine_similarity("f-1", &[1.0, 0.0, 0.0])
+            .unwrap()
+            .unwrap();
+
+        assert!((similarity - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn cosine_similarity_of_orthogonal_vectors_is_zero() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_fact(
+            &fact("f-1", "клиент c-1", "живёт_в", "Москва"),
+            Some(&[1.0, 0.0, 0.0]),
+        )
+        .unwrap();
+
+        let similarity = log
+            .cosine_similarity("f-1", &[0.0, 1.0, 0.0])
+            .unwrap()
+            .unwrap();
+
+        assert!(similarity.abs() < 0.001);
+    }
+
+    #[test]
+    fn cosine_similarity_of_unknown_fact_is_none_not_zero() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        assert!(log
+            .cosine_similarity("no-such-fact", &[1.0, 0.0, 0.0])
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn cosine_similarity_of_fact_without_embedding_is_none() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_fact(&fact("f-1", "клиент c-1", "живёт_в", "Москва"), None)
+            .unwrap();
+
+        assert!(log
+            .cosine_similarity("f-1", &[1.0, 0.0, 0.0])
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn hybrid_search_ranks_vector_and_text_match_above_vector_alone() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        // f-1: и вектор, и текст совпадают с запросом.
+        log.upsert_fact(
+            &fact("f-1", "клиент c-1", "живёт_в", "Москва"),
+            Some(&[1.0, 0.0, 0.0]),
+        )
+        .unwrap();
+        // f-2: тот же вектор (та же векторная близость), но другой текст.
+        log.upsert_fact(
+            &fact("f-2", "клиент c-2", "работает_в", "офис"),
+            Some(&[1.0, 0.0, 0.0]),
+        )
+        .unwrap();
+
+        let hits = log.hybrid_search("Москва", &[1.0, 0.0, 0.0], 10).unwrap();
+
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].fact_id, "f-1");
+        assert!(hits[0].text_matched);
+        assert!(hits[0].combined_score > hits[1].combined_score);
+        assert!(!hits[1].text_matched);
+        // Векторная близость сама по себе одинакова у обоих — разницу
+        // в combined_score целиком объясняет текстовое совпадение.
+        assert!((hits[0].vector_score - hits[1].vector_score).abs() < 0.001);
+    }
+
+    #[test]
+    fn hybrid_search_skips_facts_without_an_embedding() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_fact(&fact("f-1", "клиент c-1", "живёт_в", "Москва"), None)
+            .unwrap();
+
+        let hits = log.hybrid_search("Москва", &[1.0, 0.0, 0.0], 10).unwrap();
+
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn hybrid_search_limit_caps_results() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        for i in 0..5 {
+            log.upsert_fact(
+                &fact(&format!("f-{i}"), "клиент c-1", "тег", &format!("v{i}")),
+                Some(&[1.0, 0.0, 0.0]),
+            )
+            .unwrap();
+        }
+
+        let hits = log.hybrid_search("", &[1.0, 0.0, 0.0], 2).unwrap();
+
         assert_eq!(hits.len(), 2);
     }
 }

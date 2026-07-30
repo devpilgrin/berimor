@@ -108,6 +108,41 @@ impl SimilaritySource for NoSimilarity {
     }
 }
 
+/// Реальная реализация [`SimilaritySource`] на `sqlite-vec` (MEM4,
+/// `berimor_storage::SemanticStore::cosine_similarity`). Эмбеддинг
+/// кандидата вычисляется через `embed` — этот тип не решает, КАК
+/// получить эмбеддинг из текста (в системе нет провайдера эмбеддингов,
+/// в ROADMAP нет такой задачи пока), только КАК его использовать, когда
+/// он уже есть — та же граница ответственности, что и у самого трейта
+/// `SimilaritySource` (MEM3): дедупликация не знает, откуда берётся
+/// число близости, лишь то, что оно в `[0.0, 1.0]`.
+///
+/// `embed` вызывается по разу на каждый существующий факт в срезе
+/// (`similarity` — метод без состояния между вызовами, кэшировать
+/// эмбеддинг кандидата между ними тут негде без лишней сложности) — цена
+/// оправдана, пока `embed` — не сетевой вызов; когда появится реальный
+/// провайдер эмбеддингов, кэширование — задача этой самой интеграции,
+/// не заранее выдуманная здесь абстракция.
+pub struct VectorSimilarity<'a> {
+    pub store: &'a dyn berimor_storage::SemanticStore,
+    pub embed: &'a dyn Fn(&str) -> Vec<f32>,
+}
+
+impl SimilaritySource for VectorSimilarity<'_> {
+    fn similarity(&self, candidate: &FactProposal, existing: &StoredFact) -> f32 {
+        let text = format!(
+            "{} {} {}",
+            candidate.subject, candidate.predicate, candidate.object
+        );
+        let embedding = (self.embed)(&text);
+        self.store
+            .cosine_similarity(&existing.id.0, &embedding)
+            .ok()
+            .flatten()
+            .unwrap_or(0.0)
+    }
+}
+
 /// Порог близости по умолчанию. `memory-model.md` §2 не называет
 /// конкретное число — консервативная стартовая константа кода до
 /// офлайн-калибровки (Фаза 9), как `context_engine::budget_chars` (C3).
@@ -524,5 +559,68 @@ mod tests {
         let outcome = resolve(&candidate, &existing, &FixedSimilarity(0.1), 0.9);
 
         assert_eq!(outcome, Resolution::New);
+    }
+
+    /// Композиция MEM3+MEM4: `VectorSimilarity` через реальный
+    /// `sqlite-vec` (`berimor-storage`), не через фейк близости — та же
+    /// дисциплина, что и `tool_only.rs` (E1) на golden-фикстуре P1:
+    /// проверять реальную интеграцию, не только изолированную логику.
+    #[test]
+    fn resolve_with_real_sqlite_vec_similarity_merges_close_facts() {
+        use berimor_storage::{FactRecord, SemanticStore, SqliteEventLog};
+
+        let store = SqliteEventLog::open_in_memory().unwrap();
+        store
+            .upsert_fact(
+                &FactRecord {
+                    id: "f-1".into(),
+                    subject: "клиент c-1".into(),
+                    predicate: "живёт_в".into(),
+                    object: "Москва".into(),
+                    confidence: 0.6,
+                    source: "session:run-1/step:answer".into(),
+                    trusted_channel: true,
+                },
+                Some(&[1.0, 0.0, 0.0]),
+            )
+            .unwrap();
+
+        // Фейковый эмбеддер: детерминированно возвращает тот же вектор,
+        // что уже сохранён у f-1, — этого достаточно, чтобы доказать, что
+        // similarity() реально идёт через SQL-вызов sqlite-vec, а не
+        // просто возвращает константу.
+        let embed = |_text: &str| vec![1.0f32, 0.0, 0.0];
+        let similarity = VectorSimilarity {
+            store: &store,
+            embed: &embed,
+        };
+        let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6)];
+        let candidate = proposal("клиент c-1", "проживает", "г. Москва", 0.7);
+
+        let outcome = resolve(&candidate, &existing, &similarity, 0.9);
+
+        assert_eq!(
+            outcome,
+            Resolution::Merge {
+                existing: FactId("f-1".into()),
+                similarity: 1.0,
+            }
+        );
+    }
+
+    #[test]
+    fn vector_similarity_falls_back_to_zero_for_unknown_fact() {
+        use berimor_storage::SqliteEventLog;
+
+        let store = SqliteEventLog::open_in_memory().unwrap();
+        let embed = |_text: &str| vec![1.0f32, 0.0, 0.0];
+        let similarity = VectorSimilarity {
+            store: &store,
+            embed: &embed,
+        };
+        let candidate = proposal("клиент c-1", "живёт_в", "Москва", 0.7);
+        let unknown = stored("f-missing", "клиент c-1", "живёт_в", "Москва", 0.6);
+
+        assert_eq!(similarity.similarity(&candidate, &unknown), 0.0);
     }
 }

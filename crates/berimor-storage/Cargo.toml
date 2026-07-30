@@ -10,4 +10,7 @@ berimor-types = { path = "../berimor-types" }
 # bundled = SQLite линкуется статически, без системной зависимости (I5, ADR-0021).
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 serde_json = { workspace = true }
+# Статически линкуемое расширение sqlite-vec (MEM4) — та же модель
+# распространения, что и bundled rusqlite: без системной зависимости.
+sqlite-vec = "0.1.9"
 thiserror = { workspace = true }
