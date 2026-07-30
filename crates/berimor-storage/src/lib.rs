@@ -66,6 +66,18 @@ CREATE TABLE IF NOT EXISTS snapshots (
     state               TEXT NOT NULL,
     PRIMARY KEY (process_instance_id, seq)
 );
+-- Эпизодическая память (MEM2, memory-model.md §1): полнотекстовый индекс
+-- по журналу событий — «сессия» = process_instance_id. Отдельная
+-- (не external-content) FTS5-таблица: несёт свои копии
+-- process_instance_id/seq/ts_ms, чтобы результат поиска не требовал
+-- обратного джойна в `events` по составному ключу.
+CREATE VIRTUAL TABLE IF NOT EXISTS events_fts USING fts5(
+    process_instance_id UNINDEXED,
+    seq                 UNINDEXED,
+    ts_ms               UNINDEXED,
+    kind_text,
+    payload_text
+);
 ";
 
 /// Встраиваемая реализация [`EventLog`] на SQLite (ADR-0021).
@@ -133,6 +145,23 @@ impl EventLog for SqliteEventLog {
             params![event.process_instance.0],
             |row| row.get(0),
         )?;
+
+        // Индекс эпизодической памяти (MEM2) наполняется в той же операции,
+        // что и сам журнал — не отдельным проходом, чтобы поиск никогда не
+        // отставал от того, что реально записано (не «почти всегда
+        // синхронизировано»).
+        conn.execute(
+            "INSERT INTO events_fts (process_instance_id, seq, ts_ms, kind_text, payload_text)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                event.process_instance.0,
+                seq,
+                ts_ms,
+                kind_json,
+                payload_json
+            ],
+        )?;
+
         Ok(EventSeq(seq as u64))
     }
 
@@ -209,6 +238,82 @@ impl EventLog for SqliteEventLog {
             }
             None => Ok(None),
         }
+    }
+}
+
+/// Одно совпадение полнотекстового поиска по эпизодической памяти (MEM2).
+/// `process_instance` — идентификатор сессии, к которой принадлежит событие
+/// (`memory-model.md` §1: «сессии, события шагов, решения, отчёты»).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EpisodeHit {
+    pub process_instance: ProcessInstanceId,
+    pub seq: EventSeq,
+    pub kind: EventKind,
+    pub payload: serde_json::Value,
+    pub ts_ms: i64,
+}
+
+/// Полнотекстовый поиск по журналу событий — «поиск по сессиям»
+/// (`memory-model.md` §1, ROADMAP: MEM2). Отдельный трейт, не метод
+/// [`EventLog`]: это независимая возможность (чтение для памяти, не
+/// событийный источник истины для движка процесса) с единственной
+/// реализацией — той же самой, но по другой причине, чем `EventLog`.
+pub trait EpisodicSearch {
+    /// Ранжированные по релевантности (FTS5 `rank`) совпадения по всем
+    /// сессиям, не более `limit`. Пустой или состоящий только из
+    /// FTS5-спецсимволов запрос — пустой результат, не ошибка: нет
+    /// доказуемого намерения искать что-то конкретное.
+    fn search_episodes(&self, query: &str, limit: usize) -> Result<Vec<EpisodeHit>, StorageError>;
+}
+
+/// FTS5 `MATCH` — собственный язык запросов (`"фраза"`, `-исключение`,
+/// `col:термин`, `*`, `^` и т.д.). Строка из свободного текста пользователя
+/// или сессии не обязана быть валидным запросом на этом языке — при прямой
+/// передаче нераспознанный синтаксис возвращает ошибку SQL вместо
+/// предсказуемого результата поиска. Оставляем только буквы/цифры/`_`
+/// (токен-символы `unicode61` по умолчанию) — это то, что реально участвует
+/// в сопоставлении, остальное для FTS5 всё равно только разделители.
+fn sanitize_query(raw: &str) -> String {
+    raw.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+impl EpisodicSearch for SqliteEventLog {
+    fn search_episodes(&self, query: &str, limit: usize) -> Result<Vec<EpisodeHit>, StorageError> {
+        let sanitized = sanitize_query(query);
+        if sanitized.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT process_instance_id, seq, ts_ms, kind_text, payload_text
+             FROM events_fts WHERE events_fts MATCH ?1 ORDER BY rank LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![sanitized, limit as i64], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+
+        let mut hits = Vec::new();
+        for row in rows {
+            let (process_instance_id, seq, ts_ms, kind_json, payload_json) = row?;
+            hits.push(EpisodeHit {
+                process_instance: ProcessInstanceId(process_instance_id),
+                seq: EventSeq(seq as u64),
+                kind: serde_json::from_str(&kind_json)?,
+                payload: serde_json::from_str(&payload_json)?,
+                ts_ms,
+            });
+        }
+        Ok(hits)
     }
 }
 
@@ -348,5 +453,135 @@ mod tests {
     fn latest_snapshot_of_unknown_instance_is_none() {
         let log = SqliteEventLog::open_in_memory().unwrap();
         assert!(log.latest_snapshot(&pid("no-snapshot")).unwrap().is_none());
+    }
+
+    #[test]
+    fn search_finds_event_by_payload_term_across_the_session_that_wrote_it() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.append(Event::new(
+            pid("inst-a"),
+            1,
+            EventKind::StepApplied {
+                step_id: "classify".into(),
+            },
+            json!({"category": "billing", "summary": "Вопрос по счёту за карту"}),
+        ))
+        .unwrap();
+        log.append(Event::new(
+            pid("inst-b"),
+            1,
+            EventKind::StepApplied {
+                step_id: "classify".into(),
+            },
+            json!({"category": "debt", "summary": "Просрочка платежа"}),
+        ))
+        .unwrap();
+
+        let hits = log.search_episodes("billing", 10).unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].process_instance, pid("inst-a"));
+        assert_eq!(hits[0].payload["category"], "billing");
+    }
+
+    #[test]
+    fn search_across_sessions_returns_hits_from_every_matching_session() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.append(Event::new(
+            pid("inst-a"),
+            1,
+            EventKind::HumanGateOpened {
+                reason: "высокий риск".into(),
+            },
+            json!(null),
+        ))
+        .unwrap();
+        log.append(Event::new(
+            pid("inst-b"),
+            1,
+            EventKind::HumanGateOpened {
+                reason: "высокий риск повторно".into(),
+            },
+            json!(null),
+        ))
+        .unwrap();
+
+        let hits = log.search_episodes("риск", 10).unwrap();
+
+        let sessions: std::collections::HashSet<_> =
+            hits.iter().map(|h| h.process_instance.clone()).collect();
+        assert_eq!(
+            sessions,
+            [pid("inst-a"), pid("inst-b")].into_iter().collect()
+        );
+    }
+
+    #[test]
+    fn search_result_kind_and_payload_round_trip_exactly() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.append(Event::new(
+            pid("inst-rt"),
+            7,
+            EventKind::MediationRejected {
+                reason: "схема нарушена уникальнотекст".into(),
+            },
+            json!({"attempt": 1}),
+        ))
+        .unwrap();
+
+        let hits = log.search_episodes("уникальнотекст", 10).unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(
+            hits[0].kind,
+            EventKind::MediationRejected {
+                reason: "схема нарушена уникальнотекст".into()
+            }
+        );
+        assert_eq!(hits[0].payload, json!({"attempt": 1}));
+    }
+
+    #[test]
+    fn no_match_returns_empty_not_an_error() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.append(Event::new(
+            pid("inst-a"),
+            1,
+            EventKind::Snapshot,
+            json!({"note": "что-то"}),
+        ))
+        .unwrap();
+
+        assert!(log
+            .search_episodes("отсутствующийтермин", 10)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn query_with_only_fts5_syntax_characters_is_empty_not_a_sql_error() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        // `"`, `-`, `*` — синтаксис MATCH, не буквы/цифры: после очистки
+        // от них ничего не остаётся — предсказуемый пустой результат,
+        // не ошибка парсинга FTS5-запроса.
+        let result = log.search_episodes("\"-*", 10);
+        assert_eq!(result.unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn limit_caps_the_number_of_hits() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        for i in 0..5 {
+            log.append(Event::new(
+                pid(&format!("inst-{i}")),
+                1,
+                EventKind::Snapshot,
+                json!({"tag": "общийтермин"}),
+            ))
+            .unwrap();
+        }
+
+        let hits = log.search_episodes("общийтермин", 2).unwrap();
+        assert_eq!(hits.len(), 2);
     }
 }
