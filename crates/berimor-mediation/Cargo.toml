@@ -10,3 +10,4 @@ berimor-types = { path = "../berimor-types" }
 schemars = "1.2.2"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+thiserror.workspace = true
