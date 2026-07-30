@@ -243,6 +243,7 @@ dependencies = [
 name = "berimor-tool-runtime"
 version = "0.3.0"
 dependencies = [
+ "berimor-capability",
  "berimor-types",
  "rmcp",
  "serde_json",
