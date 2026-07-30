@@ -1,0 +1,115 @@
+name: Release
+
+# Триггер — публикация релиза на GitHub («после публикации»): именно
+# release.published, а не push тега, чтобы черновик релиза можно было
+# подготовить и проверить перед тем, как пайплайн начнёт собирать и
+# прикладывать артефакты. workflow_dispatch — чтобы прогнать сборку без
+# реального релиза, при проверке самого пайплайна.
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Нативные раннеры под каждую цель, не кросс-компиляция с одного
+          # раннера через cargo-zigbuild (расходится с `docs/arch/stack.md`
+          # §9 по этой конкретной детали): у zigbuild нет практической
+          # поддержки цели macOS без osxcross и извлечения Apple SDK, что
+          # юридически спорно для редистрибуции. Нативный раннер решает ту
+          # же задачу — артефакт под каждую платформу — без этого обхода.
+          - target: linux-x64
+            os: ubuntu-latest
+            ext: tar.gz
+          - target: linux-arm64
+            os: ubuntu-24.04-arm
+            ext: tar.gz
+          - target: darwin-x64
+            os: macos-13
+            ext: tar.gz
+          - target: darwin-arm64
+            os: macos-latest
+            ext: tar.gz
+          - target: win32-x64
+            os: windows-latest
+            ext: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: resolve version
+        shell: bash
+        run: echo "VERSION=${{ github.event.release.tag_name || 'dev' }}" >> "$GITHUB_ENV"
+
+      - name: build
+        run: cargo build --release -p berimor-cli
+
+      # Имя архива — соглашение из bootstrap/src/platform.ts:
+      # berimor-<version>-<platform>-<arch>.<tar.gz|zip>, platform/arch —
+      # буквально os.platform()/os.arch() в Node.js (win32, не windows).
+      - name: package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/release/berimor dist/berimor
+          ARCHIVE="berimor-${VERSION}-${{ matrix.target }}.tar.gz"
+          tar -C dist -czf "$ARCHIVE" berimor
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item target/release/berimor.exe dist/berimor.exe
+          $Archive = "berimor-$env:VERSION-${{ matrix.target }}.zip"
+          Compress-Archive -Path dist/berimor.exe -DestinationPath $Archive
+          (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLower() + "  $Archive" | Out-File -Encoding ascii "$Archive.sha256"
+          echo "ARCHIVE=$Archive" >> $env:GITHUB_ENV
+
+      # Контрольная сумма — не замена подписи, только целостность на время,
+      # пока не сделан ROADMAP D2 (sigstore/cosign, keyless). Заменится, не
+      # дополнится: цель — одна подпись, привязанная к идентичности CI
+      # (ADR-0026), а не отдельный параллельный механизм.
+      - name: upload release assets
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "$ARCHIVE" "$ARCHIVE.sha256" --clobber \
+            --repo "${{ github.repository }}"
+
+      - name: upload workflow artifact (workflow_dispatch — без релиза)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            berimor-*.tar.gz
+            berimor-*.tar.gz.sha256
+            berimor-*.zip
+            berimor-*.zip.sha256
+          if-no-files-found: ignore
+
+# Не входит в этот пайплайн — отдельные задачи ROADMAP:
+# D2 — подпись sigstore/cosign (keyless, ADR-0026) вместо/вместе с sha256;
+# D7 — провенанс и SBOM;
+# D4-D6 — agent-self-update и установка плагина читают собранное здесь.
