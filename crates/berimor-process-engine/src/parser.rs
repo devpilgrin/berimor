@@ -113,8 +113,59 @@ mod tests {
             .find(|s| s.id == "human_review")
             .unwrap();
         match &human_review.kind {
-            StepKind::HumanGate { reason_template } => {
+            StepKind::HumanGate {
+                reason_template,
+                timeout_seconds,
+                on_timeout,
+            } => {
                 assert_eq!(reason_template, "высокий риск: {{state.classify.risk}}");
+                // Golden-фикстура не объявляет timeout/on_timeout (P7
+                // добавлен позже) — значения по умолчанию (обратная
+                // совместимость, `#[serde(default)]`).
+                assert_eq!(*timeout_seconds, None);
+                assert_eq!(
+                    *on_timeout,
+                    berimor_types::step::HumanGateTimeoutPolicy::Fail
+                );
+            }
+            other => panic!("ожидался HumanGate, получено {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_human_gate_with_explicit_timeout_and_branch_policy() {
+        const YAML: &str = "
+process: p
+version: 1
+limits:
+  max_steps: 10
+  timeout: 10m
+steps:
+  - id: gate
+    type: human_gate
+    reason: \"ждём\"
+    timeout: 10m
+    on_timeout:
+      action: branch
+      to: fallback
+  - id: fallback
+    type: sequential
+";
+        let process = parse(YAML).unwrap();
+        let gate = process.steps.iter().find(|s| s.id == "gate").unwrap();
+        match &gate.kind {
+            StepKind::HumanGate {
+                timeout_seconds,
+                on_timeout,
+                ..
+            } => {
+                assert_eq!(*timeout_seconds, Some(600));
+                assert_eq!(
+                    *on_timeout,
+                    berimor_types::step::HumanGateTimeoutPolicy::Branch {
+                        to: "fallback".into()
+                    }
+                );
             }
             other => panic!("ожидался HumanGate, получено {other:?}"),
         }

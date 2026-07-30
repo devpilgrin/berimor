@@ -46,8 +46,43 @@ pub enum StepKind {
         /// имя в Rust отражает, что значение почти всегда шаблон с `{{...}}`.
         #[serde(rename = "reason")]
         reason_template: String,
+        /// Таймаут ожидания ответа человека (`process-engine.md` §5:
+        /// «Таймаут ожидания человека — политика процесса»). `None` —
+        /// ждать без таймаута (поведение Milestone 0/1, обратная
+        /// совместимость с декларациями без этого поля). ROADMAP: P7.
+        #[serde(
+            default,
+            rename = "timeout",
+            deserialize_with = "crate::parser_support::deserialize_optional_duration_seconds"
+        )]
+        timeout_seconds: Option<u64>,
+        /// Что делать по истечении таймаута — «падение шага, ветка по
+        /// умолчанию или эскалация выше. Явно, не молчаливо» (там же).
+        #[serde(default)]
+        on_timeout: HumanGateTimeoutPolicy,
     },
     Checkpoint,
+}
+
+/// Политика на истечение таймаута `human_gate` (`process-engine.md` §5,
+/// ROADMAP: P7) — дословно три исхода из документа.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum HumanGateTimeoutPolicy {
+    /// Шаг падает — значение по умолчанию: без явного `on_timeout` в
+    /// декларации таймаут обязан быть заметной ошибкой, не тихим
+    /// продолжением по случайной ветке.
+    #[default]
+    Fail,
+    /// Переход на конкретный следующий шаг, как если бы истёк срок —
+    /// «ветка по умолчанию».
+    Branch { to: String },
+    /// Эскалация выше. Реальная маршрутизация (кому и как сообщить) —
+    /// вне Process Engine (I5: ядро не имеет обязательных внешних
+    /// зависимостей) — движок только фиксирует событие
+    /// (`EventKind::HumanGateTimedOut`), дальнейшая обработка — забота
+    /// вызывающего кода (диспетчер Actors, Фаза 7, или человек напрямую).
+    Escalate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

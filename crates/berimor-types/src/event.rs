@@ -77,6 +77,12 @@ pub enum EventKind {
         reason: String,
     },
     HumanGateResolved,
+    /// P7: истёк таймаут ожидания ответа человека — `policy` дублирует
+    /// вид примененной политики (`"fail"`/`"branch"`/`"escalate"`) для
+    /// аудита без обращения к декларации процесса.
+    HumanGateTimedOut {
+        policy: String,
+    },
     Snapshot,
     SecurityEvent {
         detail: String,

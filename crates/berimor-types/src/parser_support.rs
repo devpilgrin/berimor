@@ -79,6 +79,26 @@ where
     }
 }
 
+/// Для необязательных полей вроде `human_gate.timeout` (P7) — та же
+/// разметка суффиксов, что [`deserialize_duration_seconds`], но поле
+/// может отсутствовать вовсе (ждать без таймаута — текущее поведение
+/// Milestone 0/1, `#[serde(default)]` сохраняет обратную совместимость с
+/// golden-фикстурой, где `human_gate` таймаута не объявляет).
+pub fn deserialize_optional_duration_seconds<'de, D>(
+    deserializer: D,
+) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<NumberOrText>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(NumberOrText::Number(n)) => Ok(Some(n)),
+        Some(NumberOrText::Text(s)) => parse_duration_seconds(&s)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
 pub fn deserialize_optional_count<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -122,5 +142,36 @@ mod tests {
     #[test]
     fn count_rejects_garbage() {
         assert!(parse_count("abc").is_err());
+    }
+
+    #[derive(Deserialize)]
+    struct OptionalDurationHolder {
+        #[serde(default, deserialize_with = "deserialize_optional_duration_seconds")]
+        timeout: Option<u64>,
+    }
+
+    #[test]
+    fn optional_duration_absent_field_is_none() {
+        let parsed: OptionalDurationHolder = serde_json::from_str("{}").unwrap();
+        assert_eq!(parsed.timeout, None);
+    }
+
+    #[test]
+    fn optional_duration_parses_suffixed_string() {
+        let parsed: OptionalDurationHolder = serde_json::from_str(r#"{"timeout": "10m"}"#).unwrap();
+        assert_eq!(parsed.timeout, Some(600));
+    }
+
+    #[test]
+    fn optional_duration_parses_bare_number_as_seconds() {
+        let parsed: OptionalDurationHolder = serde_json::from_str(r#"{"timeout": 30}"#).unwrap();
+        assert_eq!(parsed.timeout, Some(30));
+    }
+
+    #[test]
+    fn optional_duration_rejects_unknown_unit() {
+        let result: Result<OptionalDurationHolder, _> =
+            serde_json::from_str(r#"{"timeout": "30d"}"#);
+        assert!(result.is_err());
     }
 }

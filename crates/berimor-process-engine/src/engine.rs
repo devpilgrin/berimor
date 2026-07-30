@@ -74,6 +74,12 @@ pub enum EngineError {
     Executor(#[from] ExecutorError),
     #[error("не поддержано: {0}")]
     Unsupported(String),
+    /// P7: политика `on_timeout` шага — `Fail` (`process-engine.md` §5:
+    /// «падение шага»).
+    #[error("human_gate '{step_id}' не дождался ответа человека вовремя")]
+    HumanGateTimeout { step_id: String },
+    #[error("шаг '{0}' не human_gate — таймаут human_gate к нему неприменим")]
+    NotAHumanGate(String),
 }
 
 /// Создаёт новый инстанс и пишет `Instantiated` первым событием журнала —
@@ -198,7 +204,9 @@ pub fn run(
                     state: instance.state.clone(),
                 })?;
             }
-            StepKind::HumanGate { reason_template } => {
+            StepKind::HumanGate {
+                reason_template, ..
+            } => {
                 instance.current_step = Some(step_id);
                 return Ok(RunOutcome::AwaitingHuman {
                     step_id: instance.current_step.clone().unwrap(),
@@ -254,6 +262,67 @@ fn latest_seq(
         .last()
         .map(|e| e.seq)
         .unwrap_or(EventSeq(0)))
+}
+
+/// Применяет политику `on_timeout` шага `human_gate` (`process-engine.md`
+/// §5, ROADMAP: P7) после того, как вызывающий код решил, что ответ
+/// человека не пришёл вовремя.
+///
+/// Отслеживание прошедшего времени — не забота движка: он синхронный, без
+/// собственных часов в состоянии (`process-engine.md` §3 не описывает
+/// таймер как часть состояния процесса). Решение «время вышло» — задача
+/// вызывающего кода (CLI, будущая интеграция с планировщиком A5, Фаза 7);
+/// эта функция реализует только то, что происходит ДАЛЬШЕ, по декларации
+/// политики.
+///
+/// `Escalate` не выполняет реальную маршрутизацию эскалации сама (I5:
+/// ядро не имеет обязательных внешних зависимостей) — только журналирует
+/// `EventKind::HumanGateTimedOut` и оставляет `current_step` как есть
+/// (инстанс остаётся на паузе): дальнейшая обработка события — забота
+/// внешнего наблюдателя (диспетчер Actors, Фаза 7, или человек напрямую).
+pub fn resume_after_human_gate_timeout(
+    storage: &dyn EventLog,
+    instance: &mut ProcessInstance,
+    step_id: &str,
+) -> Result<(), EngineError> {
+    let step = instance
+        .process
+        .steps
+        .iter()
+        .find(|s| s.id == step_id)
+        .ok_or_else(|| graph::GraphError::UnknownStep(step_id.to_string()))?;
+    let StepKind::HumanGate { on_timeout, .. } = &step.kind else {
+        return Err(EngineError::NotAHumanGate(step_id.to_string()));
+    };
+    let on_timeout = on_timeout.clone();
+
+    let policy_label = match &on_timeout {
+        berimor_types::step::HumanGateTimeoutPolicy::Fail => "fail",
+        berimor_types::step::HumanGateTimeoutPolicy::Branch { .. } => "branch",
+        berimor_types::step::HumanGateTimeoutPolicy::Escalate => "escalate",
+    };
+    storage.append(Event::new(
+        instance.id.clone(),
+        instance.process.version,
+        EventKind::HumanGateTimedOut {
+            policy: policy_label.to_string(),
+        },
+        Value::Null,
+    ))?;
+
+    match on_timeout {
+        berimor_types::step::HumanGateTimeoutPolicy::Fail => Err(EngineError::HumanGateTimeout {
+            step_id: step_id.to_string(),
+        }),
+        berimor_types::step::HumanGateTimeoutPolicy::Branch { to } => {
+            if !instance.process.steps.iter().any(|s| s.id == to) {
+                return Err(graph::GraphError::UnknownStep(to).into());
+            }
+            instance.current_step = Some(to);
+            Ok(())
+        }
+        berimor_types::step::HumanGateTimeoutPolicy::Escalate => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -557,5 +626,142 @@ mod tests {
             "неудачный вызов исполнителя не должен оставлять StepApplied в журнале \
              (Instantiated от самого instantiate() — не в счёт, это отдельное событие)"
         );
+    }
+
+    // --- P7: resume_after_human_gate_timeout --------------------------------
+
+    fn instance_with_process(yaml: &str, id: &str) -> (SqliteEventLog, ProcessInstance) {
+        let process = parse(yaml).unwrap();
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let inst = instantiate(&storage, ProcessInstanceId(id.into()), process, json!({})).unwrap();
+        (storage, inst)
+    }
+
+    #[test]
+    fn timeout_with_default_fail_policy_errors_and_journals_the_event() {
+        // Golden-фикстура не объявляет on_timeout — по умолчанию Fail.
+        let (storage, mut inst, executor) = instance("timeout-fail", 8);
+        run(&storage, &executor, &mut inst).unwrap(); // пауза на human_review
+
+        let result = resume_after_human_gate_timeout(&storage, &mut inst, "human_review");
+
+        assert!(matches!(
+            result,
+            Err(EngineError::HumanGateTimeout { step_id }) if step_id == "human_review"
+        ));
+        let events = storage.replay(&inst.id).unwrap();
+        assert!(events.iter().any(|e| matches!(
+            &e.kind,
+            EventKind::HumanGateTimedOut { policy } if policy == "fail"
+        )));
+    }
+
+    const BRANCH_ON_TIMEOUT_YAML: &str = "
+process: p
+version: 1
+limits:
+  max_steps: 10
+  timeout: 10m
+steps:
+  - id: gate
+    type: human_gate
+    reason: \"ждём\"
+    on_timeout:
+      action: branch
+      to: fallback
+  - id: fallback
+    type: sequential
+";
+
+    #[test]
+    fn timeout_with_branch_policy_redirects_current_step() {
+        let (storage, mut inst) = instance_with_process(BRANCH_ON_TIMEOUT_YAML, "timeout-branch");
+        inst.current_step = Some("gate".into());
+
+        resume_after_human_gate_timeout(&storage, &mut inst, "gate").unwrap();
+
+        assert_eq!(inst.current_step.as_deref(), Some("fallback"));
+    }
+
+    const ESCALATE_ON_TIMEOUT_YAML: &str = "
+process: p
+version: 1
+limits:
+  max_steps: 10
+  timeout: 10m
+steps:
+  - id: gate
+    type: human_gate
+    reason: \"ждём\"
+    on_timeout:
+      action: escalate
+";
+
+    #[test]
+    fn timeout_with_escalate_policy_leaves_current_step_paused() {
+        let (storage, mut inst) =
+            instance_with_process(ESCALATE_ON_TIMEOUT_YAML, "timeout-escalate");
+        inst.current_step = Some("gate".into());
+
+        resume_after_human_gate_timeout(&storage, &mut inst, "gate").unwrap();
+
+        assert_eq!(
+            inst.current_step.as_deref(),
+            Some("gate"),
+            "эскалация не должна сдвигать инстанс — процесс остаётся на паузе"
+        );
+        let events = storage.replay(&inst.id).unwrap();
+        assert!(events.iter().any(|e| matches!(
+            &e.kind,
+            EventKind::HumanGateTimedOut { policy } if policy == "escalate"
+        )));
+    }
+
+    #[test]
+    fn timeout_on_non_human_gate_step_is_an_error() {
+        let (storage, mut inst, _executor) = instance("timeout-wrong-step", 2);
+
+        let result = resume_after_human_gate_timeout(&storage, &mut inst, "classify");
+
+        assert!(matches!(result, Err(EngineError::NotAHumanGate(step)) if step == "classify"));
+    }
+
+    #[test]
+    fn timeout_on_unknown_step_is_an_error() {
+        let (storage, mut inst, _executor) = instance("timeout-unknown-step", 2);
+
+        let result = resume_after_human_gate_timeout(&storage, &mut inst, "no-such-step");
+
+        assert!(matches!(
+            result,
+            Err(EngineError::Graph(graph::GraphError::UnknownStep(step))) if step == "no-such-step"
+        ));
+    }
+
+    #[test]
+    fn branch_policy_to_unknown_step_is_an_error() {
+        const YAML: &str = "
+process: p
+version: 1
+limits:
+  max_steps: 10
+  timeout: 10m
+steps:
+  - id: gate
+    type: human_gate
+    reason: \"ждём\"
+    on_timeout:
+      action: branch
+      to: no-such-fallback
+";
+        let (storage, mut inst) = instance_with_process(YAML, "timeout-branch-bad-target");
+        inst.current_step = Some("gate".into());
+
+        let result = resume_after_human_gate_timeout(&storage, &mut inst, "gate");
+
+        assert!(matches!(
+            result,
+            Err(EngineError::Graph(graph::GraphError::UnknownStep(step))) if step == "no-such-fallback"
+        ));
     }
 }

@@ -10,7 +10,7 @@ berimor-storage = { path = "../berimor-storage" }
 berimor-types = { path = "../berimor-types" }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["sync", "time", "macros"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
