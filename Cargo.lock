@@ -63,14 +63,14 @@ dependencies = [
 
 [[package]]
 name = "berimor-actors"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-types",
 ]
 
 [[package]]
 name = "berimor-capability"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-types",
  "serde",
@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-types",
  "clap",
@@ -89,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-context-engine"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-types",
  "serde",
@@ -98,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-executors"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-process-engine",
  "berimor-types",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-mediation"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-types",
  "schemars",
@@ -120,21 +120,21 @@ dependencies = [
 
 [[package]]
 name = "berimor-memory"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-types",
 ]
 
 [[package]]
 name = "berimor-model-pool"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-types",
 ]
 
 [[package]]
 name = "berimor-process-engine"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-storage",
  "berimor-types",
@@ -146,11 +146,11 @@ dependencies = [
 
 [[package]]
 name = "berimor-secrets"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "berimor-storage"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-types",
  "rusqlite",
@@ -160,14 +160,14 @@ dependencies = [
 
 [[package]]
 name = "berimor-tool-runtime"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "berimor-types",
 ]
 
 [[package]]
 name = "berimor-types"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "schemars",
  "serde",
