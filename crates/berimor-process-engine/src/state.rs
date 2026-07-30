@@ -34,10 +34,13 @@ pub fn apply_patch(state: &Value, patch: &Patch) -> Value {
 }
 
 /// Свёртка журнала событий инстанса в состояние — детерминированно, без
-/// моделей (инвариант I7). Только события `StepApplied` мутируют
-/// состояние; остальные виды (`MediationRejected`, `HumanGateOpened` и
-/// т.д.) — аудит-след, не патчи (`process-engine.md` §3: «каждый патч —
-/// событие `step.applied`»).
+/// моделей (инвариант I7). Мутируют состояние два вида событий:
+/// `Instantiated` (единожды, первым — сидирует состояние исходным `input`
+/// на верхнем уровне, не под отдельным ключом: без этого `state.user.card_id`
+/// из шаблонов был бы недостижим после восстановления) и `StepApplied`.
+/// Остальные виды (`MediationRejected`, `HumanGateOpened` и т.д.) —
+/// аудит-след, не патчи (`process-engine.md` §3: «каждый патч — событие
+/// `step.applied`»).
 ///
 /// Порядок важен и не проверяется здесь — вызывающий код обязан передавать
 /// события, отсортированные по `seq` (так их и возвращает
@@ -45,12 +48,22 @@ pub fn apply_patch(state: &Value, patch: &Patch) -> Value {
 pub fn fold(events: &[Event]) -> Value {
     let mut state = Value::Object(Map::new());
     for event in events {
-        if let EventKind::StepApplied { step_id } = &event.kind {
-            let patch = Patch {
-                step_id: step_id.clone(),
-                changes: event.payload.clone(),
-            };
-            state = apply_patch(&state, &patch);
+        match &event.kind {
+            EventKind::Instantiated => {
+                if let (Value::Object(base), Value::Object(input)) = (&mut state, &event.payload) {
+                    for (key, value) in input {
+                        base.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            EventKind::StepApplied { step_id } => {
+                let patch = Patch {
+                    step_id: step_id.clone(),
+                    changes: event.payload.clone(),
+                };
+                state = apply_patch(&state, &patch);
+            }
+            _ => {}
         }
     }
     state

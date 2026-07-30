@@ -59,15 +59,28 @@ impl Event {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EventKind {
-    StepApplied { step_id: String },
+    /// Первое событие инстанса: `payload` — исходный `input`, переданный в
+    /// `instantiate`. Без этого события `fold` не может восстановить
+    /// состояние целиком после сбоя — вход процесса теряется, поскольку он
+    /// иначе нигде не журналируется (найдено на P3, `docs/ROADMAP.md`).
+    Instantiated,
+    StepApplied {
+        step_id: String,
+    },
     MediationParsed,
     MediationValidated,
     MediationCommitted,
-    MediationRejected { reason: String },
-    HumanGateOpened { reason: String },
+    MediationRejected {
+        reason: String,
+    },
+    HumanGateOpened {
+        reason: String,
+    },
     HumanGateResolved,
     Snapshot,
-    SecurityEvent { detail: String },
+    SecurityEvent {
+        detail: String,
+    },
 }
 
 /// Материализованный кэш свёртки на момент `seq`. Ускоряет восстановление,
