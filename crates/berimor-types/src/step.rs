@@ -100,7 +100,7 @@ pub struct Process {
 
 /// Декларативное описание изменения состояния. Патч не мутирует состояние
 /// сам — применяет его только движок, атомарно (`process-engine.md` §3).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Patch {
     pub step_id: String,
     pub changes: serde_json::Value,

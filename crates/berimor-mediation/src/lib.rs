@@ -4,8 +4,10 @@
 
 use berimor_types::{contract::Contract, mediation::MediationOutcome, step::Patch};
 
+pub mod commit;
 pub mod contracts;
 pub mod parse;
+pub mod schema;
 
 /// Реализация `berimor_types::executor::MediationGate` для конкретных
 /// правил политики и телеметрии — единственная точка, где вывод модели

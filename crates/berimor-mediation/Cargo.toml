@@ -11,3 +11,4 @@ schemars = "1.2.2"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror.workspace = true
+validator = { version = "0.21.0", features = ["derive"] }

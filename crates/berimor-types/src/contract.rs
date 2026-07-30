@@ -7,6 +7,7 @@
 
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Serialize};
+use validator::Validate;
 
 /// Реализуется для каждого типа данных, которым модель обязана ответить
 /// на структурированном шаге. `#[serde(deny_unknown_fields)]` на
@@ -19,9 +20,25 @@ use serde::{de::DeserializeOwned, Serialize};
 /// автоматически», не писалась вручную и не расходилась с типом
 /// (`docs/arch/stack.md` §9, выбор `schemars` в обоснование). Реальная
 /// сборка подсказки — задача E2, здесь только то, что делает её возможной.
-pub trait Contract: Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static {
+///
+/// `Validate` — числовые диапазоны и ограничения длины (mediation.md §4.2:
+/// «диапазоны, максимальные длины»), которые serde derive сам по себе не
+/// проверяет при десериализации: `u8` допускает 0–255, а не 0–10 из
+/// примера контракта — границу нужно объявлять отдельно, через
+/// `#[validate(...)]` на полях конкретного контракта (M3).
+pub trait Contract:
+    Serialize + DeserializeOwned + JsonSchema + Validate + Send + Sync + 'static
+{
     /// Версия схемы — пишется в патч состояния вместе с результатом (mediation.md §4.4).
     const SCHEMA_VERSION: u32;
     /// Имя контракта — используется в подсказке модели и в телеметрии отказов.
     const NAME: &'static str;
+
+    /// Подмножество полей, которое можно показать пользователю
+    /// (mediation.md §4.4: «пользователю — только поля, помеченные в
+    /// контракте как публикуемые»). По умолчанию — ничего: контракт обязан
+    /// явно решить, что публикуемо, не унаследовать это по умолчанию.
+    fn publishable(&self) -> serde_json::Value {
+        serde_json::Value::Null
+    }
 }

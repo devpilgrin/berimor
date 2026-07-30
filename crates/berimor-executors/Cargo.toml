@@ -7,4 +7,9 @@ description = "Исполнители шагов: ToolOnly, StructuredLLM, CodeA
 
 [dependencies]
 berimor-types = { path = "../berimor-types" }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+berimor-process-engine = { path = "../berimor-process-engine" }
 # wasmtime добавляется вместе с задачей ROADMAP E6 — скелет её пока не тянет.

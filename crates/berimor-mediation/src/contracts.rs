@@ -13,17 +13,20 @@
 use berimor_types::contract::Contract;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use validator::Validate;
 
 /// Дословно из `mediation.md` §3: `category: enum[billing, card, debt, other]`,
-/// `risk: integer`, `summary: string`, поля сверх перечисленных запрещены.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+/// `risk: integer, min 0, max 10`, `summary: string, max_length 280`,
+/// поля сверх перечисленных запрещены. Диапазон и длина — через
+/// `#[validate(...)]` (M3): `u8` сам по себе допускает 0–255, серде их не
+/// проверяет при десериализации, это отдельный проход после неё.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct ClassificationOut {
     pub category: Category,
-    /// Диапазон 0–10 из примера — проверяется на стадии `schema` (M3),
-    /// не здесь: тип `u8` сам по себе допускает 0–255.
+    #[validate(range(min = 0, max = 10))]
     pub risk: u8,
-    /// Ограничение длины 280 символов — тоже M3, не тип.
+    #[validate(length(max = 280))]
     pub summary: String,
 }
 
@@ -39,6 +42,10 @@ pub enum Category {
 impl Contract for ClassificationOut {
     const SCHEMA_VERSION: u32 = 1;
     const NAME: &'static str = "ClassificationOut";
+
+    // Классификация — внутренние данные для ветвления (`state.classify.risk`
+    // в примере процесса), не то, что показывают пользователю напрямую;
+    // берётся значение по умолчанию трейта — Null, ничего не публикуется.
 }
 
 /// Второй контракт из golden-фикстуры процесса (`fixtures/golden/processes/
@@ -46,7 +53,7 @@ impl Contract for ClassificationOut {
 /// документе — минимальная, явно предположительная форма, согласованная
 /// с тем, что уже использовал фейковый исполнитель в тестах P3 (`engine.rs`:
 /// `"answer" => json!({"reply": "..."})`), а не выдуманная заново.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct SupportReply {
     pub reply: String,
@@ -55,6 +62,12 @@ pub struct SupportReply {
 impl Contract for SupportReply {
     const SCHEMA_VERSION: u32 = 1;
     const NAME: &'static str = "SupportReply";
+
+    /// В отличие от `ClassificationOut`, это буквально то, что видит
+    /// пользователь — весь контракт и есть публикуемая часть.
+    fn publishable(&self) -> serde_json::Value {
+        serde_json::json!({"reply": self.reply})
+    }
 }
 
 #[cfg(test)]

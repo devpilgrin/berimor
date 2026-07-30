@@ -12,6 +12,7 @@
 //! барьеру после завершения всех ветвей») — здесь только видно, что фаза
 //! наступила, само слияние не реализовано.
 
+use berimor_types::state_path;
 use berimor_types::step::{Process, StepKind};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -139,18 +140,6 @@ pub fn next_step(
     }
 }
 
-/// Путь вида `state.classify.risk` — ведущий `state.` часть синтаксиса
-/// шаблонов (`process-engine.md` §2), сам объект состояния уже и есть то
-/// дерево, на которое ссылается путь.
-fn resolve_path<'a>(path: &str, state: &'a Value) -> Option<&'a Value> {
-    let path = path.strip_prefix("state.").unwrap_or(path);
-    let mut current = state;
-    for segment in path.split('.') {
-        current = current.as_object()?.get(segment)?;
-    }
-    Some(current)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Operator {
     Ge,
@@ -227,7 +216,7 @@ fn evaluate_branch(
     cases: &BTreeMap<String, String>,
     state: &Value,
 ) -> Result<String, GraphError> {
-    let value = resolve_path(on, state).ok_or_else(|| GraphError::ConditionEvaluation {
+    let value = state_path::resolve(on, state).ok_or_else(|| GraphError::ConditionEvaluation {
         step_id: step_id.to_string(),
         reason: format!("путь '{on}' не найден в состоянии"),
     })?;
