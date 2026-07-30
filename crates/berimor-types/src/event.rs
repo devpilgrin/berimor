@@ -17,7 +17,12 @@ pub struct EventSeq(pub u64);
 
 /// Одна неизменяемая запись в журнале. `process-engine.md` §3:
 /// «каждый патч = событие `step.applied` в журнале».
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `seq` и `ts_ms` не заполняются вызывающим кодом — их атомарно
+/// присваивает хранилище при [`append`](../berimor_storage/trait.EventLog.html#tymethod.append),
+/// это исключает гонку между писателями за номер следующего события.
+/// Используйте [`Event::new`], а не литерал структуры.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Event {
     pub seq: EventSeq,
     pub process_instance: ProcessInstanceId,
@@ -26,9 +31,33 @@ pub struct Event {
     pub process_version: u32,
     pub kind: EventKind,
     pub payload: serde_json::Value,
+    /// Unix-время в миллисекундах на момент записи. Часть аудит-следа
+    /// (`security-model.md` §5: «кто, что, когда»), не участвует в свёртке
+    /// состояния — только `kind`/`payload` определяют патч.
+    pub ts_ms: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl Event {
+    /// `seq: EventSeq(0)` и `ts_ms: 0` — заглушки, хранилище их не читает,
+    /// только перезаписывает своими значениями при `append`.
+    pub fn new(
+        process_instance: ProcessInstanceId,
+        process_version: u32,
+        kind: EventKind,
+        payload: serde_json::Value,
+    ) -> Self {
+        Self {
+            seq: EventSeq(0),
+            process_instance,
+            process_version,
+            kind,
+            payload,
+            ts_ms: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum EventKind {
     StepApplied { step_id: String },
     MediationParsed,
@@ -43,7 +72,7 @@ pub enum EventKind {
 
 /// Материализованный кэш свёртки на момент `seq`. Ускоряет восстановление,
 /// но не является источником истины — им остаётся журнал (`process-engine.md` §4).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub process_instance: ProcessInstanceId,
     pub seq: EventSeq,

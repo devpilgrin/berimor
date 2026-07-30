@@ -7,5 +7,7 @@ description = "Единый встраиваемый движок хранени
 
 [dependencies]
 berimor-types = { path = "../berimor-types" }
+# bundled = SQLite линкуется статически, без системной зависимости (I5, ADR-0021).
+rusqlite = { version = "0.40.1", features = ["bundled"] }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
-# rusqlite добавляется вместе с задачей ROADMAP F1 — скелет её пока не тянет.
