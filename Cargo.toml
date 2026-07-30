@@ -13,6 +13,7 @@ members = [
     "crates/berimor-memory",
     "crates/berimor-actors",
     "crates/berimor-tool-runtime",
+    "crates/berimor-eval",
     "crates/berimor-cli",
 ]
 

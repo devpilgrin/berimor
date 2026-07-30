@@ -160,6 +160,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "berimor-eval"
+version = "0.4.0"
+dependencies = [
+ "berimor-process-engine",
+ "berimor-storage",
+ "berimor-types",
+ "serde_json",
+]
+
+[[package]]
 name = "berimor-executors"
 version = "0.4.0"
 dependencies = [
