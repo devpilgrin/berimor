@@ -78,6 +78,29 @@ impl Contract for SupportReply {
     }
 }
 
+/// Сжатие рабочей памяти (`memory-model.md` §4: «история сворачивается
+/// суммаризацией (модель + контракт)»). ROADMAP: MEM1.
+///
+/// Модель предлагает только текст сводки — какие именно записи истории
+/// она покрывает, решает код (`berimor-memory::working::collapse`), не
+/// модель: диапазон покрытия не то, что стоит доверять самоотчёту модели,
+/// это код уже точно знает (он же и передал модели то, что сворачивает).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct WorkingMemorySummary {
+    #[validate(length(min = 1, max = 4000))]
+    pub summary: String,
+}
+
+impl Contract for WorkingMemorySummary {
+    const SCHEMA_VERSION: u32 = 1;
+    const NAME: &'static str = "WorkingMemorySummary";
+
+    // Сводка — внутренний механизм экономии бюджета, не то, что
+    // предъявляется пользователю напрямую; оригинал остаётся доступным в
+    // эпизодической памяти (§4). Значение по умолчанию трейта — Null.
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +208,31 @@ mod tests {
         let json = serde_json::to_value(&value).unwrap();
         let back: SupportReply = serde_json::from_value(json).unwrap();
         assert_eq!(value, back);
+    }
+
+    #[test]
+    fn working_memory_summary_round_trips() {
+        let value = WorkingMemorySummary {
+            summary: "Клиент уточнял статус доставки карты, риск низкий.".into(),
+        };
+        let json = serde_json::to_value(&value).unwrap();
+        let back: WorkingMemorySummary = serde_json::from_value(json).unwrap();
+        assert_eq!(value, back);
+    }
+
+    #[test]
+    fn working_memory_summary_rejects_empty_string() {
+        use validator::Validate;
+        let value = WorkingMemorySummary {
+            summary: String::new(),
+        };
+        assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn working_memory_summary_rejects_unknown_field() {
+        let raw = json!({"summary": "текст", "extra": true});
+        let result: Result<WorkingMemorySummary, _> = serde_json::from_value(raw);
+        assert!(result.is_err());
     }
 }
