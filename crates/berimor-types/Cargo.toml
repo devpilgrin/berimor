@@ -6,6 +6,7 @@ license.workspace = true
 description = "Общие сигнатуры ядра Berimor: события, шаги, контракты, capability-решения, интерфейс Model Pool. От этого крейта зависят все остальные."
 
 [dependencies]
+schemars = "1.2.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

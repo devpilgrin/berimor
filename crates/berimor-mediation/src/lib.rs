@@ -4,6 +4,8 @@
 
 use berimor_types::{contract::Contract, mediation::MediationOutcome, step::Patch};
 
+pub mod contracts;
+
 /// Реализация `berimor_types::executor::MediationGate` для конкретных
 /// правил политики и телеметрии — единственная точка, где вывод модели
 /// становится состоянием (инвариант I3).
