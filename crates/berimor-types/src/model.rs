@@ -8,7 +8,28 @@ use serde::{Deserialize, Serialize};
 /// Присваивается кодом реестра моделей по офлайн-оценке на золотом наборе,
 /// не самой моделью (ADR-0010: «присвоение класса — код, не самооценка»).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ModelTier {
+    Weak,
+    Medium,
+    Strong,
+}
+
+/// Требование к классу модели, объявленное в шаге процесса
+/// (`process-engine.md` §2, пример: `model_tier: any`). `Any` — не синоним
+/// самого слабого класса, а «допуск не ограничен снизу»; чем ограничение
+/// станет на практике для конкретного шага — решает Context Engine/Model
+/// Pool при выборе провайдера (ADR-0011), не тип данных здесь.
+///
+/// `Any` — значение по умолчанию: последний шаг примера в `process-engine.md`
+/// §2 (`answer`) вообще не указывает `model_tier` — отсутствие поля и
+/// явное `any` неотличимы по смыслу, задавать оба способа как ошибку было
+/// бы придиркой без содержания.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelTierRequirement {
+    #[default]
+    Any,
     Weak,
     Medium,
     Strong,

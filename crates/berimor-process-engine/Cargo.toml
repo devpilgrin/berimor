@@ -8,4 +8,6 @@ description = "Детерминированный остов: граф шаго�
 [dependencies]
 berimor-types = { path = "../berimor-types" }
 serde_json = { workspace = true }
+serde_norway = "0.9.42"
+sha2 = "0.11.0"
 thiserror = { workspace = true }

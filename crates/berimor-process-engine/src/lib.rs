@@ -8,6 +8,7 @@ use berimor_types::{
     step::{Patch, Process},
 };
 
+pub mod parser;
 pub mod state;
 
 /// Инстанс процесса — состояние + версия графа, зафиксированная при

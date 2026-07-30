@@ -25,10 +25,15 @@ pub enum StepKind {
     },
     Tool {
         tool: String,
+        /// Шаблон аргументов, не разрешённые значения — резолвится
+        /// движком из состояния при исполнении (executors.md §2, ROADMAP E1).
+        #[serde(default)]
+        args: serde_json::Value,
     },
     LlmStructured {
         contract: String,
-        model_tier: crate::model::ModelTier,
+        #[serde(default)]
+        model_tier: crate::model::ModelTierRequirement,
     },
     CodeAct {
         contract: String,
@@ -37,6 +42,9 @@ pub enum StepKind {
         max_turns: u32,
     },
     HumanGate {
+        /// В декларации процесса — поле `reason` (`process-engine.md` §2);
+        /// имя в Rust отражает, что значение почти всегда шаблон с `{{...}}`.
+        #[serde(rename = "reason")]
         reason_template: String,
     },
     Checkpoint,
@@ -45,15 +53,31 @@ pub enum StepKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Step {
     pub id: String,
+    /// `flatten` — в декларации `type`/`contract`/... соседи `id` в одном
+    /// объекте (`process-engine.md` §2), не вложенный под ключом `kind`.
+    #[serde(flatten)]
     pub kind: StepKind,
 }
 
 /// Детерминированные прерыватели процесса — `process-engine.md` §4,
 /// расширено `cost_budget`/`latency_budget_ms` (ADR-0011).
+///
+/// `timeout` и `token_budget` в декларации — человеко-читаемые
+/// (`timeout: 10m`, `token_budget: 100k`, дословно из примера
+/// `process-engine.md` §2), поэтому у обоих полей свой разбор строки с
+/// суффиксом — см. [`parse_duration_seconds`]/[`parse_count`] в `parser.rs`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessLimits {
     pub max_steps: u32,
+    #[serde(
+        rename = "timeout",
+        deserialize_with = "crate::parser_support::deserialize_duration_seconds"
+    )]
     pub timeout_seconds: u64,
+    #[serde(
+        default,
+        deserialize_with = "crate::parser_support::deserialize_optional_count"
+    )]
     pub token_budget: Option<u64>,
     pub cost_budget: Option<f64>,
     pub latency_budget_ms: Option<u64>,
@@ -64,6 +88,10 @@ pub struct ProcessLimits {
 /// сам по себе — миграция только через явную операцию (ADR-0012).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Process {
+    /// В декларации — поле `process` (`process-engine.md` §2), не `name`:
+    /// имя в Rust точнее отражает смысл (это имя процесса, а сам процесс —
+    /// весь этот тип), но менять формат файла ради этого смысла нет причины.
+    #[serde(rename = "process")]
     pub name: String,
     pub version: u32,
     pub steps: Vec<Step>,
