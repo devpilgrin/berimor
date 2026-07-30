@@ -10,9 +10,7 @@ berimor-mediation = { path = "../berimor-mediation" }
 berimor-storage = { path = "../berimor-storage" }
 berimor-types = { path = "../berimor-types" }
 serde = { workspace = true }
+serde_json = { workspace = true }
 serde_norway = "0.9.42"
 sha2 = "0.11.0"
 thiserror = { workspace = true }
-
-[dev-dependencies]
-serde_json = { workspace = true }
