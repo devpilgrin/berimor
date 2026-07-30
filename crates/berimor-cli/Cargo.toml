@@ -12,3 +12,6 @@ path = "src/main.rs"
 [dependencies]
 berimor-types = { path = "../berimor-types" }
 clap = { version = "4", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+thiserror.workspace = true
+toml = "1.1.4"

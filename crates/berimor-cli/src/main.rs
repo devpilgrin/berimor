@@ -6,6 +6,10 @@
 //! (ADR-0025). ROADMAP: F3.
 
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+mod config;
 
 #[derive(Parser)]
 #[command(
@@ -14,6 +18,11 @@ use clap::{Parser, Subcommand};
     about = "Детерминированное ядро агентной системы"
 )]
 struct Cli {
+    /// Путь к файлу конфигурации. По умолчанию — `./berimor.toml`,
+    /// отсутствие файла не ошибка (используются значения по умолчанию).
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -31,6 +40,12 @@ enum Command {
         #[command(subcommand)]
         action: PluginAction,
     },
+    /// Разобранная конфигурация — без этого нельзя проверить загрузку
+    /// снаружи юнит-тестов.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -38,22 +53,50 @@ enum PluginAction {
     Install { repo: String },
 }
 
-fn main() {
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Напечатать конфигурацию, которая реально будет использована.
+    Show,
+}
+
+fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    let resolved_config = match config::load(cli.config.as_deref()) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("[berimor] {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     match cli.command {
         Command::Run { process } => {
-            eprintln!("todo(ROADMAP P3): выполнить процесс `{process}`");
+            eprintln!(
+                "todo(ROADMAP P3): выполнить процесс `{process}` (журнал: {})",
+                resolved_config.storage_path.display()
+            );
         }
         Command::Verify { artifact } => {
             eprintln!("todo(ROADMAP D2): проверить подпись `{artifact}`");
         }
         Command::SelfUpdate => {
-            eprintln!("todo(ROADMAP D4): agent-self-update");
+            eprintln!(
+                "todo(ROADMAP D4): agent-self-update (канал: {:?})",
+                resolved_config.update_channel
+            );
         }
         Command::Plugin { action } => match action {
             PluginAction::Install { repo } => {
                 eprintln!("todo(ROADMAP D6): установить плагин из `{repo}`");
             }
         },
+        Command::Config { action } => match action {
+            ConfigAction::Show => {
+                println!("{resolved_config:#?}");
+            }
+        },
     }
+
+    ExitCode::SUCCESS
 }

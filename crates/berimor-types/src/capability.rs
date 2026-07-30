@@ -5,7 +5,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Написание вариантов в нижнем регистре — не стиль, а соответствие
+/// таблице режимов в `security-model.md` §3 (`deny`/`smart`/`manual`/`off`
+/// буквально), чтобы значение в конфигурационном файле совпадало с текстом
+/// документа посимвольно.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ConfirmationMode {
     Deny,
     Smart,
