@@ -145,9 +145,10 @@ pub struct StructuredLlm<'a> {
     /// Подключённые провайдеры по имени (`ModelIdentity.provider`).
     pub providers: &'a HashMap<String, &'a dyn berimor_types::executor::ModelProvider>,
     pub context: &'a dyn ContextBuilder,
-    /// Телеметрия попыток (M7): запись в журнал — дело вызывающего кода,
-    /// исполнитель лишь сообщает о каждой попытке.
-    pub on_attempt: Option<&'a dyn Fn(berimor_mediation::telemetry::MediationAttempt)>,
+    /// Телеметрия попыток (M7): запись в журнал — дело вызывающего кода
+    /// (`mediation.md` §6); исполнитель сообщает вид события каждой
+    /// попытки по таблице `telemetry::outcome_to_event_kind`.
+    pub on_attempt: Option<&'a dyn Fn(berimor_types::event::EventKind)>,
 }
 
 impl StructuredLlm<'_> {
@@ -201,15 +202,9 @@ impl StructuredLlm<'_> {
             );
 
             if let Some(hook) = self.on_attempt {
-                hook(
-                    berimor_mediation::telemetry::MediationAttempt::from_outcome(
-                        "",
-                        step_id,
-                        Some(model_tier),
-                        adapter.schema_version,
-                        &outcome,
-                    ),
-                );
+                hook(berimor_mediation::telemetry::outcome_to_event_kind(
+                    &outcome,
+                ));
             }
 
             match outcome {

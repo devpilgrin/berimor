@@ -9,7 +9,7 @@
 //! список и т.п. — не выбор модели, а явный аргумент/файл (I1, I2):
 //! читать их из скрытых источников, кроме тех, что перечислены здесь, нельзя.
 
-use berimor_types::capability::ConfirmationMode;
+use berimor_types::{capability::ConfirmationMode, model::ModelTier};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -24,6 +24,44 @@ pub enum UpdateChannel {
     Canary,
 }
 
+/// Провайдер модели из конфигурации — регистрация в Model Pool (E3) и
+/// параметры подключения HTTP-клиента (E5). Класс задаётся владельцем при
+/// регистрации (паспорт модели, ADR-0010), не запрашивается у модели.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProviderConfig {
+    /// Имя провайдера — ключ, связывающий запись пула и подключение.
+    pub name: String,
+    pub model_id: String,
+    pub tier: ModelTier,
+    /// Базовый URL OpenAI-совместимого API (без `/chat/completions`).
+    pub base_url: String,
+    /// ИМЯ переменной окружения с API-ключом — сам ключ в файле
+    /// конфигурации не хранится (security-model.md §6: «нет секретов вне
+    /// хранилища секретов»).
+    pub api_key_env: Option<String>,
+    /// Явный opt-in на приватный endpoint (сетевой гейт S3) — для
+    /// локальных серверов инференса и тестовых моков.
+    #[serde(default)]
+    pub allow_private_endpoint: bool,
+    /// Стоимость из прайс-таблицы владельца (код-данные, ADR-0011).
+    #[serde(default)]
+    pub cost_per_1k_tokens: Option<f64>,
+}
+
+/// Заглушка инструмента для `berimor run`: детерминированный ответ на
+/// вызов по имени. Реальные интеграции инструментов — MCP (Фаза 8, T1);
+/// до них ToolOnly исполняется против объявленных здесь ответов, что и
+/// позволяет прогонять процессы end-to-end. `mutates` — часть декларации
+/// политики инструмента (S4): read-only заглушки не требуют подтверждения
+/// в режиме smart.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToolStub {
+    pub tool: String,
+    #[serde(default)]
+    pub mutates: bool,
+    pub response: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -32,6 +70,8 @@ pub struct Config {
     /// `smart` — интерактивный режим по умолчанию (security-model.md §3).
     pub confirmation_mode: ConfirmationMode,
     pub update_channel: UpdateChannel,
+    pub providers: Vec<ProviderConfig>,
+    pub tool_stubs: Vec<ToolStub>,
 }
 
 impl Default for Config {
@@ -40,6 +80,8 @@ impl Default for Config {
             storage_path: PathBuf::from("./berimor.db"),
             confirmation_mode: ConfirmationMode::Smart,
             update_channel: UpdateChannel::Stable,
+            providers: Vec::new(),
+            tool_stubs: Vec::new(),
         }
     }
 }

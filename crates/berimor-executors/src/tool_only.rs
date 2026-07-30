@@ -16,6 +16,7 @@ use berimor_types::{
     step::Patch,
 };
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// Единственная точка выхода наружу — реализация подключает конкретную
 /// внешнюю систему (в тестах — фейк, в реальном использовании — то, что
@@ -130,6 +131,43 @@ fn resolve_template(template: &Value, state: &Value) -> Result<Value, ToolOnlyEr
 
 fn extract_placeholder(s: &str) -> Option<&str> {
     s.strip_prefix("{{")?.strip_suffix("}}").map(str::trim)
+}
+
+/// Детерминированный диспетчер по таблице заглушек: ответ на инструмент
+/// объявлен конфигурацией заранее, не вычисляется в момент вызова. Место
+/// реальных интеграций — MCP (ROADMAP T1); до них именно эта реализация
+/// исполняет ToolOnly в `berimor run`.
+pub struct StaticToolDispatch {
+    /// (ответ, mutates) по имени инструмента.
+    stubs: HashMap<String, (Value, bool)>,
+}
+
+impl StaticToolDispatch {
+    pub fn new(stubs: Vec<(String, Value, bool)>) -> Self {
+        Self {
+            stubs: stubs
+                .into_iter()
+                .map(|(tool, response, mutates)| (tool, (response, mutates)))
+                .collect(),
+        }
+    }
+
+    /// Декларация mutates для capability-политики (S4).
+    pub fn mutates(&self, tool: &str) -> Option<bool> {
+        self.stubs.get(tool).map(|(_, m)| *m)
+    }
+}
+
+impl ToolDispatch for StaticToolDispatch {
+    fn call(&self, tool: &str, _args: &Value) -> Result<Value, DispatchError> {
+        match self.stubs.get(tool) {
+            Some((response, _)) => Ok(response.clone()),
+            None => Err(DispatchError {
+                tool: tool.into(),
+                reason: "инструмент не объявлен в конфигурации (tool_stubs)".into(),
+            }),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -94,9 +94,17 @@ dependencies = [
 name = "berimor-cli"
 version = "0.1.0"
 dependencies = [
+ "berimor-capability",
+ "berimor-context-engine",
+ "berimor-executors",
+ "berimor-model-pool",
+ "berimor-process-engine",
+ "berimor-secrets",
+ "berimor-storage",
  "berimor-types",
  "clap",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "toml",
 ]

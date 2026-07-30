@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 mod config;
+mod run;
 
 #[derive(Parser)]
 #[command(
@@ -30,7 +31,17 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Выполнить процесс (структурированную задачу).
-    Run { process: String },
+    Run {
+        /// Путь к декларации процесса (YAML).
+        process: String,
+        /// Продолжить существующий инстанс по его идентификатору
+        /// (восстановление из журнала, P3).
+        #[arg(long)]
+        resume: Option<String>,
+        /// Вход процесса — JSON-объект начального состояния.
+        #[arg(long)]
+        input: Option<String>,
+    },
     /// Проверить подпись артефакта — вызывается bootstrap-слоем (ADR-0025).
     Verify { artifact: String },
     /// Прогнать процесс `agent-self-update` (ADR-0019).
@@ -71,11 +82,15 @@ fn main() -> ExitCode {
     };
 
     match cli.command {
-        Command::Run { process } => {
-            eprintln!(
-                "todo(ROADMAP P3): выполнить процесс `{process}` (журнал: {})",
-                resolved_config.storage_path.display()
-            );
+        Command::Run {
+            process,
+            resume,
+            input,
+        } => {
+            if let Err(err) = run::run(&resolved_config, &process, &resume, &input) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
         }
         Command::Verify { artifact } => {
             eprintln!("todo(ROADMAP D2): проверить подпись `{artifact}`");
