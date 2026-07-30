@@ -115,8 +115,12 @@ name = "berimor-executors"
 version = "0.1.0"
 dependencies = [
  "berimor-capability",
+ "berimor-context-engine",
+ "berimor-mediation",
+ "berimor-model-pool",
  "berimor-process-engine",
  "berimor-types",
+ "schemars",
  "serde_json",
  "thiserror 1.0.69",
 ]

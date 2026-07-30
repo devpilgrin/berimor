@@ -145,9 +145,13 @@ mod tests {
     use std::fs;
 
     /// Свежая область в tempdir: root/sub/file, root/outlink -> внешний
-    /// каталог, root/sublink -> sub. Возвращает (jail, root, внешний путь).
-    /// Каталог уникален на тест — параллельный прогон не должен сталкиваться
-    /// с чужим teardown.
+    /// каталог, root/sublink -> sub. Возвращает (jail, КАНОНИЧЕСКИЙ root,
+    /// внешний путь). Каталог уникален на тест — параллельный прогон не
+    /// должен сталкиваться с чужим teardown.
+    ///
+    /// Root возвращается канонизированным: на macOS tempdir — симлинк
+    /// (`/var` → `/private/var`), и сравнение с неканоническим путём даёт
+    /// ложное падение там, где на Linux всё совпадает (поймано в CI).
     fn setup() -> (FsJail, PathBuf, PathBuf) {
         use std::sync::atomic::{AtomicUsize, Ordering};
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -164,11 +168,22 @@ mod tests {
         fs::create_dir_all(&outside).unwrap();
         fs::write(root.join("sub/file.txt"), "data").unwrap();
         fs::write(outside.join("secret.txt"), "secret").unwrap();
-        std::os::unix::fs::symlink(&outside, root.join("outlink")).unwrap();
-        std::os::unix::fs::symlink(root.join("sub"), root.join("sublink")).unwrap();
+        symlink_dir(&outside, root.join("outlink"));
+        symlink_dir(root.join("sub"), root.join("sublink"));
 
         let jail = FsJail::new(&root).unwrap();
-        (jail, root, outside)
+        let canonical_root = jail.root().to_path_buf();
+        (jail, canonical_root, outside)
+    }
+
+    #[cfg(unix)]
+    fn symlink_dir(target: impl AsRef<Path>, link: impl AsRef<Path>) {
+        std::os::unix::fs::symlink(target, link).unwrap();
+    }
+
+    #[cfg(windows)]
+    fn symlink_dir(target: impl AsRef<Path>, link: impl AsRef<Path>) {
+        std::os::windows::fs::symlink_dir(target, link).unwrap();
     }
 
     fn teardown(root: &Path) {
