@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Только чтение — ни одна из джоб этого workflow не пишет в репозиторий
+# (fmt/clippy/test/build), в отличие от release.yml, где publish отдельно
+# поднимает права до contents: write только там, где это реально нужно.
+permissions:
+  contents: read
+
 jobs:
   rust:
     name: Rust · ${{ matrix.os }}

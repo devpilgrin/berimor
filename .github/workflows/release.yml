@@ -25,12 +25,14 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: write
-
 jobs:
   build:
     name: ${{ matrix.target }}
+    # Только чтение: сборка/упаковка/upload-artifact не пишут в
+    # репозиторий. contents: write нужен только publish, где реально
+    # создаётся релиз — не всей workflow заранее.
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -116,6 +118,8 @@ jobs:
   publish:
     name: Publish release
     needs: build
+    permissions:
+      contents: write
     # Публикуем только когда есть тег, за который отвечаем: реальный push
     # тега, либо явно указанный tag во ручном запуске. Обычный
     # workflow_dispatch без tag — сборка ради проверки пайплайна, без
