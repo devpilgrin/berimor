@@ -1,14 +1,29 @@
 name: Release
 
-# Триггер — публикация релиза на GitHub («после публикации»): именно
-# release.published, а не push тега, чтобы черновик релиза можно было
-# подготовить и проверить перед тем, как пайплайн начнёт собирать и
-# прикладывать артефакты. workflow_dispatch — чтобы прогнать сборку без
-# реального релиза, при проверке самого пайплайна.
+# Триггер — push тега `v*`, не release.published: GitHub Immutable Releases
+# запрещает добавлять ассеты к уже опубликованному релизу (HTTP 422
+# «Cannot upload assets to an immutable release» — обнаружено на первом
+# реальном прогоне этого пайплайна, не в теории). Значит релиз обязан
+# создаваться ОДНИМ атомарным шагом, уже со всеми артефактами приложенными,
+# а не «создать релиз → потом дозалить ассеты по одному на платформу».
+#
+# Отсюда и структура: build — только собирает и складывает в workflow
+# artifacts (`actions/upload-artifact`), publish — единственный, кто
+# реально создаёт релиз, после того как все платформы собраны.
+#
+# workflow_dispatch с необязательным `tag` — чтобы вручную прогнать
+# сборку+публикацию под уже существующий тег (например, если release.yml
+# поправили и нужно доизготовить релиз для тега, у которого push уже
+# состоялся раньше и повторно не произойдёт).
 on:
-  release:
-    types: [published]
-  workflow_dispatch: {}
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег для сборки/публикации (например v0.1.0). Пусто — только сборка, без публикации релиза."
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -52,7 +67,7 @@ jobs:
 
       - name: resolve version
         shell: bash
-        run: echo "VERSION=${{ github.event.release.tag_name || 'dev' }}" >> "$GITHUB_ENV"
+        run: echo "VERSION=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
 
       - name: build
         run: cargo build --release -p berimor-cli
@@ -70,7 +85,6 @@ jobs:
           ARCHIVE="berimor-${VERSION}-${{ matrix.target }}.tar.gz"
           tar -C dist -czf "$ARCHIVE" berimor
           sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
-          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: package (windows)
         if: runner.os == 'Windows'
@@ -81,24 +95,12 @@ jobs:
           $Archive = "berimor-$env:VERSION-${{ matrix.target }}.zip"
           Compress-Archive -Path dist/berimor.exe -DestinationPath $Archive
           (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLower() + "  $Archive" | Out-File -Encoding ascii "$Archive.sha256"
-          echo "ARCHIVE=$Archive" >> $env:GITHUB_ENV
 
       # Контрольная сумма — не замена подписи, только целостность на время,
       # пока не сделан ROADMAP D2 (sigstore/cosign, keyless). Заменится, не
       # дополнится: цель — одна подпись, привязанная к идентичности CI
       # (ADR-0026), а не отдельный параллельный механизм.
-      - name: upload release assets
-        if: github.event_name == 'release'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
-            "$ARCHIVE" "$ARCHIVE.sha256" --clobber \
-            --repo "${{ github.repository }}"
-
-      - name: upload workflow artifact (workflow_dispatch — без релиза)
-        if: github.event_name != 'release'
+      - name: upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -107,7 +109,38 @@ jobs:
             berimor-*.tar.gz.sha256
             berimor-*.zip
             berimor-*.zip.sha256
-          if-no-files-found: ignore
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    # Публикуем только когда есть тег, за который отвечаем: реальный push
+    # тега, либо явно указанный tag во ручном запуске. Обычный
+    # workflow_dispatch без tag — сборка ради проверки пайплайна, без
+    # выпуска релиза (см. artifacts выше — они всё равно скачиваемы).
+    if: github.event_name == 'push' || inputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: resolve tag
+        shell: bash
+        run: echo "TAG=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: create release with all assets attached atomically
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" dist/* \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --notes "Платформенные артефакты для $TAG. Полное описание релиза — отредактировано отдельно после публикации, если требуется." \
+            --verify-tag
 
 # Не входит в этот пайплайн — отдельные задачи ROADMAP:
 # D2 — подпись sigstore/cosign (keyless, ADR-0026) вместо/вместе с sha256;
