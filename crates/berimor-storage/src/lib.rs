@@ -104,6 +104,32 @@ CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
     predicate,
     object
 );
+-- Акторы (A1, stack.md §68): почтовый ящик персистентен — «конверт
+-- считается доставленным только после фиксации в журнале SQLite».
+-- delivered=0 после сбоя между «отправлено» и «обработано» — то же
+-- восстановление после падения, что и у Process Engine (замена ручного
+-- requeue после аварийной заморозки, A6: незавершённая обработка просто
+-- не помечена доставленной, подбирается заново).
+CREATE TABLE IF NOT EXISTS envelopes (
+    id         TEXT PRIMARY KEY,
+    from_actor TEXT NOT NULL,
+    to_actor   TEXT NOT NULL,
+    topic      TEXT NOT NULL,
+    payload    TEXT NOT NULL,
+    delivered  INTEGER NOT NULL DEFAULT 0,
+    ts_ms      INTEGER NOT NULL
+);
+-- Планировщик (A5, stack.md §69): «персистентный min-heap ближайших
+-- срабатываний» — B-tree индекс по next_fire_ms играет роль min-heap
+-- (peek-min = ORDER BY next_fire_ms LIMIT, pop = UPDATE/DELETE due строк
+-- в одной транзакции — тот же приём, что защищает от двойного тика).
+CREATE TABLE IF NOT EXISTS schedules (
+    id            TEXT PRIMARY KEY,
+    next_fire_ms  INTEGER NOT NULL,
+    interval_ms   INTEGER,
+    payload       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS schedules_next_fire_ms ON schedules (next_fire_ms);
 ";
 
 /// Встраиваемая реализация [`EventLog`] на SQLite (ADR-0021).
@@ -579,6 +605,204 @@ impl SemanticStore for SqliteEventLog {
     }
 }
 
+/// Идентификатор конверта.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EnvelopeId(pub String);
+
+/// Конверт — единица межакторной коммуникации (ADR-0009, A1). Подпись
+/// (A2, заблокирована S6 — схема ACL-манифеста ещё не реализована)
+/// добавляется поверх этой структуры вызывающим кодом; здесь только то,
+/// что нужно для адресации и доставки.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Envelope {
+    pub id: EnvelopeId,
+    pub from: String,
+    pub to: String,
+    pub topic: String,
+    pub payload: serde_json::Value,
+}
+
+/// Персистентность почтовых ящиков акторов (A1, `stack.md` §68):
+/// «конверт считается доставленным только после фиксации в журнале
+/// SQLite» — падение процесса между «отправлено» и «записано» не теряет
+/// сообщение, то же свойство отказоустойчивости, что и у Process Engine.
+pub trait MailboxLog {
+    /// Журналирует конверт как ожидающий доставки — до попытки передать
+    /// его в почтовый ящик получателя.
+    fn persist_envelope(&self, envelope: &Envelope) -> Result<(), StorageError>;
+    /// Помечает конверт доставленным — вызывается ПОСЛЕ того, как
+    /// получатель успешно обработал его, не в момент постановки в канал:
+    /// аварийная заморозка (A6) посреди обработки оставляет конверт
+    /// недоставленным, он подбирается заново при восстановлении —
+    /// «активные задачи не теряются, а ставятся обратно в очередь»
+    /// (`security-model.md` §4) реализуется тем, что requeue-шага просто
+    /// не существует, недоставленное и так остаётся в очереди.
+    fn mark_delivered(&self, id: &EnvelopeId) -> Result<(), StorageError>;
+    /// Недоставленные конверты для актора в порядке записи —
+    /// восстановление почтового ящика после старта/сбоя/разморозки.
+    fn undelivered_for(&self, actor: &str) -> Result<Vec<Envelope>, StorageError>;
+}
+
+impl MailboxLog for SqliteEventLog {
+    fn persist_envelope(&self, envelope: &Envelope) -> Result<(), StorageError> {
+        let conn = self.lock()?;
+        let payload_json = serde_json::to_string(&envelope.payload)?;
+        conn.execute(
+            "INSERT INTO envelopes (id, from_actor, to_actor, topic, payload, delivered, ts_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+            params![
+                envelope.id.0,
+                envelope.from,
+                envelope.to,
+                envelope.topic,
+                payload_json,
+                now_ms()
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn mark_delivered(&self, id: &EnvelopeId) -> Result<(), StorageError> {
+        let conn = self.lock()?;
+        conn.execute(
+            "UPDATE envelopes SET delivered = 1 WHERE id = ?1",
+            params![id.0],
+        )?;
+        Ok(())
+    }
+
+    fn undelivered_for(&self, actor: &str) -> Result<Vec<Envelope>, StorageError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, from_actor, to_actor, topic, payload FROM envelopes
+             WHERE to_actor = ?1 AND delivered = 0 ORDER BY ts_ms ASC",
+        )?;
+        let rows = stmt.query_map(params![actor], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        let mut envelopes = Vec::new();
+        for row in rows {
+            let (id, from, to, topic, payload_json) = row?;
+            envelopes.push(Envelope {
+                id: EnvelopeId(id),
+                from,
+                to,
+                topic,
+                payload: serde_json::from_str(&payload_json)?,
+            });
+        }
+        Ok(envelopes)
+    }
+}
+
+/// Идентификатор расписания.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ScheduleId(pub String);
+
+/// Расписание — одно ближайшее время срабатывания (A5). Персистентный
+/// min-heap (`stack.md` §69) — B-tree индекс по `next_fire_ms` играет его
+/// роль: peek-min — `ORDER BY next_fire_ms LIMIT`, pop — продвижение/
+/// удаление сработавших строк в одной транзакции ([`ScheduleStore::tick`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Schedule {
+    pub id: ScheduleId,
+    pub next_fire_ms: i64,
+    /// `None` — одноразовое расписание (после срабатывания удаляется);
+    /// `Some(ms)` — повторяющееся, следующее срабатывание — сработавшее
+    /// время плюс интервал.
+    pub interval_ms: Option<i64>,
+    pub payload: serde_json::Value,
+}
+
+pub trait ScheduleStore {
+    fn upsert_schedule(&self, schedule: &Schedule) -> Result<(), StorageError>;
+    fn cancel_schedule(&self, id: &ScheduleId) -> Result<(), StorageError>;
+    /// Забирает все расписания, готовые сработать к `now_ms`, и
+    /// атомарно (одна транзакция) продвигает их: повторяющиеся — на
+    /// `next_fire_ms + interval_ms` (второй тик до наступления нового
+    /// времени их уже не увидит — защита от двойного срабатывания),
+    /// одноразовые — удаляются. Возвращает расписания в состоянии ДО
+    /// продвижения — то, что реально сработало на этом тике.
+    fn tick(&self, now_ms: i64) -> Result<Vec<Schedule>, StorageError>;
+}
+
+impl ScheduleStore for SqliteEventLog {
+    fn upsert_schedule(&self, schedule: &Schedule) -> Result<(), StorageError> {
+        let conn = self.lock()?;
+        let payload_json = serde_json::to_string(&schedule.payload)?;
+        conn.execute(
+            "INSERT INTO schedules (id, next_fire_ms, interval_ms, payload) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(id) DO UPDATE SET
+                next_fire_ms = excluded.next_fire_ms,
+                interval_ms = excluded.interval_ms,
+                payload = excluded.payload",
+            params![
+                schedule.id.0,
+                schedule.next_fire_ms,
+                schedule.interval_ms,
+                payload_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn cancel_schedule(&self, id: &ScheduleId) -> Result<(), StorageError> {
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM schedules WHERE id = ?1", params![id.0])?;
+        Ok(())
+    }
+
+    fn tick(&self, now_ms: i64) -> Result<Vec<Schedule>, StorageError> {
+        let mut conn = self.lock()?;
+        let tx = conn.transaction()?;
+
+        let due: Vec<(String, i64, Option<i64>, String)> = {
+            let mut stmt = tx.prepare(
+                "SELECT id, next_fire_ms, interval_ms, payload FROM schedules
+                 WHERE next_fire_ms <= ?1 ORDER BY next_fire_ms ASC",
+            )?;
+            let rows = stmt.query_map(params![now_ms], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, rusqlite::Error>>()?
+        };
+
+        let mut fired = Vec::with_capacity(due.len());
+        for (id, next_fire_ms, interval_ms, payload_json) in due {
+            match interval_ms {
+                Some(interval) => {
+                    tx.execute(
+                        "UPDATE schedules SET next_fire_ms = next_fire_ms + ?2 WHERE id = ?1",
+                        params![id, interval],
+                    )?;
+                }
+                None => {
+                    tx.execute("DELETE FROM schedules WHERE id = ?1", params![id])?;
+                }
+            }
+            fired.push(Schedule {
+                id: ScheduleId(id),
+                next_fire_ms,
+                interval_ms,
+                payload: serde_json::from_str(&payload_json)?,
+            });
+        }
+        tx.commit()?;
+        Ok(fired)
+    }
+}
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1011,5 +1235,140 @@ mod tests {
         let hits = log.hybrid_search("", &[1.0, 0.0, 0.0], 2).unwrap();
 
         assert_eq!(hits.len(), 2);
+    }
+
+    fn envelope(id: &str, from: &str, to: &str, topic: &str) -> Envelope {
+        Envelope {
+            id: EnvelopeId(id.into()),
+            from: from.into(),
+            to: to.into(),
+            topic: topic.into(),
+            payload: json!({"n": 1}),
+        }
+    }
+
+    #[test]
+    fn persisted_envelope_is_undelivered_until_marked() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.persist_envelope(&envelope("e-1", "actor-a", "actor-b", "task.assigned"))
+            .unwrap();
+
+        let undelivered = log.undelivered_for("actor-b").unwrap();
+        assert_eq!(undelivered.len(), 1);
+        assert_eq!(undelivered[0].id, EnvelopeId("e-1".into()));
+
+        log.mark_delivered(&EnvelopeId("e-1".into())).unwrap();
+        assert!(log.undelivered_for("actor-b").unwrap().is_empty());
+    }
+
+    #[test]
+    fn undelivered_for_only_returns_envelopes_addressed_to_that_actor() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.persist_envelope(&envelope("e-1", "actor-a", "actor-b", "t"))
+            .unwrap();
+        log.persist_envelope(&envelope("e-2", "actor-a", "actor-c", "t"))
+            .unwrap();
+
+        let undelivered = log.undelivered_for("actor-b").unwrap();
+        assert_eq!(undelivered.len(), 1);
+        assert_eq!(undelivered[0].id, EnvelopeId("e-1".into()));
+    }
+
+    #[test]
+    fn undelivered_for_unknown_actor_is_empty_not_an_error() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        assert!(log.undelivered_for("no-such-actor").unwrap().is_empty());
+    }
+
+    fn one_shot(id: &str, next_fire_ms: i64) -> Schedule {
+        Schedule {
+            id: ScheduleId(id.into()),
+            next_fire_ms,
+            interval_ms: None,
+            payload: json!({"kind": "one-shot"}),
+        }
+    }
+
+    fn recurring(id: &str, next_fire_ms: i64, interval_ms: i64) -> Schedule {
+        Schedule {
+            id: ScheduleId(id.into()),
+            next_fire_ms,
+            interval_ms: Some(interval_ms),
+            payload: json!({"kind": "recurring"}),
+        }
+    }
+
+    #[test]
+    fn tick_fires_due_one_shot_schedule_and_removes_it() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_schedule(&one_shot("s-1", 1000)).unwrap();
+
+        let fired = log.tick(1000).unwrap();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].id, ScheduleId("s-1".into()));
+
+        // Одноразовое удалено — второй тик того же момента ничего не находит.
+        assert!(log.tick(1000).unwrap().is_empty());
+    }
+
+    #[test]
+    fn tick_ignores_schedules_not_yet_due() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_schedule(&one_shot("s-1", 5000)).unwrap();
+
+        assert!(log.tick(1000).unwrap().is_empty());
+    }
+
+    #[test]
+    fn tick_advances_recurring_schedule_instead_of_removing_it() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_schedule(&recurring("s-1", 1000, 500)).unwrap();
+
+        let fired = log.tick(1000).unwrap();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(
+            fired[0].next_fire_ms, 1000,
+            "сработавшее время — ДО продвижения"
+        );
+
+        // Тот же момент больше не срабатывает — next_fire_ms уже 1500.
+        assert!(log.tick(1000).unwrap().is_empty());
+        let fired_again = log.tick(1500).unwrap();
+        assert_eq!(fired_again.len(), 1);
+    }
+
+    #[test]
+    fn tick_is_protected_against_double_fire_within_the_same_moment() {
+        // Защита от двойного тика: два вызова tick() с одним и тем же
+        // now_ms подряд — второй не должен снова вернуть то же
+        // расписание, ни для одноразового, ни для повторяющегося.
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_schedule(&one_shot("s-1", 1000)).unwrap();
+        log.upsert_schedule(&recurring("s-2", 1000, 100)).unwrap();
+
+        let first = log.tick(1000).unwrap();
+        let second = log.tick(1000).unwrap();
+
+        assert_eq!(first.len(), 2);
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn cancel_schedule_removes_it_before_it_ever_fires() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_schedule(&one_shot("s-1", 1000)).unwrap();
+        log.cancel_schedule(&ScheduleId("s-1".into())).unwrap();
+
+        assert!(log.tick(1000).unwrap().is_empty());
+    }
+
+    #[test]
+    fn upsert_schedule_updates_existing_id_not_duplicates_it() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_schedule(&one_shot("s-1", 1000)).unwrap();
+        log.upsert_schedule(&one_shot("s-1", 2000)).unwrap();
+
+        assert!(log.tick(1000).unwrap().is_empty());
+        assert_eq!(log.tick(2000).unwrap().len(), 1);
     }
 }

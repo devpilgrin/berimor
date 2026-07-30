@@ -6,5 +6,11 @@ license.workspace = true
 description = "Модель актора, диспетчер, планировщик — мультиагентность без маршрутизации моделью."
 
 [dependencies]
+berimor-storage = { path = "../berimor-storage" }
 berimor-types = { path = "../berimor-types" }
-# tokio добавляется вместе с задачей ROADMAP A1 — скелет её пока не тянет.
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["sync", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "test-util"] }
