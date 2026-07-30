@@ -8,6 +8,8 @@ use berimor_types::{
     step::{Patch, Process},
 };
 
+pub mod state;
+
 /// Инстанс процесса — состояние + версия графа, зафиксированная при
 /// создании на весь жизненный цикл (ADR-0012).
 pub struct ProcessInstance {
@@ -20,6 +22,10 @@ pub struct ProcessInstance {
 /// → finish` (`process-engine.md` §4). Реализация подключается к
 /// `berimor-storage` (журнал), `berimor-mediation` (валидация патча) и
 /// `berimor-capability` (проверка перед мутацией) по мере выполнения P3–P8.
+///
+/// `apply` и `recover` — обёртки над [`state::apply_patch`] и [`state::fold`]
+/// (F2, уже реализовано и протестировано); движку в P3 остаётся подключить
+/// их к журналу `berimor-storage` и к графу шагов.
 pub trait Engine {
     fn instantiate(
         &self,
