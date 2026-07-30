@@ -91,6 +91,7 @@ dependencies = [
  "berimor-types",
  "serde",
  "serde_json",
+ "serde_norway",
  "thiserror 1.0.69",
 ]
 
