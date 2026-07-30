@@ -1,15 +1,20 @@
 //! ToolOnly — шаг без семантики: чтение/запись/вызов внешней системы, без модели.
 //!
-//! Источник: `docs/arch/executors.md` §2. ROADMAP: E1.
+//! Источник: `docs/arch/executors.md` §2. ROADMAP: E1 (резолвинг + диспетч),
+//! S1–S4 (capability-слой перед вызовом — закрывает осознанный пробел
+//! Milestone 0, задокументированный здесь до S4).
 //!
-//! Milestone 0 (`docs/ROADMAP.md` §3) допускает E1 без S1–S4 (Capability):
-//! реального deny-статики/jail/сетевого гейта/режимов подтверждения здесь
-//! нет — `ToolDispatch` вызывается напрямую. Полноценный `ToolOnly` из
-//! `executors.md` §2 («перед вызовом — capability-слой») подключит
-//! `berimor-capability` отдельной задачей, когда она появится; здесь —
-//! только резолвинг шаблонов и диспетч, честно ограниченные этим.
+//! Порядок — дословно `executors.md` §2: резолвинг аргументов из состояния
+//! → capability-слой (статический запрет → режим подтверждений; сетевой
+//! гейт и jail применяет сам инструмент внутри `ToolDispatch`) → вызов →
+//! результат в состояние как есть, без контракта («инструмент — доверенный
+//! код»).
 
-use berimor_types::step::Patch;
+use berimor_capability::CapabilityGate;
+use berimor_types::{
+    capability::{CapabilityDecision, ConfirmationMode, ProposedAction},
+    step::Patch,
+};
 use serde_json::Value;
 
 /// Единственная точка выхода наружу — реализация подключает конкретную
@@ -17,6 +22,14 @@ use serde_json::Value;
 /// сверх этого модуля: HTTP-клиент, CLI-обёртка и т.д.).
 pub trait ToolDispatch {
     fn call(&self, tool: &str, args: &Value) -> Result<Value, DispatchError>;
+}
+
+/// Интерактивное подтверждение — то, что библиотека исполнителя не может
+/// сделать сама (не владеет терминалом). Реализация — в CLI (вопрос в
+/// stdin) и в тестах (авто-ответ). «Нет» и EOF обязаны трактоваться
+/// реализацией как отказ — подтверждение opt-in по определению.
+pub trait ConfirmationHandler {
+    fn confirm(&self, action: &ProposedAction, reason: &str) -> bool;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -30,22 +43,52 @@ pub struct DispatchError {
 pub enum ToolOnlyError {
     #[error("не удалось разрешить шаблон: путь '{0}' не найден в состоянии")]
     UnresolvedTemplate(String),
+    #[error("действие заблокировано capability-слоем: {0}")]
+    CapabilityDenied(String),
+    #[error("действие отклонено на подтверждении: {0}")]
+    ConfirmationRejected(String),
     #[error(transparent)]
     Dispatch(#[from] DispatchError),
 }
 
-/// Резолвит шаблоны аргументов из состояния и вызывает инструмент.
-/// Результат становится `changes` патча как есть — `ToolOnly` не требует
-/// контракта (`executors.md` §2: «инструмент — доверенный код, контракт
-/// не нужен»), в отличие от шагов с моделью.
+/// Резолвит шаблоны аргументов из состояния, пропускает действие через
+/// capability-слой и вызывает инструмент. Результат становится `changes`
+/// патча как есть — `ToolOnly` не требует контракта (`executors.md` §2),
+/// в отличие от шагов с моделью.
+///
+/// `ProposedAction.mutates` здесь — пессимистичный `true`: исполнитель не
+/// знает природу конкретного инструмента; точная декларация — в политике
+/// инструмента на стороне гейта (S4), которая перекрывает флаг.
+#[allow(clippy::too_many_arguments)]
 pub fn execute(
     step_id: &str,
     tool: &str,
     args_template: &Value,
     state: &Value,
     dispatch: &dyn ToolDispatch,
+    gate: &dyn CapabilityGate,
+    mode: ConfirmationMode,
+    confirmer: &dyn ConfirmationHandler,
 ) -> Result<Patch, ToolOnlyError> {
     let resolved_args = resolve_template(args_template, state)?;
+    let action = ProposedAction {
+        tool: tool.to_string(),
+        args: resolved_args.clone(),
+        mutates: true,
+    };
+
+    match gate.check(&action, mode) {
+        CapabilityDecision::Allow => {}
+        CapabilityDecision::Deny { reason } => {
+            return Err(ToolOnlyError::CapabilityDenied(reason));
+        }
+        CapabilityDecision::ConfirmRequired { reason } => {
+            if !confirmer.confirm(&action, &reason) {
+                return Err(ToolOnlyError::ConfirmationRejected(reason));
+            }
+        }
+    }
+
     let result = dispatch.call(tool, &resolved_args)?;
     Ok(Patch {
         step_id: step_id.to_string(),
@@ -92,8 +135,11 @@ fn extract_placeholder(s: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use berimor_capability::confirm::StandardCapability;
     use berimor_types::step::StepKind;
     use serde_json::json;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
 
     struct FakeCrm;
 
@@ -116,6 +162,29 @@ mod tests {
                 tool: tool.into(),
                 reason: "намеренный сбой теста".into(),
             })
+        }
+    }
+
+    /// Гейт, пропускающий всё — для тестов резолвинга/диспетча, где
+    /// capability не предмет проверки.
+    struct AllowAll;
+    impl CapabilityGate for AllowAll {
+        fn check(&self, _action: &ProposedAction, _mode: ConfirmationMode) -> CapabilityDecision {
+            CapabilityDecision::Allow
+        }
+    }
+
+    struct AutoConfirm;
+    impl ConfirmationHandler for AutoConfirm {
+        fn confirm(&self, _action: &ProposedAction, _reason: &str) -> bool {
+            true
+        }
+    }
+
+    struct AutoReject;
+    impl ConfirmationHandler for AutoReject {
+        fn confirm(&self, _action: &ProposedAction, _reason: &str) -> bool {
+            false
         }
     }
 
@@ -151,10 +220,29 @@ mod tests {
         assert_eq!(resolved["filters"][0]["value"], "c-1");
     }
 
+    fn allow_all_call(
+        step_id: &str,
+        tool: &str,
+        args: &Value,
+        state: &Value,
+        dispatch: &dyn ToolDispatch,
+    ) -> Result<Patch, ToolOnlyError> {
+        execute(
+            step_id,
+            tool,
+            args,
+            state,
+            dispatch,
+            &AllowAll,
+            ConfirmationMode::Off,
+            &AutoConfirm,
+        )
+    }
+
     #[test]
     fn execute_produces_patch_from_dispatch_result() {
         let state = json!({"user": {"card_id": "c-1"}});
-        let patch = execute(
+        let patch = allow_all_call(
             "fetch_card_status",
             "crm.get_card_status",
             &json!({"id": "{{state.user.card_id}}"}),
@@ -170,7 +258,7 @@ mod tests {
 
     #[test]
     fn dispatch_failure_propagates_not_swallowed() {
-        let result = execute(
+        let result = allow_all_call(
             "fetch_card_status",
             "crm.get_card_status",
             &json!({"id": "{{state.user.card_id}}"}),
@@ -178,6 +266,88 @@ mod tests {
             &AlwaysFails,
         );
         assert!(matches!(result, Err(ToolOnlyError::Dispatch(_))));
+    }
+
+    #[test]
+    fn deny_static_blocks_dispatch_entirely() {
+        let gate = StandardCapability::new(PathBuf::from("/workspace"), HashMap::new());
+        let result = execute(
+            "wipe",
+            "terminal",
+            &json!({"command": "rm -rf /"}),
+            &json!({}),
+            &FakeCrm,
+            &gate,
+            // Даже режим off не отменяет deny-статику (I6).
+            ConfirmationMode::Off,
+            &AutoConfirm,
+        );
+        assert!(matches!(result, Err(ToolOnlyError::CapabilityDenied(_))));
+    }
+
+    #[test]
+    fn confirmation_required_asks_and_proceeds_on_yes() {
+        // Неизвестный гейту инструмент с пессимистичным mutates=true в
+        // режиме smart — подтверждение; авто-«да» пропускает вызов.
+        let gate = StandardCapability::new(PathBuf::from("/workspace"), HashMap::new());
+        let patch = execute(
+            "fetch_card_status",
+            "crm.get_card_status",
+            &json!({"id": "{{state.user.card_id}}"}),
+            &json!({"user": {"card_id": "c-1"}}),
+            &FakeCrm,
+            &gate,
+            ConfirmationMode::Smart,
+            &AutoConfirm,
+        )
+        .unwrap();
+        assert_eq!(patch.changes["status"], "active");
+    }
+
+    #[test]
+    fn confirmation_required_aborts_on_no() {
+        let gate = StandardCapability::new(PathBuf::from("/workspace"), HashMap::new());
+        let result = execute(
+            "fetch_card_status",
+            "crm.get_card_status",
+            &json!({"id": "{{state.user.card_id}}"}),
+            &json!({"user": {"card_id": "c-1"}}),
+            &FakeCrm,
+            &gate,
+            ConfirmationMode::Smart,
+            &AutoReject,
+        );
+        assert!(matches!(
+            result,
+            Err(ToolOnlyError::ConfirmationRejected(_))
+        ));
+    }
+
+    #[test]
+    fn declared_read_only_tool_passes_smart_mode_without_confirmation() {
+        let mut policies = HashMap::new();
+        policies.insert(
+            "crm.get_card_status".to_string(),
+            berimor_capability::confirm::ToolPolicy {
+                mutates: Some(false),
+                requires_confirmation: Some(false),
+                ..Default::default()
+            },
+        );
+        let gate = StandardCapability::new(PathBuf::from("/workspace"), policies);
+        // AutoReject доказывает, что подтверждение не запрашивалось вовсе.
+        let patch = execute(
+            "fetch_card_status",
+            "crm.get_card_status",
+            &json!({"id": "{{state.user.card_id}}"}),
+            &json!({"user": {"card_id": "c-1"}}),
+            &FakeCrm,
+            &gate,
+            ConfirmationMode::Smart,
+            &AutoReject,
+        )
+        .unwrap();
+        assert_eq!(patch.changes["status"], "active");
     }
 
     /// Композиция с P1: аргументы шага `fetch_card_status`, как их реально
@@ -198,7 +368,7 @@ mod tests {
         };
 
         let state = json!({"user": {"card_id": "c-42"}});
-        let patch = execute(&step.id, tool, args, &state, &FakeCrm).unwrap();
+        let patch = allow_all_call(&step.id, tool, args, &state, &FakeCrm).unwrap();
 
         assert_eq!(patch.changes["card_id"], "c-42");
     }

@@ -102,6 +102,7 @@ dependencies = [
 name = "berimor-executors"
 version = "0.1.0"
 dependencies = [
+ "berimor-capability",
  "berimor-process-engine",
  "berimor-types",
  "serde_json",

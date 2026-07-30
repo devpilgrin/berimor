@@ -6,6 +6,7 @@ license.workspace = true
 description = "Исполнители шагов: ToolOnly, StructuredLLM, CodeAct, AgentStep."
 
 [dependencies]
+berimor-capability = { path = "../berimor-capability" }
 berimor-types = { path = "../berimor-types" }
 serde_json.workspace = true
 thiserror.workspace = true

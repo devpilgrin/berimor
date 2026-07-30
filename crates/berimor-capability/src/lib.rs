@@ -7,9 +7,12 @@
 //! - `jail` (S2) — jail файловой системы: канонизация путей, защита от
 //!   symlink-обхода.
 //! - `net_gate` (S3) — сетевой гейт: приватные адреса — через подтверждение.
+//! - `confirm` (S4) — режимы подтверждений, декларация на инструмент,
+//!   композитный гейт `StandardCapability` (deny-статика → режим).
 
 use berimor_types::capability::{CapabilityDecision, ConfirmationMode, ProposedAction};
 
+pub mod confirm;
 pub mod deny;
 pub mod jail;
 pub mod net_gate;
