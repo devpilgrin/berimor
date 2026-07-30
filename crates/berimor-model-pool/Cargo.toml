@@ -6,6 +6,11 @@ license.workspace = true
 description = "Реестр моделей, классы способностей, селектор провайдера по стоимости/латентности."
 
 [dependencies]
+berimor-capability = { path = "../berimor-capability" }
+berimor-secrets = { path = "../berimor-secrets" }
 berimor-types = { path = "../berimor-types" }
-# llama.cpp-биндинги и HTTP-клиент удалённых провайдеров добавляются вместе
-# с задачами ROADMAP E4/E5 — скелет их пока не тянет.
+serde = { workspace = true }
+serde_json.workspace = true
+# rustls вместо OpenSSL — без системной зависимости (stack.md §2, I5).
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+# llama.cpp-биндинги добавляются вместе с задачей ROADMAP E4 — скелет их пока не тянет.

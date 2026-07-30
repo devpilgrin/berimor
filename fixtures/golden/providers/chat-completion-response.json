@@ -1,0 +1,22 @@
+{
+  "$comment": "Пример ответа OpenAI-совместимого chat/completions — форма, на которой написан разбор ответа в berimor-model-pool (ROADMAP E5) и мок-сервер e2e-теста CLI4. Дословная структура полей — из публичной спецификации chat completions.",
+  "id": "chatcmpl-example",
+  "object": "chat.completion",
+  "created": 1754000000,
+  "model": "mock-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"category\": \"card\", \"risk\": 2, \"summary\": \"Карта не пришла, клиент спрашивает статус.\"}"
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 120,
+    "completion_tokens": 30,
+    "total_tokens": 150
+  }
+}
