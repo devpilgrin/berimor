@@ -4,7 +4,8 @@
 //!
 //! Три механизма ADR-0016 дословно:
 //! 1. **Entity resolution** — [`resolve_node`]: точный идентификатор домена
-//!    → явный псевдоним (`alias_of`) → близкое совпадение по эмбеддингу
+//!    → явный псевдоним (`alias_of`, [`resolve_alias`] следует по цепочке
+//!    до конца, не на один шаг) → близкое совпадение по эмбеддингу
 //!    (только ПРЕДЛОЖЕНИЕ кандидата, не автослияние — «риск слияния двух
 //!    разных сущностей с похожими текстовыми описаниями», альтернатива
 //!    ADR-0016) → новый узел.
@@ -14,17 +15,30 @@
 //! 3. **Конфликтующие рёбра** — [`detect_edge_conflict`]: та же логика,
 //!    что `semantic::detect_conflict` (MEM5), перенесённая на граф —
 //!    тот же узел-источник и тип ребра, но другая цель, значит одно и то
-//!    же отношение утверждает две разные вещи.
+//!    же отношение утверждает две разные вещи. Проверяется только для
+//!    типов рёбер, объявленных однозначными (`EdgeTypeSchema::functional`)
+//!    — спецификация не называет кардинальность рёбер явно, это
+//!    декларативный выбор схемы конкретного типа ребра, не эвристика.
 //!
-//! Сознательная граница scope (честно, для ревью): этот модуль — ЛОГИКА,
-//! не персистентность. Как `semantic::dedup`/`resolve` (MEM3) работали со
-//! срезом уже загруженных фактов ДО того, как MEM4 добавил персистентность
-//! в `berimor-storage`, этот модуль работает со срезом уже загруженных
-//! узлов/рёбер. Хранение графа в SQLite — естественное продолжение (по
-//! аналогии с MEM4), но задача ROADMAP MEM7 («узлы/рёбра, entity
-//! resolution, типизированные контракты») этого не называет явно, в
-//! отличие от MEM4, где «sqlite-vec» — часть названия задачи; отдельная
-//! персистентность графа сюда не входит.
+//! Прошло независимое XL-ревью (обязательно для XL-задач, ROADMAP §16
+//! п.3) — найденные критичные/важные проблемы исправлены здесь же:
+//! `validate_edge` изначально не проверял обязательные поля вовсе (только
+//! допустимость пары типов), цепочка псевдонимов резолвилась на один шаг
+//! вместо конца цепочки, предложение по близости не следовало через
+//! псевдоним к канонической цели, конфликт рёбер не учитывал
+//! многозначные отношения, `validate_edge` принимал типы концов ребра
+//! как несвязанные строки без проверки на кандидата.
+//!
+//! Сознательная граница scope (не найдена ревью — подтверждена как
+//! осознанная): этот модуль — ЛОГИКА, не персистентность. Как
+//! `semantic::dedup`/`resolve` (MEM3) работали со срезом уже загруженных
+//! фактов ДО того, как MEM4 добавил персистентность в `berimor-storage`,
+//! этот модуль работает со срезом уже загруженных узлов/рёбер. Хранение
+//! графа в SQLite — естественное продолжение (по аналогии с MEM4), но
+//! задача ROADMAP MEM7 («узлы/рёбра, entity resolution, типизированные
+//! контракты») этого не называет явно, в отличие от MEM4, где
+//! «sqlite-vec» — часть названия задачи; отдельная персистентность графа
+//! сюда не входит.
 //!
 //! Типы узлов/рёбер здесь — НЕ конкретные Rust-структуры уровня
 //! `ClassificationOut` (M1): домены, которым нужен граф сущностей, у
@@ -35,8 +49,33 @@
 //! Schema с ограничениями типов и диапазонов, как у `Contract` (M1).
 //! Честная, а не притворная строгость: ядро не может проверить то, чего
 //! оно не знает про конкретный домен.
+//!
+//! Известные ограничения (честно, для следующего ревью — minor-находки
+//! независимого XL-ревью, оставленные как есть):
+//! - точное совпадение идентификатора — через `serde_json::Value::eq`,
+//!   без нормализации: `"1"` (строка) и `1` (число) не совпадут, хотя
+//!   могут значить одно и то же в исходных данных. В отличие от
+//!   `semantic::normalize` (MEM5) для текста фактов, здесь нормализации
+//!   нет — доменные идентификаторы (номер партии, id поставщика) обычно
+//!   машиночитаемы и стабильно типизированы одним источником, риск ниже,
+//!   чем у свободного текста facts, но не нулевой;
+//! - `identifier_field` схемы не обязан входить в `required_fields` —
+//!   ничто это не связывает; кандидат без значения в этом поле молча
+//!   разрешается только через похожесть, без сигнала деградации;
+//! - `schema_version` — информационное поле, не сверяется ни с чем (нет
+//!   версии на самом кандидате для сравнения);
+//! - ребро с теми же источником+типом+целью, но другими свойствами — не
+//!   конфликт и не дубликат, значит новое отдельное ребро, не слияние
+//!   (в отличие от `semantic::merge_confidence` для фактов, MEM5) —
+//!   рассматривается как отдельная запись происхождения, не то же
+//!   утверждение;
+//! - повреждённые данные (два узла с одинаковым идентификатором, узел с
+//!   двумя исходящими `alias_of`) разрешаются по первому найденному без
+//!   сигнала об аномалии — модуль доверяет целостности среза, который
+//!   ему передал вызывающий код, как и `semantic::dedup`/`resolve` (MEM3).
 
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// Идентификатор узла.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -61,15 +100,28 @@ pub struct NodeTypeSchema {
     pub required_fields: &'static [&'static str],
 }
 
-/// Схема типа ребра — те же требования ADR-0016, что и у узла, плюс
-/// допустимые пары типов узлов, которые ребро может связывать.
+/// Схема типа ребра — те же требования ADR-0016, что и у узла
+/// (обязательные поля), плюс допустимые пары типов узлов и кардинальность
+/// отношения.
 #[derive(Debug, Clone, Copy)]
 pub struct EdgeTypeSchema {
     pub name: &'static str,
     pub schema_version: u32,
+    pub required_fields: &'static [&'static str],
     /// `(тип узла-источника, тип узла-цели)` — связь вне объявленных пар
     /// отклоняется (§4: «допустимые типы связей между парами типов узлов»).
     pub allowed_pairs: &'static [(&'static str, &'static str)],
+    /// Однозначное отношение (functional relation): `true` значит «у
+    /// одного источника может быть только одна цель этого типа ребра
+    /// одновременно» — второе ребро того же типа от того же источника с
+    /// ДРУГОЙ целью тогда конфликт (`detect_edge_conflict`). `false` —
+    /// тип ребра допускает несколько целей сразу (пример из ADR-0016:
+    /// «инцидент → партия → поставщик → корректирующая мера» — у
+    /// инцидента может быть несколько корректирующих мер одновременно,
+    /// это не противоречие), конфликт по источнику+типу не проверяется
+    /// вовсе. Спецификация не называет кардинальность явно — декларативный
+    /// выбор схемы конкретного типа ребра, не эвристика этого модуля.
+    pub functional: bool,
 }
 
 /// Зарезервированный тип ребра для явных псевдонимов (§4: «явная таблица
@@ -122,7 +174,7 @@ pub enum TypeError {
     /// полей в принципе невозможна).
     PropertiesNotAnObject,
     MissingRequiredField {
-        node_type: String,
+        type_name: String,
         field: String,
     },
     /// Пара типов узлов, которую пытается связать ребро, не входит в
@@ -132,6 +184,12 @@ pub enum TypeError {
         source_type: String,
         target_type: String,
     },
+    /// Узлы-концы, переданные вызывающим кодом для проверки, не совпадают
+    /// с тем, что реально указано в `candidate.source`/`candidate.target`
+    /// (независимое XL-ревью, находка N6: раньше типы концов принимались
+    /// как несвязанные строки, ничто не проверяло, что они действительно
+    /// относятся к узлам этого ребра).
+    EdgeEndpointMismatch,
 }
 
 /// Проверяет кандидата на узел против его схемы (ADR-0016: «объявляет
@@ -149,7 +207,7 @@ pub fn validate_node(candidate: &NodeCandidate, schema: &NodeTypeSchema) -> Resu
     for field in schema.required_fields {
         if !object.contains_key(*field) {
             return Err(TypeError::MissingRequiredField {
-                node_type: schema.name.to_string(),
+                type_name: schema.name.to_string(),
                 field: (*field).to_string(),
             });
         }
@@ -157,30 +215,49 @@ pub fn validate_node(candidate: &NodeCandidate, schema: &NodeTypeSchema) -> Resu
     Ok(())
 }
 
-/// Проверяет кандидата на ребро против его схемы: обязательные поля (как
-/// у узла) плюс допустимость пары типов узлов, которые оно связывает.
-/// `source_type`/`target_type` — типы узлов на концах ребра, уже
-/// известные вызывающему коду (он же разрешил `source`/`target` до
-/// реальных узлов через `resolve_node`, значит их тип уже известен).
+/// Проверяет кандидата на ребро против его схемы: самосогласованность с
+/// переданными узлами-концами → допустимость пары их типов → обязательные
+/// поля (в этом порядке — структурная корректность связи проверяется
+/// раньше полноты содержимого, находка независимого XL-ревью C1: раньше
+/// обязательные поля рёбер не проверялись вовсе).
+///
+/// `source`/`target` — реальные узлы-концы (не голые строки типов, как
+/// было раньше): вызывающий код обязан их предъявить, эта функция
+/// сверяет, что они действительно те, на кого ссылается кандидат.
 pub fn validate_edge(
     candidate: &EdgeCandidate,
     schema: &EdgeTypeSchema,
-    source_type: &str,
-    target_type: &str,
+    source: &StoredNode,
+    target: &StoredNode,
 ) -> Result<(), TypeError> {
     if candidate.edge_type != schema.name {
         return Err(TypeError::UnknownType(candidate.edge_type.clone()));
     }
+    if candidate.source != source.id || candidate.target != target.id {
+        return Err(TypeError::EdgeEndpointMismatch);
+    }
     if !schema
         .allowed_pairs
         .iter()
-        .any(|(s, t)| *s == source_type && *t == target_type)
+        .any(|(s, t)| *s == source.node_type && *t == target.node_type)
     {
         return Err(TypeError::DisallowedNodePair {
             edge_type: schema.name.to_string(),
-            source_type: source_type.to_string(),
-            target_type: target_type.to_string(),
+            source_type: source.node_type.clone(),
+            target_type: target.node_type.clone(),
         });
+    }
+    let object = candidate
+        .properties
+        .as_object()
+        .ok_or(TypeError::PropertiesNotAnObject)?;
+    for field in schema.required_fields {
+        if !object.contains_key(*field) {
+            return Err(TypeError::MissingRequiredField {
+                type_name: schema.name.to_string(),
+                field: (*field).to_string(),
+            });
+        }
     }
     Ok(())
 }
@@ -215,18 +292,52 @@ pub enum ResolutionOutcome {
     /// ADR-0016: «Автоматическое слияние без подтверждения — только при
     /// точном совпадении идентификатора»).
     ExactMatch(NodeId),
-    /// Кандидат совпал с узлом, который сам — источник `alias_of` на
-    /// канонический узел; возвращается КАНОНИЧЕСКИЙ узел, не узел-псевдоним.
+    /// Кандидат совпал (по идентификатору, напрямую или через цепочку
+    /// `alias_of`) с узлом-псевдонимом; возвращается КАНОНИЧЕСКИЙ узел —
+    /// конец цепочки псевдонимов, не первый узел, на который совпал
+    /// идентификатор.
     AliasMatch(NodeId),
     /// Близкое совпадение по эмбеддингу выше порога — только предложение
     /// человеку (конфликт-событие, как при консолидации фактов, §4):
     /// решение о слиянии эта функция не принимает, только предлагает
-    /// кандидата на рассмотрение.
+    /// кандидата на рассмотрение. `suggested` — тоже конец цепочки
+    /// псевдонимов, если похожий узел сам оказался псевдонимом (иначе
+    /// предложение указывало бы на узел-псевдоним, а не на сущность).
     AmbiguousCandidate {
         suggested: NodeId,
         similarity: f32,
     },
     New,
+}
+
+/// Следует по цепочке `alias_of`-рёбер от `start` до конца — узла,
+/// который сам не является источником `alias_of`. Общая для ветки
+/// точного идентификатора и ветки близости в [`resolve_node`]: обе
+/// обязаны предлагать одну и ту же каноническую цель (независимое
+/// XL-ревью, находки M1/M2 — раньше только точное совпадение резолвилось
+/// на один шаг, ветка близости не резолвила псевдонимы вовсе).
+///
+/// Защита от цикла (`A alias_of B`, `B alias_of A` — испорченные данные,
+/// не ожидаемое состояние графа): отслеживает посещённые узлы,
+/// останавливается на первом повторе и возвращает узел ПЕРЕД повтором —
+/// граф с циклом псевдонимов не имеет корректной канонической цели,
+/// дальше эта функция не может решить проблему за вызывающий код, только
+/// не зависает и не паникует.
+fn resolve_alias(start: &NodeId, edges: &[StoredEdge]) -> NodeId {
+    let mut current = start.clone();
+    let mut visited: HashSet<NodeId> = HashSet::new();
+    visited.insert(current.clone());
+    while let Some(next) = edges
+        .iter()
+        .find(|e| e.edge_type == ALIAS_OF_EDGE_TYPE && e.source == current)
+        .map(|e| e.target.clone())
+    {
+        if !visited.insert(next.clone()) {
+            break;
+        }
+        current = next;
+    }
+    current
 }
 
 /// Разрешает кандидата на узел относительно уже существующих узлов и
@@ -245,20 +356,12 @@ pub fn resolve_node(
                 n.node_type == candidate.node_type
                     && n.properties.get(id_field) == Some(candidate_id)
             }) {
-                // Найденный узел сам может быть источником alias_of —
-                // тогда кандидат разрешается до КАНОНИЧЕСКОЙ цели, не до
-                // узла-псевдонима, на который он совпал буквально по
-                // идентификатору (иначе повторная подача того же
-                // альтернативного идентификатора каждый раз возвращала бы
-                // узел-псевдоним вместо канонической сущности).
-                if let Some(canonical) = edges
-                    .iter()
-                    .find(|e| e.edge_type == ALIAS_OF_EDGE_TYPE && e.source == matched.id)
-                    .map(|e| e.target.clone())
-                {
-                    return ResolutionOutcome::AliasMatch(canonical);
-                }
-                return ResolutionOutcome::ExactMatch(matched.id.clone());
+                let canonical = resolve_alias(&matched.id, edges);
+                return if canonical == matched.id {
+                    ResolutionOutcome::ExactMatch(canonical)
+                } else {
+                    ResolutionOutcome::AliasMatch(canonical)
+                };
             }
         }
     }
@@ -272,7 +375,7 @@ pub fn resolve_node(
 
     match best {
         Some((node, score)) => ResolutionOutcome::AmbiguousCandidate {
-            suggested: node.id.clone(),
+            suggested: resolve_alias(&node.id, edges),
             similarity: score,
         },
         None => ResolutionOutcome::New,
@@ -282,12 +385,16 @@ pub fn resolve_node(
 /// Ребро, структурно противоречащее кандидату — та же логика, что
 /// `semantic::detect_conflict` (MEM5), перенесённая на граф: тот же
 /// узел-источник и тип ребра, но другая цель (§4: «два источника
-/// утверждают взаимоисключающие связи для одной пары узлов»
-/// — на уровне отношения «источник+тип ребра», не пары «источник+цель»:
-/// если бы конфликт проверялся по паре источник-цель, две одинаковые
-/// связи с разными свойствами прошли бы как «разные пары», хотя это и
-/// есть искомое противоречие — то же самое отношение утверждает разные
-/// цели).
+/// утверждают взаимоисключающие связи для одной пары узлов» — на уровне
+/// отношения «источник+тип ребра», не пары «источник+цель»: если бы
+/// конфликт проверялся по паре источник-цель, две одинаковые связи с
+/// разными свойствами прошли бы как «разные пары», хотя это и есть
+/// искомое противоречие — то же самое отношение утверждает разные цели).
+///
+/// Проверяется только для однозначных типов рёбер (`schema.functional`)
+/// — многозначные отношения (например «инцидент → корректирующая мера»)
+/// по построению допускают несколько целей сразу, это не противоречие
+/// (независимое XL-ревью, находка M3).
 #[derive(Debug, Clone, PartialEq)]
 pub struct EdgeConflict {
     pub existing: EdgeId,
@@ -297,8 +404,12 @@ pub struct EdgeConflict {
 
 pub fn detect_edge_conflict(
     candidate: &EdgeCandidate,
+    schema: &EdgeTypeSchema,
     existing_edges: &[StoredEdge],
 ) -> Option<EdgeConflict> {
+    if !schema.functional {
+        return None;
+    }
     existing_edges.iter().find_map(|edge| {
         let same_relation =
             edge.edge_type == candidate.edge_type && edge.source == candidate.source;
@@ -327,10 +438,15 @@ pub enum EdgeResolution {
 }
 
 /// Разрешает кандидата на ребро: точный дубликат — безусловно первым
-/// (детерминирован, не зависит от того, что решит проверка конфликта);
-/// иначе — конфликт (MEM5-подобная логика, см. `detect_edge_conflict`);
-/// иначе — новое ребро.
-pub fn resolve_edge(candidate: &EdgeCandidate, existing_edges: &[StoredEdge]) -> EdgeResolution {
+/// (детерминирован, не зависит от того, что решит проверка конфликта, и
+/// не зависит от кардинальности типа ребра — дубликат остаётся
+/// дубликатом даже для многозначных отношений); иначе — конфликт (только
+/// для однозначных типов, см. `detect_edge_conflict`); иначе — новое ребро.
+pub fn resolve_edge(
+    candidate: &EdgeCandidate,
+    schema: &EdgeTypeSchema,
+    existing_edges: &[StoredEdge],
+) -> EdgeResolution {
     if let Some(duplicate) = existing_edges.iter().find(|e| {
         e.edge_type == candidate.edge_type
             && e.source == candidate.source
@@ -339,7 +455,7 @@ pub fn resolve_edge(candidate: &EdgeCandidate, existing_edges: &[StoredEdge]) ->
     }) {
         return EdgeResolution::Duplicate(duplicate.id.clone());
     }
-    if let Some(conflict) = detect_edge_conflict(candidate, existing_edges) {
+    if let Some(conflict) = detect_edge_conflict(candidate, schema, existing_edges) {
         return EdgeResolution::Conflict(conflict);
     }
     EdgeResolution::New
@@ -367,7 +483,29 @@ mod tests {
     const SUPPLIED_BY: EdgeTypeSchema = EdgeTypeSchema {
         name: "supplied_by",
         schema_version: 1,
+        required_fields: &[],
         allowed_pairs: &[("batch", "supplier")],
+        functional: true,
+    };
+
+    /// Отдельная схема (не `SUPPLIED_BY`) с обязательным полем — не
+    /// трогает остальные тесты, которым обязательные поля рёбер не важны.
+    const SUPPLIED_BY_DATED: EdgeTypeSchema = EdgeTypeSchema {
+        name: "supplied_by",
+        schema_version: 1,
+        required_fields: &["since"],
+        allowed_pairs: &[("batch", "supplier")],
+        functional: true,
+    };
+
+    /// Многозначный тип ребра — у источника может быть несколько целей
+    /// одновременно, не конфликт (M3).
+    const CORRECTIVE_ACTION: EdgeTypeSchema = EdgeTypeSchema {
+        name: "corrective_action",
+        schema_version: 1,
+        required_fields: &[],
+        allowed_pairs: &[("incident", "action")],
+        functional: false,
     };
 
     fn node(id: &str, node_type: &str, properties: Value) -> StoredNode {
@@ -414,7 +552,7 @@ mod tests {
         assert_eq!(
             validate_node(&candidate, &BATCH),
             Err(TypeError::MissingRequiredField {
-                node_type: "batch".into(),
+                type_name: "batch".into(),
                 field: "product".into()
             })
         );
@@ -461,25 +599,45 @@ mod tests {
 
     #[test]
     fn validate_edge_accepts_allowed_pair() {
+        let source = node(
+            "b-1",
+            "batch",
+            json!({"batch_number": "B-1", "product": "x"}),
+        );
+        let target = node(
+            "s-1",
+            "supplier",
+            json!({"supplier_id": "S-1", "name": "y"}),
+        );
         let candidate = EdgeCandidate {
             edge_type: "supplied_by".into(),
-            source: NodeId("b-1".into()),
-            target: NodeId("s-1".into()),
+            source: source.id.clone(),
+            target: target.id.clone(),
             properties: json!({}),
         };
-        assert!(validate_edge(&candidate, &SUPPLIED_BY, "batch", "supplier").is_ok());
+        assert!(validate_edge(&candidate, &SUPPLIED_BY, &source, &target).is_ok());
     }
 
     #[test]
     fn validate_edge_rejects_disallowed_pair() {
+        let source = node(
+            "s-1",
+            "supplier",
+            json!({"supplier_id": "S-1", "name": "a"}),
+        );
+        let target = node(
+            "s-2",
+            "supplier",
+            json!({"supplier_id": "S-2", "name": "b"}),
+        );
         let candidate = EdgeCandidate {
             edge_type: "supplied_by".into(),
-            source: NodeId("s-1".into()),
-            target: NodeId("s-2".into()),
+            source: source.id.clone(),
+            target: target.id.clone(),
             properties: json!({}),
         };
         assert_eq!(
-            validate_edge(&candidate, &SUPPLIED_BY, "supplier", "supplier"),
+            validate_edge(&candidate, &SUPPLIED_BY, &source, &target),
             Err(TypeError::DisallowedNodePair {
                 edge_type: "supplied_by".into(),
                 source_type: "supplier".into(),
@@ -490,16 +648,108 @@ mod tests {
 
     #[test]
     fn validate_edge_rejects_type_mismatch_with_schema() {
+        let source = node(
+            "b-1",
+            "batch",
+            json!({"batch_number": "B-1", "product": "x"}),
+        );
+        let target = node(
+            "s-1",
+            "supplier",
+            json!({"supplier_id": "S-1", "name": "y"}),
+        );
         let candidate = EdgeCandidate {
             edge_type: "alias_of".into(),
-            source: NodeId("b-1".into()),
-            target: NodeId("s-1".into()),
+            source: source.id.clone(),
+            target: target.id.clone(),
             properties: json!({}),
         };
         assert!(matches!(
-            validate_edge(&candidate, &SUPPLIED_BY, "batch", "supplier"),
+            validate_edge(&candidate, &SUPPLIED_BY, &source, &target),
             Err(TypeError::UnknownType(_))
         ));
+    }
+
+    #[test]
+    fn validate_edge_rejects_missing_required_field() {
+        let source = node(
+            "b-1",
+            "batch",
+            json!({"batch_number": "B-1", "product": "x"}),
+        );
+        let target = node(
+            "s-1",
+            "supplier",
+            json!({"supplier_id": "S-1", "name": "y"}),
+        );
+        let candidate = EdgeCandidate {
+            edge_type: "supplied_by".into(),
+            source: source.id.clone(),
+            target: target.id.clone(),
+            properties: json!({}),
+        };
+        assert_eq!(
+            validate_edge(&candidate, &SUPPLIED_BY_DATED, &source, &target),
+            Err(TypeError::MissingRequiredField {
+                type_name: "supplied_by".into(),
+                field: "since".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn validate_edge_rejects_non_object_properties() {
+        let source = node(
+            "b-1",
+            "batch",
+            json!({"batch_number": "B-1", "product": "x"}),
+        );
+        let target = node(
+            "s-1",
+            "supplier",
+            json!({"supplier_id": "S-1", "name": "y"}),
+        );
+        let candidate = EdgeCandidate {
+            edge_type: "supplied_by".into(),
+            source: source.id.clone(),
+            target: target.id.clone(),
+            properties: json!("не объект"),
+        };
+        assert_eq!(
+            validate_edge(&candidate, &SUPPLIED_BY_DATED, &source, &target),
+            Err(TypeError::PropertiesNotAnObject)
+        );
+    }
+
+    #[test]
+    fn validate_edge_rejects_endpoint_mismatch() {
+        // candidate.source ссылается на другой узел, чем переданный `source`
+        // — вызывающий код перепутал/устарел (независимое XL-ревью, N6).
+        let source = node(
+            "b-1",
+            "batch",
+            json!({"batch_number": "B-1", "product": "x"}),
+        );
+        let wrong_source = node(
+            "b-2",
+            "batch",
+            json!({"batch_number": "B-2", "product": "x"}),
+        );
+        let target = node(
+            "s-1",
+            "supplier",
+            json!({"supplier_id": "S-1", "name": "y"}),
+        );
+        let candidate = EdgeCandidate {
+            edge_type: "supplied_by".into(),
+            source: wrong_source.id.clone(),
+            target: target.id.clone(),
+            properties: json!({}),
+        };
+        assert_eq!(
+            validate_edge(&candidate, &SUPPLIED_BY, &source, &target),
+            Err(TypeError::EdgeEndpointMismatch)
+        );
     }
 
     // --- resolve_node: точный идентификатор -------------------------------
@@ -589,6 +839,85 @@ mod tests {
     }
 
     #[test]
+    fn resolve_node_follows_multi_hop_alias_chain_to_the_final_canonical_node() {
+        // alias-2 -> alias-1 -> canonical: два хопа, обязаны дойти до конца.
+        let existing = [
+            node(
+                "canonical",
+                "batch",
+                json!({"batch_number": "B-CANON", "product": "widget"}),
+            ),
+            node(
+                "alias-1",
+                "batch",
+                json!({"batch_number": "B-MID", "product": "widget"}),
+            ),
+            node(
+                "alias-2",
+                "batch",
+                json!({"batch_number": "B-OLDEST", "product": "widget"}),
+            ),
+        ];
+        let edges = [
+            edge("e-1", ALIAS_OF_EDGE_TYPE, "alias-2", "alias-1", json!({})),
+            edge("e-2", ALIAS_OF_EDGE_TYPE, "alias-1", "canonical", json!({})),
+        ];
+        let candidate = NodeCandidate {
+            node_type: "batch".into(),
+            properties: json!({"batch_number": "B-OLDEST", "product": "widget"}),
+        };
+
+        let outcome = resolve_node(
+            &candidate,
+            &BATCH,
+            &existing,
+            &edges,
+            &NoNodeSimilarity,
+            0.9,
+        );
+
+        assert_eq!(
+            outcome,
+            ResolutionOutcome::AliasMatch(NodeId("canonical".into())),
+            "цепочка псевдонимов обязана резолвиться до конца, не на первый хоп"
+        );
+    }
+
+    #[test]
+    fn resolve_node_cyclic_alias_chain_terminates_without_panicking() {
+        // a -> b -> a: цикл, испорченные данные — не должно зависнуть.
+        let existing = [
+            node("a", "batch", json!({"batch_number": "B-A", "product": "x"})),
+            node("b", "batch", json!({"batch_number": "B-B", "product": "x"})),
+        ];
+        let edges = [
+            edge("e-1", ALIAS_OF_EDGE_TYPE, "a", "b", json!({})),
+            edge("e-2", ALIAS_OF_EDGE_TYPE, "b", "a", json!({})),
+        ];
+        let candidate = NodeCandidate {
+            node_type: "batch".into(),
+            properties: json!({"batch_number": "B-A", "product": "x"}),
+        };
+
+        // Не паникует и не зависает — единственное жёсткое требование к
+        // повреждённым данным; конкретный узел, на котором остановится
+        // обход цикла, не специфицирован (оба — часть одного и того же
+        // испорченного цикла).
+        let outcome = resolve_node(
+            &candidate,
+            &BATCH,
+            &existing,
+            &edges,
+            &NoNodeSimilarity,
+            0.9,
+        );
+        assert!(matches!(
+            outcome,
+            ResolutionOutcome::ExactMatch(_) | ResolutionOutcome::AliasMatch(_)
+        ));
+    }
+
+    #[test]
     fn resolve_node_matching_id_without_alias_of_edge_is_not_an_alias() {
         // Совпадение идентификатора без явного alias_of-ребра — это уже
         // ExactMatch (случай выше), не AliasMatch: два пути к одному и
@@ -641,6 +970,65 @@ mod tests {
             },
             "близкое совпадение обязано быть ПРЕДЛОЖЕНИЕМ (AmbiguousCandidate), \
              не автослиянием (ExactMatch/AliasMatch) — ADR-0016"
+        );
+    }
+
+    #[test]
+    fn resolve_node_similarity_suggestion_follows_alias_to_canonical_target() {
+        // Похожий узел сам оказался псевдонимом — предложение обязано
+        // указывать на канонический узел, не на псевдоним (независимое
+        // XL-ревью, находка M2).
+        let existing = [
+            node(
+                "canonical",
+                "supplier",
+                json!({"supplier_id": "S-1", "name": "ООО Ромашка"}),
+            ),
+            node(
+                "alias-node",
+                "supplier",
+                json!({"supplier_id": "S-OLD", "name": "Ромашка (старое имя)"}),
+            ),
+        ];
+        let edges = [edge(
+            "e-1",
+            ALIAS_OF_EDGE_TYPE,
+            "alias-node",
+            "canonical",
+            json!({}),
+        )];
+        let candidate = NodeCandidate {
+            node_type: "supplier".into(),
+            properties: json!({"supplier_id": "S-2", "name": "Ромашка ООО"}),
+        };
+
+        struct SimilarToAliasNode;
+        impl NodeSimilaritySource for SimilarToAliasNode {
+            fn similarity(&self, _c: &NodeCandidate, existing: &StoredNode) -> f32 {
+                if existing.id == NodeId("alias-node".into()) {
+                    0.95
+                } else {
+                    0.0
+                }
+            }
+        }
+
+        let outcome = resolve_node(
+            &candidate,
+            &SUPPLIER,
+            &existing,
+            &edges,
+            &SimilarToAliasNode,
+            0.9,
+        );
+
+        assert_eq!(
+            outcome,
+            ResolutionOutcome::AmbiguousCandidate {
+                suggested: NodeId("canonical".into()),
+                similarity: 0.95
+            },
+            "предложение обязано указывать на канонический узел, не на узел-псевдоним"
         );
     }
 
@@ -742,7 +1130,7 @@ mod tests {
             properties: json!({}),
         };
 
-        let conflict = detect_edge_conflict(&candidate, &existing).unwrap();
+        let conflict = detect_edge_conflict(&candidate, &SUPPLIED_BY, &existing).unwrap();
 
         assert_eq!(conflict.existing, EdgeId("e-1".into()));
         assert_eq!(conflict.existing_target, NodeId("supplier-a".into()));
@@ -765,7 +1153,7 @@ mod tests {
             properties: json!({"note": "подтверждено другим источником"}),
         };
 
-        assert!(detect_edge_conflict(&candidate, &existing).is_none());
+        assert!(detect_edge_conflict(&candidate, &SUPPLIED_BY, &existing).is_none());
     }
 
     #[test]
@@ -784,7 +1172,7 @@ mod tests {
             properties: json!({}),
         };
 
-        assert!(detect_edge_conflict(&candidate, &existing).is_none());
+        assert!(detect_edge_conflict(&candidate, &SUPPLIED_BY, &existing).is_none());
     }
 
     #[test]
@@ -803,18 +1191,46 @@ mod tests {
             properties: json!({}),
         };
 
-        assert!(detect_edge_conflict(&candidate, &existing).is_none());
+        assert!(detect_edge_conflict(&candidate, &SUPPLIED_BY, &existing).is_none());
     }
 
     #[test]
-    fn resolve_edge_exact_duplicate_takes_precedence_over_conflict_check() {
+    fn detect_edge_conflict_none_for_non_functional_edge_type_with_multiple_targets() {
+        // Многозначное отношение: у инцидента может быть несколько
+        // корректирующих мер одновременно — не конфликт (M3).
         let existing = [edge(
             "e-1",
-            "supplied_by",
-            "batch-1",
-            "supplier-a",
-            json!({"since": "2026-01-01"}),
+            "corrective_action",
+            "incident-1",
+            "action-a",
+            json!({}),
         )];
+        let candidate = EdgeCandidate {
+            edge_type: "corrective_action".into(),
+            source: NodeId("incident-1".into()),
+            target: NodeId("action-b".into()),
+            properties: json!({}),
+        };
+
+        assert!(detect_edge_conflict(&candidate, &CORRECTIVE_ACTION, &existing).is_none());
+    }
+
+    #[test]
+    fn resolve_edge_exact_duplicate_takes_precedence_even_when_a_genuine_conflict_exists_too() {
+        let existing = [
+            edge(
+                "e-1",
+                "supplied_by",
+                "batch-1",
+                "supplier-a",
+                json!({"since": "2026-01-01"}),
+            ),
+            // Ещё одно ребро того же источника+типа с ДРУГОЙ целью — само
+            // по себе конфликтует с кандидатом ниже, если бы проверка
+            // дубля не сработала первой (независимое XL-ревью, находка M4:
+            // прежний тест не создавал реального конкурирующего условия).
+            edge("e-2", "supplied_by", "batch-1", "supplier-c", json!({})),
+        ];
         let candidate = EdgeCandidate {
             edge_type: "supplied_by".into(),
             source: NodeId("batch-1".into()),
@@ -823,7 +1239,7 @@ mod tests {
         };
 
         assert_eq!(
-            resolve_edge(&candidate, &existing),
+            resolve_edge(&candidate, &SUPPLIED_BY, &existing),
             EdgeResolution::Duplicate(EdgeId("e-1".into()))
         );
     }
@@ -845,7 +1261,7 @@ mod tests {
         };
 
         assert_eq!(
-            resolve_edge(&candidate, &existing),
+            resolve_edge(&candidate, &SUPPLIED_BY, &existing),
             EdgeResolution::Conflict(EdgeConflict {
                 existing: EdgeId("e-1".into()),
                 existing_target: NodeId("supplier-a".into()),
@@ -870,6 +1286,9 @@ mod tests {
             properties: json!({}),
         };
 
-        assert_eq!(resolve_edge(&candidate, &existing), EdgeResolution::New);
+        assert_eq!(
+            resolve_edge(&candidate, &SUPPLIED_BY, &existing),
+            EdgeResolution::New
+        );
     }
 }
