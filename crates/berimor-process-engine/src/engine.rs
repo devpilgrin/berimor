@@ -19,6 +19,7 @@ use berimor_types::{
     step::{Patch, Process, Step, StepKind},
 };
 use serde_json::Value;
+use std::time::{Duration, Instant};
 
 /// Инстанс процесса — состояние + указатель на последний посещённый шаг +
 /// версия графа, зафиксированная при создании на весь жизненный цикл
@@ -146,21 +147,44 @@ pub fn recover(
 }
 
 /// Прогоняет цикл `next → execute → apply → emit → snapshot` до
-/// завершения, до `human_gate` или до превышения `max_steps`
-/// (`token_budget`/`cost_budget`/`latency_budget_ms` — ROADMAP P6, здесь
-/// не проверяются — Milestone 0 §3 признаёт этот минимум достаточным).
+/// завершения, до `human_gate` или до превышения `max_steps`/`timeout`
+/// (ROADMAP P6). Оба измеряются от начала ЭТОГО вызова `run`, не от
+/// `instantiate` — тот же охват, что уже был у `steps_this_run` до этой
+/// задачи: движок синхронный, без часов в состоянии (`process-engine.md`
+/// §3), а `Instant` здесь эфемерен для одного вызова, не персистентное
+/// поле инстанса — не противоречие, а то же решение, что и у P7
+/// (`resume_after_human_gate_timeout`): отслеживание реального времени
+/// ПОПЕРЁК перезапусков — забота вызывающего кода, не движка.
+///
+/// `token_budget`/`cost_budget` — заблокированы отсутствующей
+/// отчётностью об использовании: `StepExecutor::execute` не возвращает
+/// ни токены, ни стоимость (только `Patch`), а провайдеры Model Pool
+/// (E3/E5) их не считают — принудить эти два прерывателя здесь означало
+/// бы выдумать источник данных, которого в системе ещё нет, не входит в
+/// эту задачу. `latency_budget_ms` — не прерыватель ЭТОГО цикла, а SLA
+/// отбора провайдера на каждом шаге (ADR-0011); проброс из
+/// `ProcessLimits` в `StepExecutor` — дело конкретной реализации трейта
+/// (`berimor-cli::CliExecutor`), не движка.
 pub fn run(
     storage: &dyn EventLog,
     executor: &dyn StepExecutor,
     instance: &mut ProcessInstance,
 ) -> Result<RunOutcome, EngineError> {
     let mut steps_this_run: u32 = 0;
+    let started_at = Instant::now();
+    let timeout = Duration::from_secs(instance.process.limits.timeout_seconds);
 
     loop {
         if steps_this_run >= instance.process.limits.max_steps {
             return Err(EngineError::LimitExceeded(format!(
                 "max_steps = {}",
                 instance.process.limits.max_steps
+            )));
+        }
+        if started_at.elapsed() >= timeout {
+            return Err(EngineError::LimitExceeded(format!(
+                "timeout = {}s",
+                instance.process.limits.timeout_seconds
             )));
         }
         steps_this_run += 1;
@@ -565,6 +589,46 @@ mod tests {
 
         let result = run(&storage, &executor, &mut inst);
         assert!(matches!(result, Err(EngineError::LimitExceeded(_))));
+    }
+
+    #[test]
+    fn timeout_limit_is_enforced_before_any_step_executes() {
+        // P6: `timeout: 0s` — уже истёк на первой же проверке, до первого
+        // шага. `max_steps` щедрый, чтобы не маскировать именно эту проверку.
+        let mut process = parse(GOLDEN_FIXTURE).unwrap();
+        process.limits.timeout_seconds = 0;
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let mut inst = instantiate(
+            &storage,
+            ProcessInstanceId("timed-out".into()),
+            process,
+            json!({"user": {"card_id": "c-1"}}),
+        )
+        .unwrap();
+        let executor = FakeExecutor { risk: 2 };
+
+        let result = run(&storage, &executor, &mut inst);
+
+        assert!(matches!(result, Err(EngineError::LimitExceeded(_))));
+        // Ни одного StepApplied — таймаут остановил цикл раньше исполнителя.
+        let events = storage.replay(&inst.id).unwrap();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e.kind, EventKind::StepApplied { .. })),
+            "таймаут обязан сработать до вызова исполнителя"
+        );
+    }
+
+    #[test]
+    fn generous_timeout_does_not_interfere_with_a_normal_run() {
+        // Тот же приём, что и с max_steps: щедрый лимит не должен ничего
+        // менять в обычном прогоне.
+        let (storage, mut inst, executor) = instance("generous-timeout", 2);
+
+        let outcome = run(&storage, &executor, &mut inst).unwrap();
+
+        assert_eq!(outcome, RunOutcome::Finished);
     }
 
     #[test]

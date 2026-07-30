@@ -92,14 +92,25 @@ flowchart TB
 
 Цель: детерминированный остов, исполняющий граф шагов без единого обращения к модели.
 
+P6, честная граница: `token_budget`/`cost_budget` не принуждаются
+движком — `StepExecutor::execute` возвращает только `Patch`, ни токены,
+ни стоимость, а провайдеры Model Pool (E3/E5) их не считают нигде в
+системе. Принуждение этих двух прерывателей потребовало бы сначала
+завести отчётность об использовании (новое поле в `Patch`/трейте или
+отдельный канал) — самостоятельная задача, не выдуманная здесь заранее.
+`max_steps`/`timeout` — реальные прерыватели цикла `engine::run`
+(`Instant`, эфемерный на вызов, тот же охват, что `steps_this_run`).
+`latency_budget` — не прерыватель цикла, а SLA отбора провайдера на
+каждом шаге (ADR-0011); проброшен из `ProcessLimits` в `CliExecutor`.
+
 | ID | Задача | Сложность | Класс | Зависит от | Источник |
 |---|---|---|---|---|---|
-| P1 | Парсер декларативного описания процесса (граф + хэш версии) | M | Средний | F1 | `arch/process-engine.md` §2 |
-| P2 | Типы шагов без модели: `sequential`/`parallel`/`loop`/`branch`/`checkpoint` | M | Средний | P1 | `arch/process-engine.md` §2 |
-| P3 | Цикл исполнения движка (instantiate/next/apply/emit) + снапшот при мутации | L | Сильный | P1, P2, F2 | `arch/process-engine.md` §4 |
-| P4 | Восстановление после сбоя (replay) + property-тест «свёртка журнала = состояние» | L | Сильный | P3 | `arch/process-engine.md` §7 |
+| P1 | ✅ Парсер декларативного описания процесса (граф + хэш версии) | M | Средний | F1 | `arch/process-engine.md` §2 |
+| P2 | ✅ Типы шагов без модели: `sequential`/`parallel`/`loop`/`branch`/`checkpoint` | M | Средний | P1 | `arch/process-engine.md` §2 |
+| P3 | ✅ Цикл исполнения движка (instantiate/next/apply/emit) + снапшот при мутации | L | Сильный | P1, P2, F2 | `arch/process-engine.md` §4 |
+| P4 | ✅ Восстановление после сбоя (replay) + property-тест «свёртка журнала = состояние» | L | Сильный | P3 | `arch/process-engine.md` §7 |
 | P5 | Конкурентность: один писатель на инстанс, неймспейсы parallel-шагов, join-барьер | XL | Сильный | P3 | `arch/process-engine.md` §4 |
-| P6 | Детерминированные прерыватели: `max_steps`/`timeout`/`token_budget`/`cost_budget`/`latency_budget` | M | Средний | P3 | `arch/process-engine.md` §4, ADR-0011 |
+| P6 | ✅ Детерминированные прерыватели: `max_steps`/`timeout` (движок), `latency_budget` (SLA отбора провайдера, ADR-0011) | M | Средний | P3 | `arch/process-engine.md` §4, ADR-0011 |
 | P7 | ✅ Шаг `human_gate` + политика таймаута эскалации | M | Средний | P3 | `arch/process-engine.md` §5 |
 | P8 | Привязка версии к инстансу + операция `migrate_version` | L | Сильный | P3, P4 | `arch/process-engine.md` §2, ADR-0012 |
 

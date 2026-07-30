@@ -199,6 +199,7 @@ pub fn run(
         confirmer: &confirmer,
         dispatch: &dispatch,
         llm: &llm,
+        latency_budget_ms: instance.process.limits.latency_budget_ms,
     };
 
     // --- Цикл прогона с обработкой human_gate (CLI2) --------------------
@@ -249,6 +250,10 @@ struct CliExecutor<'a> {
     confirmer: &'a TerminalConfirmer,
     dispatch: &'a StaticToolDispatch,
     llm: &'a StructuredLlm<'a>,
+    /// `ProcessLimits.latency_budget_ms` (P6, ADR-0011) — SLA отбора
+    /// провайдера на КАЖДОМ `llm_structured`-шаге, не убывающий бюджет
+    /// цикла: то же значение передаётся в каждый вызов `llm.execute`.
+    latency_budget_ms: Option<u64>,
 }
 
 impl engine::StepExecutor for CliExecutor<'_> {
@@ -270,7 +275,13 @@ impl engine::StepExecutor for CliExecutor<'_> {
             }),
             StepKind::LlmStructured { contract, model_tier } => self
                 .llm
-                .execute(&step.id, contract, *model_tier, state, None)
+                .execute(
+                    &step.id,
+                    contract,
+                    *model_tier,
+                    state,
+                    self.latency_budget_ms,
+                )
                 .map_err(|err| ExecutorError {
                     step_id: step.id.clone(),
                     reason: err.to_string(),
