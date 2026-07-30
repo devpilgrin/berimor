@@ -47,9 +47,11 @@ jobs:
           - target: linux-arm64
             os: ubuntu-24.04-arm
             ext: tar.gz
-          - target: darwin-x64
-            os: macos-13
-            ext: tar.gz
+          # darwin-x64 (macos-13) снят из матрицы: очередь на этот раннер
+          # на практике зависает на десятки минут без начала выполнения
+          # (проверено — не гипотеза), а Intel-макросборка не настолько
+          # приоритетна, чтобы держать из-за неё весь релиз. Вернуть можно
+          # отдельной задачей, когда доступность раннера станет предсказуемой.
           - target: darwin-arm64
             os: macos-latest
             ext: tar.gz
@@ -101,7 +103,7 @@ jobs:
       # дополнится: цель — одна подпись, привязанная к идентичности CI
       # (ADR-0026), а не отдельный параллельный механизм.
       - name: upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: |
@@ -125,7 +127,7 @@ jobs:
         shell: bash
         run: echo "TAG=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
