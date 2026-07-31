@@ -47,6 +47,26 @@ pub fn evaluate(
 ) -> CapabilityDecision {
     let mutates = policy.mutates.unwrap_or(action.mutates);
 
+    // Техдолг TD2.8 (`docs/audit-2026-07-31.md`): deny-режим для МУТАЦИЙ
+    // проверяется ПЕРВЫМ, до external_effect — иначе внешний деструктив
+    // (external_effect: true + mutates: true) в режиме `Deny` уходил на
+    // ConfirmRequired вместо безусловной блокировки, что противоречит и
+    // doc-комментарию этого модуля («deny как РЕЖИМ — безусловная
+    // блокировка любых мутаций»), и самому смыслу lockdown-режима: самый
+    // опасный класс действий (мутация + внешний эффект) не должен
+    // становиться ИСПОЛНИМЫМ через простое «да» человека именно в режиме,
+    // предназначенном это исключить. Non-mutating external_effect —
+    // ниже, всё ещё подтверждается в любом режиме, включая Deny (Deny
+    // «разрешает чтения», не отменяет «внешний» статус действия).
+    if mode == ConfirmationMode::Deny && mutates {
+        return CapabilityDecision::Deny {
+            reason: format!(
+                "режим deny: мутирующее действие '{}' заблокировано",
+                action.tool
+            ),
+        };
+    }
+
     // Внешний деструктив — всегда подтверждение, независимо от режима
     // (включая off и явное requires_confirmation=false). Декларация
     // `external_effect` сама по себе достаточна — противоречивая политика
@@ -64,18 +84,8 @@ pub fn evaluate(
     match mode {
         // deny как РЕЖИМ — безусловная блокировка любых мутаций; не путать
         // с deny-статикой классов операций (та безусловна во всех режимах).
-        ConfirmationMode::Deny => {
-            if mutates {
-                CapabilityDecision::Deny {
-                    reason: format!(
-                        "режим deny: мутирующее действие '{}' заблокировано",
-                        action.tool
-                    ),
-                }
-            } else {
-                CapabilityDecision::Allow
-            }
-        }
+        // mutates уже обработан веткой выше — сюда попадают только чтения.
+        ConfirmationMode::Deny => CapabilityDecision::Allow,
         // smart: чтение свободно, мутации — подтверждение; явная декларация
         // инструмента перекрывает вывод по флагу мутации.
         ConfirmationMode::Smart => match policy.requires_confirmation {
@@ -239,29 +249,65 @@ mod tests {
             external_effect: true,
             ..Default::default()
         };
+        // Подтверждение (не Allow) — во всех режимах, где deny-режим сам
+        // по себе не строже.
         for mode in [
-            ConfirmationMode::Deny,
             ConfirmationMode::Smart,
             ConfirmationMode::Manual,
             ConfirmationMode::Off,
         ] {
-            let decision = evaluate(mode, &action("deploy.production", true), &policy);
             assert!(
                 matches!(
-                    decision,
-                    CapabilityDecision::ConfirmRequired { .. } | CapabilityDecision::Deny { .. }
+                    evaluate(mode, &action("deploy.production", true), &policy),
+                    CapabilityDecision::ConfirmRequired { .. }
                 ),
                 "внешний деструктив не должен проходить свободно ни в одном режиме, {mode:?}"
             );
         }
-        // А именно подтверждение (не deny) — во всех режимах, где deny-режим
-        // сам по себе не строже.
-        for mode in [ConfirmationMode::Smart, ConfirmationMode::Off] {
-            assert!(matches!(
-                evaluate(mode, &action("deploy.production", true), &policy),
-                CapabilityDecision::ConfirmRequired { .. }
-            ));
-        }
+    }
+
+    /// Техдолг TD2.8 (`docs/audit-2026-07-31.md`): раньше эта проверка
+    /// была объединена с `external_effect_always_confirms_even_in_off_mode`
+    /// через `matches!(.., ConfirmRequired | Deny)` — union маскировал
+    /// дефект (Deny-режим фактически возвращал ConfirmRequired, тест этого
+    /// не ловил). Теперь — строго `Deny`, отдельным тестом.
+    #[test]
+    fn deny_mode_blocks_external_mutation_even_though_external_effect_would_normally_confirm() {
+        let policy = ToolPolicy {
+            mutates: Some(true),
+            external_effect: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            evaluate(
+                ConfirmationMode::Deny,
+                &action("deploy.production", true),
+                &policy
+            ),
+            CapabilityDecision::Deny { .. }
+        ));
+    }
+
+    /// Non-mutating external_effect всё равно требует подтверждения даже
+    /// в Deny — режим `Deny` «разрешает чтения», не отменяет «внешний»
+    /// статус действия (см. `contradictory_external_effect_declaration_resolves_to_safe_side`
+    /// для полностью противоречивого случая; здесь — непротиворечивая
+    /// декларация: явное чтение, но с внешним эффектом).
+    #[test]
+    fn deny_mode_still_confirms_non_mutating_external_effect() {
+        let policy = ToolPolicy {
+            mutates: Some(false),
+            external_effect: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            evaluate(
+                ConfirmationMode::Deny,
+                &action("external.read", false),
+                &policy
+            ),
+            CapabilityDecision::ConfirmRequired { .. }
+        ));
     }
 
     #[test]
