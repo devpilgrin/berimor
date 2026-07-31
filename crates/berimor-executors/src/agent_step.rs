@@ -19,7 +19,18 @@
 //! `ProcessLimits.token_budget`, P6); суб-шаговый снапшот «перед каждой
 //! правкой» (Process Engine снапшотит после `AgentStep` целиком, как и
 //! после `CodeAct`/`LlmStructured` — синхронный контракт `StepExecutor`,
-//! один `Patch` на вызов); режим «пользовательский люк» вне процесса.
+//! один `Patch` на вызов); режим «пользовательский люк» вне процесса;
+//! ограничение набора инструментов, доступных конкретному
+//! `agent_step`-шагу — `AgentStepExecutor.dispatch` тот же
+//! `CompositeToolDispatch`, что и у всех `Tool`-шагов процесса, `contract`
+//! в `StepKind::AgentStep` не сужает его (не обход capability-гейта — тот
+//! отрабатывает на каждый вызов одинаково, — но расширение поверхности:
+//! шагу доступен весь сконфигурированный набор, не только те инструменты,
+//! что автор процесса имел в виду; `executors.md` §5 сужение не
+//! специфицирует, в `berimor-tool-runtime::plugin_process` уже есть паттерн
+//! именно для такого ограничения — `PluginManifest.capability_ceiling`, —
+//! не применённый здесь; найдено независимым ревью E9, осознанно оставлено
+//! вне этого захода).
 
 use crate::structured_llm::{self, ContractAdapter};
 use crate::tool_only::{self, ConfirmationHandler, ToolDispatch};
@@ -60,10 +71,12 @@ pub enum AgentStepError {
         reason: String,
         stage: MediationStage,
     },
-    /// Capability-деним/отказ на подтверждении — терминальная ошибка
-    /// хода, не повод для ретрая: и то и другое — решение, которое
-    /// цикл обязан уважать, не пытаться обойти переформулировкой
-    /// (security-model.md: «нет неявного расширения привилегий»).
+    /// Только capability-деним/отказ на подтверждении — НЕ сбой самого
+    /// инструмента (`DispatchError`, восстановимая ошибка, становится
+    /// наблюдением хода, см. `execute()`). Терминальная ошибка, не
+    /// повод для ретрая: оба исхода — решение, которое цикл обязан
+    /// уважать, не пытаться обойти переформулировкой (security-model.md:
+    /// «нет неявного расширения привилегий»).
     #[error("действие '{tool}' отклонено: {reason}")]
     ActionRejected { tool: String, reason: String },
     /// «Предложи-выполни-проверь» (executors.md §5): отрицательный
@@ -101,7 +114,15 @@ struct TurnRecord {
 impl AgentStepExecutor<'_> {
     /// `contract_name` — форма `Finish.result` (`StepKind::AgentStep.contract`).
     /// `latency_budget_ms` — тот же SLA отбора провайдера, что у
-    /// `StructuredLlm` (ADR-0011), применяется к каждому ходу отдельно.
+    /// `StructuredLlm` (ADR-0011); провайдер выбирается ОДИН раз на
+    /// вызов `execute()` (не на каждый ход отдельно — как и у
+    /// `StructuredLlm`), тот же `provider`/`model_tier` используется
+    /// во всех ходах, вердиктах и самокритике этого вызова.
+    ///
+    /// Реальное число HTTP-вызовов модели за один `execute()` — до
+    /// `4 × max_turns` (до 3 попыток разбора хода + до 1 вердикта на
+    /// ход при `self_critique`/`verify_actions`), не 1:1 с «ходами» из
+    /// `executors.md` §5 — учитывать при оценке стоимости/латентности.
     #[allow(clippy::too_many_arguments)]
     pub fn execute(
         &self,
@@ -155,18 +176,39 @@ impl AgentStepExecutor<'_> {
 
             match decision.action {
                 AgentAction::Tool { tool, args } => {
-                    let observation = tool_only::dispatch_confirmed(
+                    let observation = match tool_only::dispatch_confirmed(
                         &tool,
                         &args,
                         self.dispatch,
                         self.gate,
                         self.mode,
                         self.confirmer,
-                    )
-                    .map_err(|err| AgentStepError::ActionRejected {
-                        tool: tool.clone(),
-                        reason: err.to_string(),
-                    })?;
+                    ) {
+                        Ok(value) => value,
+                        // Сбой самого инструмента (неизвестное имя,
+                        // ошибка сервера) — не решение безопасности, а
+                        // восстановимая ошибка: становится наблюдением,
+                        // следующий ход может выбрать другое действие.
+                        // Первая версия сворачивала это в тот же
+                        // терминальный исход, что явный отказ гейта —
+                        // одна галлюцинация имени инструмента убивала
+                        // весь цикл независимо от `max_turns` (найдено
+                        // независимым ревью).
+                        Err(tool_only::ToolOnlyError::Dispatch(err)) => {
+                            Value::String(format!("вызов инструмента завершился ошибкой: {err}"))
+                        }
+                        // CapabilityDenied/ConfirmationRejected —
+                        // решение, которое цикл обязан уважать, не
+                        // пытаться обойти переформулировкой
+                        // (security-model.md: «нет неявного расширения
+                        // привилегий») — терминально.
+                        Err(err) => {
+                            return Err(AgentStepError::ActionRejected {
+                                tool: tool.clone(),
+                                reason: err.to_string(),
+                            })
+                        }
+                    };
 
                     if verify_actions {
                         self.verify_action(
@@ -709,6 +751,76 @@ mod tests {
         let result = executor.execute("answer", "SupportReply", 5, false, false, &state, None);
 
         assert!(matches!(result, Err(AgentStepError::ActionRejected { .. })));
+    }
+
+    const UNKNOWN_TOOL_TURN: &str = r#"{"thought": "Пробую этот инструмент.", "action": {"kind": "tool", "tool": "crm.unknown_tool", "args": {}}}"#;
+
+    /// Сбой диспетча (неизвестное имя инструмента — типичная галлюцинация
+    /// модели, свободно выбирающей имя) не убивает цикл: наблюдение с
+    /// текстом ошибки уходит в историю, следующий ход может завершиться
+    /// нормально (найдено независимым ревью E9 — до фикса это было
+    /// терминальной `ActionRejected`, неотличимой от отказа capability-слоя).
+    #[test]
+    fn dispatch_failure_is_recoverable_not_terminal() {
+        let provider: &'static ScriptedProvider = Box::leak(Box::new(ScriptedProvider::new(vec![
+            UNKNOWN_TOOL_TURN,
+            FINISH_TURN,
+        ])));
+        let (pool, providers) = pool_and_providers(provider);
+        let executor = AgentStepExecutor {
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            gate: &AllowAll,
+            mode: ConfirmationMode::Off,
+            confirmer: &AutoConfirm,
+            dispatch: &FakeCrm,
+        };
+
+        let state = json!({"user": {"card_id": "c-1"}});
+        let patch = executor
+            .execute("answer", "SupportReply", 5, false, false, &state, None)
+            .unwrap();
+
+        assert_eq!(patch.changes["reply"], "готово");
+    }
+
+    const FORGED_FINISH_TURN: &str = r#"{"thought": "Готово.", "action": {"kind": "finish", "result": {"card_id": "forged", "reply": "готово"}}}"#;
+
+    /// Тот же путь Mediation, что у `StructuredLlm`
+    /// (`structured_llm::tests::answer_step_rejects_forged_card_id_via_policy`)
+    /// — центральный сценарий модели угроз (`state-reference-forgery.json`):
+    /// `Finish.result` со сфабрикованным `card_id`, не совпадающим с
+    /// `state.user.card_id`, обязан отклоняться на стадии Policy, а не
+    /// молча записываться в состояние (найдено независимым ревью E9 —
+    /// путь логически идентичен `StructuredLlm`, но не был явно проверен
+    /// именно для `AgentStep`).
+    #[test]
+    fn finish_result_forging_a_state_reference_is_rejected_by_policy() {
+        let provider: &'static ScriptedProvider =
+            Box::leak(Box::new(ScriptedProvider::new(vec![FORGED_FINISH_TURN])));
+        let (pool, providers) = pool_and_providers(provider);
+        let executor = AgentStepExecutor {
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            gate: &AllowAll,
+            mode: ConfirmationMode::Off,
+            confirmer: &AutoConfirm,
+            dispatch: &PanicsIfCalled,
+        };
+
+        let state = json!({"user": {"card_id": "c-1"}});
+        let result = executor.execute("answer", "SupportReply", 5, false, false, &state, None);
+
+        match result {
+            Err(AgentStepError::Escalated { stage, .. }) => {
+                assert_eq!(stage, MediationStage::Policy)
+            }
+            other => panic!("ожидалась эскалация на стадии Policy: {other:?}"),
+        }
     }
 
     #[test]

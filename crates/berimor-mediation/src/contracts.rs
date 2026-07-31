@@ -161,7 +161,7 @@ pub struct AgentTurnDecision {
 /// который декларирует `StepKind::AgentStep.contract`, отдельным проходом
 /// Mediation после того, как модель выбрала `Finish`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AgentAction {
     Tool {
         tool: String,
@@ -420,6 +420,17 @@ mod tests {
 
         let finish_json = serde_json::to_value(AgentAction::Finish { result: json!({}) }).unwrap();
         assert_eq!(finish_json["kind"], json!("finish"));
+    }
+
+    /// `deny_unknown_fields` на самом `AgentAction`, не только на
+    /// объемлющем `AgentTurnDecision` — без него internally-tagged
+    /// enum-вариант молча отбрасывает лишние поля (найдено независимым
+    /// ревью E9).
+    #[test]
+    fn agent_action_tool_variant_rejects_unknown_field() {
+        let raw = json!({"kind": "tool", "tool": "x", "args": {}, "unexpected": "smuggled"});
+        let result: Result<AgentAction, _> = serde_json::from_value(raw);
+        assert!(result.is_err());
     }
 
     #[test]
