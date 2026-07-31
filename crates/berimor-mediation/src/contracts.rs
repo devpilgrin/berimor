@@ -139,6 +139,69 @@ impl Contract for FactProposal {
     // задача вызывающего кода, не этого контракта.
 }
 
+/// Решение одного хода `AgentStep` (`executors.md` §5: «рассуждение →
+/// действие → наблюдение»). ROADMAP: E9. Фиксированная форма — ОДНА на
+/// все `agent_step`-шаги системы, в отличие от `contract: String` самого
+/// шага, который описывает форму ТОЛЬКО `Finish.result` (см.
+/// `berimor_types::step::StepKind::AgentStep`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct AgentTurnDecision {
+    /// Аудиторский след рассуждения — не публикуется пользователю
+    /// (значение по умолчанию `Contract::publishable` — Null), но
+    /// журналируется как часть попытки (M7).
+    #[validate(length(min = 1, max = 4000))]
+    pub thought: String,
+    pub action: AgentAction,
+}
+
+/// `Value`-поля (`args`/`result`) — не форма, которую можно провалидировать
+/// заранее: `args` проверяется тем же capability-гейтом, что и обычный
+/// `tool`-шаг (`tool_only::dispatch_confirmed`), `result` — контрактом,
+/// который декларирует `StepKind::AgentStep.contract`, отдельным проходом
+/// Mediation после того, как модель выбрала `Finish`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AgentAction {
+    Tool {
+        tool: String,
+        #[serde(default)]
+        args: serde_json::Value,
+    },
+    Finish {
+        result: serde_json::Value,
+    },
+}
+
+impl Contract for AgentTurnDecision {
+    const SCHEMA_VERSION: u32 = 1;
+    const NAME: &'static str = "AgentTurnDecision";
+
+    // Внутреннее решение цикла, не то, что видит пользователь —
+    // публикуется только итоговый результат AgentStep (через контракт
+    // самого шага), не промежуточные ходы.
+}
+
+/// Вердикт самокритики/проверки действия (`executors.md` §5: «модель
+/// оценивает свой шаг» / «отдельный вердикт по критериям после
+/// выполнения») — одна форма на обе стратегии, разный смысл
+/// отрицательного вердикта решает вызывающий код
+/// (`berimor-executors::agent_step`, не сам контракт).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct AgentVerdict {
+    pub passed: bool,
+    #[validate(length(min = 1, max = 2000))]
+    pub reason: String,
+}
+
+impl Contract for AgentVerdict {
+    const SCHEMA_VERSION: u32 = 1;
+    const NAME: &'static str = "AgentVerdict";
+
+    // Внутренний контроль цикла — не публикуется пользователю.
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,5 +380,82 @@ mod tests {
         let mut value = fact();
         value.confidence = 1.5;
         assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn agent_turn_decision_tool_action_round_trips() {
+        let value = AgentTurnDecision {
+            thought: "Нужен статус карты.".into(),
+            action: AgentAction::Tool {
+                tool: "crm.get_card_status".into(),
+                args: json!({"id": "card_1029"}),
+            },
+        };
+        let json = serde_json::to_value(&value).unwrap();
+        let back: AgentTurnDecision = serde_json::from_value(json).unwrap();
+        assert_eq!(value, back);
+    }
+
+    #[test]
+    fn agent_turn_decision_finish_action_round_trips() {
+        let value = AgentTurnDecision {
+            thought: "Готово, можно завершать.".into(),
+            action: AgentAction::Finish {
+                result: json!({"reply": "готово"}),
+            },
+        };
+        let json = serde_json::to_value(&value).unwrap();
+        let back: AgentTurnDecision = serde_json::from_value(json).unwrap();
+        assert_eq!(value, back);
+    }
+
+    #[test]
+    fn agent_action_tag_distinguishes_tool_from_finish() {
+        let tool_json = serde_json::to_value(AgentAction::Tool {
+            tool: "x".into(),
+            args: json!({}),
+        })
+        .unwrap();
+        assert_eq!(tool_json["kind"], json!("tool"));
+
+        let finish_json = serde_json::to_value(AgentAction::Finish { result: json!({}) }).unwrap();
+        assert_eq!(finish_json["kind"], json!("finish"));
+    }
+
+    #[test]
+    fn agent_turn_decision_rejects_unknown_field() {
+        let raw = json!({
+            "thought": "x",
+            "action": {"kind": "finish", "result": {}},
+            "extra": true
+        });
+        let result: Result<AgentTurnDecision, _> = serde_json::from_value(raw);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn agent_turn_decision_rejects_empty_thought() {
+        use validator::Validate;
+        let value = AgentTurnDecision {
+            thought: String::new(),
+            action: AgentAction::Finish { result: json!({}) },
+        };
+        assert!(value.validate().is_err());
+    }
+
+    #[test]
+    fn agent_verdict_round_trips_and_rejects_unknown_field() {
+        let value = AgentVerdict {
+            passed: false,
+            reason: "результат не отвечает на вопрос".into(),
+        };
+        let json = serde_json::to_value(&value).unwrap();
+        let back: AgentVerdict = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(value, back);
+
+        let mut with_extra = json;
+        with_extra["extra"] = json!(1);
+        let result: Result<AgentVerdict, _> = serde_json::from_value(with_extra);
+        assert!(result.is_err());
     }
 }
