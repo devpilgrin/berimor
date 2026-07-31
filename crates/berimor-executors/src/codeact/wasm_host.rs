@@ -99,6 +99,14 @@ use wasmtime_wasi::{I32Exit, WasiCtxBuilder};
 const STDOUT_CAPACITY_BYTES: usize = 1024 * 1024;
 const STDERR_CAPACITY_BYTES: usize = 64 * 1024;
 
+/// Реальный гость CodeAct (E8) — `codeact-guest/src/main.rs`, собран
+/// под `wasm32-wasip1`, коммитится как артефакт (`codeact-guest/README.md`
+/// — как пересобрать). `pub(crate)`, а не приватная: `codeact::executor`
+/// (`CodeActExecutor`) передаёт этот же байткод в [`WasmHost::run`] на
+/// каждую попытку — единственный на весь крейт "какой гость реально
+/// исполняется", не выбор вызывающего кода снаружи `codeact`.
+pub(crate) const GUEST_WASM: &[u8] = include_bytes!("../../assets/codeact-guest.wasm");
+
 /// Три независимых предела песочницы — см. doc-комментарий модуля.
 /// Значения — обоснованный, но не выведенный из спецификации выбор
 /// (`executors.md` §4.3 говорит «уменьшенный лимит» для среднего класса
@@ -412,15 +420,7 @@ mod tests {
     use serde_json::json;
     use tool_only::DispatchError;
 
-    /// Реальный гость (E8) — `codeact-guest/src/main.rs`, собран под
-    /// `wasm32-wasip1`, коммитится как артефакт (см.
-    /// `codeact-guest/README.md`). Тесты этого модуля намеренно
-    /// проверяют HOST-механику (WASI stdin/stdout, `call_tool`,
-    /// лимиты) через РЕАЛЬНОГО гостя, а не рукописные WAT-фикстуры —
-    /// хвост стал WASI-командой (нужны настоящие `fd_read`/`fd_write`
-    /// синтаксически корректно, что вручную писать в WAT практического
-    /// смысла не имеет, когда есть работающий гость).
-    const GUEST_WASM: &[u8] = include_bytes!("../../assets/codeact-guest.wasm");
+    use super::GUEST_WASM;
 
     fn program(input: Value, js: &str) -> Value {
         json!({"program": js, "input": input})

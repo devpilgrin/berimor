@@ -37,6 +37,14 @@ pub enum StepKind {
     },
     CodeAct {
         contract: String,
+        /// Имена стабов инструментов, доступных ИМЕННО этой программе —
+        /// используется и статическим анализом (белый список, E7), и
+        /// подсказкой модели. Пустой список — валиден (программе не
+        /// нужны инструменты).
+        #[serde(default)]
+        tools: Vec<String>,
+        #[serde(default)]
+        model_tier: crate::model::ModelTierRequirement,
     },
     AgentStep {
         /// Контракт финального результата (`Finish.result`) — как у

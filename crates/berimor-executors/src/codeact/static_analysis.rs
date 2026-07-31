@@ -68,6 +68,14 @@ use std::collections::HashSet;
 /// доступа к ОС/сети/времени/случайности. Список исчерпывающий и
 /// сознательно короткий, по духу ADR-0022 — «модель ограничена
 /// подмножеством... в обмен на... структурную гарантию».
+///
+/// `input`/`call_tool`/`finish` — не встроенные в JS имена, а
+/// intrinsics ГОСТЕВОГО РАНТАЙМА (E8, `codeact-guest/src/main.rs`):
+/// они существуют в любой CodeAct-программе точно так же безусловно,
+/// как `JSON`/`Math` — потому и в том же списке, не в отдельном,
+/// передаваемом только вызывающим кодом (`allowed_names` в [`analyze`]
+/// — это ИМЕНА СТАБОВ ИНСТРУМЕНТОВ конкретного шага, `call_tool` сам —
+/// не стаб, а сама функция вызова стабов).
 pub const SAFE_GLOBALS: &[&str] = &[
     "undefined",
     "NaN",
@@ -89,6 +97,9 @@ pub const SAFE_GLOBALS: &[&str] = &[
     "isFinite",
     "parseInt",
     "parseFloat",
+    "input",
+    "call_tool",
+    "finish",
 ];
 
 #[derive(Debug, thiserror::Error)]
