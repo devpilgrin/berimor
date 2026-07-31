@@ -111,9 +111,14 @@ jobs:
       # приватному ключу. Бандл (`--bundle`) — один JSON-файл с подписью,
       # сертификатом и записью Rekor; заменяет контрольную сумму, не
       # дополняет её — так и было задумано изначально в этом файле.
+      # --new-bundle-format: без него cosign пишет старый ad-hoc формат
+      # бандла (`base64Signature`/`cert`/`rekorBundle`), не единую схему
+      # Sigstore Bundle v1 — обнаружено на первом реальном прогоне (см.
+      # `verify.rs`, который читает именно v1: `serde_json::from_str`
+      # спотыкался на незнакомом поле `base64Signature`).
       - name: sign artifact (cosign keyless)
         shell: bash
-        run: cosign sign-blob --yes --bundle "${ARCHIVE}.sigstore.json" "$ARCHIVE"
+        run: cosign sign-blob --yes --new-bundle-format --bundle "${ARCHIVE}.sigstore.json" "$ARCHIVE"
 
       - name: upload build artifact
         uses: actions/upload-artifact@v7
@@ -155,7 +160,7 @@ jobs:
 
       - name: sign canary (cosign keyless)
         shell: bash
-        run: cosign sign-blob --yes --bundle RELEASE.txt.sigstore.json RELEASE.txt
+        run: cosign sign-blob --yes --new-bundle-format --bundle RELEASE.txt.sigstore.json RELEASE.txt
 
       - name: upload canary artifact
         uses: actions/upload-artifact@v7
