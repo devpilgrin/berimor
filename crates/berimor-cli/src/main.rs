@@ -11,6 +11,7 @@ use std::process::ExitCode;
 
 mod config;
 mod mcp_dispatch;
+mod observe;
 mod run;
 
 #[derive(Parser)]
@@ -57,6 +58,16 @@ enum Command {
     Config {
         #[command(subcommand)]
         action: ConfigAction,
+    },
+    /// Человекочитаемая трассировка журнала одного инстанса (O1).
+    Trace {
+        /// Идентификатор инстанса (тот же, что печатает `run`/`--resume`).
+        instance: String,
+    },
+    /// Офлайн-прогон золотого набора: доля веток, доля отказов Mediation (O2).
+    Eval {
+        /// Директория с `process.yaml` и `<сценарий>.json` файлами входа.
+        golden_dir: PathBuf,
     },
 }
 
@@ -112,6 +123,18 @@ fn main() -> ExitCode {
                 println!("{resolved_config:#?}");
             }
         },
+        Command::Trace { instance } => {
+            if let Err(err) = observe::trace(&resolved_config, &instance) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Command::Eval { golden_dir } => {
+            if let Err(err) = observe::eval(&resolved_config, &golden_dir) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
 
     ExitCode::SUCCESS

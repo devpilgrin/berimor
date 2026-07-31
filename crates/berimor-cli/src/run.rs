@@ -107,83 +107,8 @@ pub fn run(
     };
 
     // --- Сборка исполнителей -------------------------------------------
-    let workspace_root = std::env::current_dir()
-        .and_then(|p| p.canonicalize())
-        .unwrap_or_else(|_| PathBuf::from("."));
-
-    let tool_policies: HashMap<String, ToolPolicy> = config
-        .tool_stubs
-        .iter()
-        .map(|stub| {
-            (
-                stub.tool.clone(),
-                ToolPolicy {
-                    mutates: Some(stub.mutates),
-                    ..Default::default()
-                },
-            )
-        })
-        .collect();
-    let gate = StandardCapability::new(workspace_root, tool_policies);
-    let static_stubs = StaticToolDispatch::new(
-        config
-            .tool_stubs
-            .clone()
-            .into_iter()
-            .map(|s| (s.tool, s.response, s.mutates))
-            .collect(),
-    );
-    // MCP-серверы (T1) — только если оператор явно перечислил их в
-    // конфиге; пустой список ведёт себя побитово как раньше (только
-    // static_stubs, ни одного сервера не запускается).
-    let mcp = if config.mcp_servers.is_empty() {
-        None
-    } else {
-        Some(McpToolDispatch::connect(&config.mcp_servers)?)
-    };
-    let dispatch = CompositeToolDispatch { mcp, static_stubs };
-    let confirmer = TerminalConfirmer;
-
-    let mut pool = ModelPool::new();
-    let mut provider_clients: Vec<OpenAiCompatibleProvider> = Vec::new();
-    for p in &config.providers {
-        pool.register(ModelEntry {
-            identity: ModelIdentity {
-                provider: p.name.clone(),
-                model_id: p.model_id.clone(),
-                tier: p.tier,
-            },
-            kind: ProviderKind::Remote,
-            cost_per_1k_tokens: p.cost_per_1k_tokens,
-            measured_latency_ms: None,
-        });
-        let api_key = match &p.api_key_env {
-            Some(env) => {
-                let value = std::env::var(env).ok().filter(|v| !v.is_empty());
-                Some(Secret::new(
-                    value.ok_or_else(|| RunError::MissingApiKey(p.name.clone()))?,
-                ))
-            }
-            None => None,
-        };
-        provider_clients.push(
-            OpenAiCompatibleProvider::new(
-                ModelIdentity {
-                    provider: p.name.clone(),
-                    model_id: p.model_id.clone(),
-                    tier: p.tier,
-                },
-                p.base_url.clone(),
-                api_key,
-                p.allow_private_endpoint,
-            )
-            .map_err(|err| RunError::Provider(err.to_string()))?,
-        );
-    }
-    let providers: HashMap<String, &dyn ModelProvider> = provider_clients
-        .iter()
-        .map(|c| (c.identity().provider.clone(), c as &dyn ModelProvider))
-        .collect();
+    let bundle = build_executor_bundle(config)?;
+    let providers = bundle.providers();
 
     // Телеметрия Mediation (M7) — события в тот же журнал; свёртка их
     // игнорирует, аудит-след их видит (security-model.md §5).
@@ -198,25 +123,24 @@ pub fn run(
         ));
     };
 
-    let skills = load_skills(config.memory.skills_dir.as_deref());
     let memory_context = MemoryContextBuilder {
         episodic: &storage,
-        skills: &skills,
+        skills: &bundle.skills,
         session_search_limit: config.memory.session_search_limit,
     };
 
     let llm = StructuredLlm {
-        pool: &pool,
+        pool: &bundle.pool,
         providers: &providers,
         context: &memory_context,
         on_attempt: Some(&on_attempt),
     };
 
     let executor = CliExecutor {
-        gate: &gate,
+        gate: &bundle.gate,
         mode: config.confirmation_mode,
-        confirmer: &confirmer,
-        dispatch: &dispatch,
+        confirmer: &bundle.confirmer,
+        dispatch: &bundle.dispatch,
         llm: &llm,
         latency_budget_ms: instance.process.limits.latency_budget_ms,
     };
@@ -262,17 +186,127 @@ pub fn run(
     }
 }
 
+/// Часть сборки исполнителей, не зависящая от конкретного инстанса
+/// (gate/dispatch/pool/навыки) — общая для `run` (CLI-M1/M2) и `eval`
+/// (CLI-M3, `observe.rs`). Что НЕ входит: `on_attempt`-телеметрия и
+/// `latency_budget_ms` — оба привязаны к конкретному `ProcessInstance`
+/// (id инстанса для телеметрии, `process.limits` для бюджета), собираются
+/// вызывающим кодом после того, как инстанс/процесс уже известен.
+pub(crate) struct ExecutorBundle {
+    pub(crate) gate: StandardCapability,
+    pub(crate) dispatch: CompositeToolDispatch,
+    pub(crate) pool: ModelPool,
+    provider_clients: Vec<OpenAiCompatibleProvider>,
+    pub(crate) skills: Vec<berimor_memory::procedural::SkillSummary>,
+    pub(crate) confirmer: TerminalConfirmer,
+}
+
+impl ExecutorBundle {
+    pub(crate) fn providers(&self) -> HashMap<String, &dyn ModelProvider> {
+        self.provider_clients
+            .iter()
+            .map(|c| (c.identity().provider.clone(), c as &dyn ModelProvider))
+            .collect()
+    }
+}
+
+pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, RunError> {
+    let workspace_root = std::env::current_dir()
+        .and_then(|p| p.canonicalize())
+        .unwrap_or_else(|_| PathBuf::from("."));
+
+    let tool_policies: HashMap<String, ToolPolicy> = config
+        .tool_stubs
+        .iter()
+        .map(|stub| {
+            (
+                stub.tool.clone(),
+                ToolPolicy {
+                    mutates: Some(stub.mutates),
+                    ..Default::default()
+                },
+            )
+        })
+        .collect();
+    let gate = StandardCapability::new(workspace_root, tool_policies);
+    let static_stubs = StaticToolDispatch::new(
+        config
+            .tool_stubs
+            .clone()
+            .into_iter()
+            .map(|s| (s.tool, s.response, s.mutates))
+            .collect(),
+    );
+    // MCP-серверы (T1) — только если оператор явно перечислил их в
+    // конфиге; пустой список ведёт себя побитово как раньше (только
+    // static_stubs, ни одного сервера не запускается).
+    let mcp = if config.mcp_servers.is_empty() {
+        None
+    } else {
+        Some(McpToolDispatch::connect(&config.mcp_servers)?)
+    };
+    let dispatch = CompositeToolDispatch { mcp, static_stubs };
+
+    let mut pool = ModelPool::new();
+    let mut provider_clients: Vec<OpenAiCompatibleProvider> = Vec::new();
+    for p in &config.providers {
+        pool.register(ModelEntry {
+            identity: ModelIdentity {
+                provider: p.name.clone(),
+                model_id: p.model_id.clone(),
+                tier: p.tier,
+            },
+            kind: ProviderKind::Remote,
+            cost_per_1k_tokens: p.cost_per_1k_tokens,
+            measured_latency_ms: None,
+        });
+        let api_key = match &p.api_key_env {
+            Some(env) => {
+                let value = std::env::var(env).ok().filter(|v| !v.is_empty());
+                Some(Secret::new(
+                    value.ok_or_else(|| RunError::MissingApiKey(p.name.clone()))?,
+                ))
+            }
+            None => None,
+        };
+        provider_clients.push(
+            OpenAiCompatibleProvider::new(
+                ModelIdentity {
+                    provider: p.name.clone(),
+                    model_id: p.model_id.clone(),
+                    tier: p.tier,
+                },
+                p.base_url.clone(),
+                api_key,
+                p.allow_private_endpoint,
+            )
+            .map_err(|err| RunError::Provider(err.to_string()))?,
+        );
+    }
+
+    let skills = load_skills(config.memory.skills_dir.as_deref());
+
+    Ok(ExecutorBundle {
+        gate,
+        dispatch,
+        pool,
+        provider_clients,
+        skills,
+        confirmer: TerminalConfirmer,
+    })
+}
+
 /// Реальный `StepExecutor` (CLI1): маршрутизация по типу шага.
-struct CliExecutor<'a> {
-    gate: &'a StandardCapability,
-    mode: ConfirmationMode,
-    confirmer: &'a TerminalConfirmer,
-    dispatch: &'a dyn ToolDispatch,
-    llm: &'a StructuredLlm<'a>,
+pub(crate) struct CliExecutor<'a> {
+    pub(crate) gate: &'a StandardCapability,
+    pub(crate) mode: ConfirmationMode,
+    pub(crate) confirmer: &'a TerminalConfirmer,
+    pub(crate) dispatch: &'a dyn ToolDispatch,
+    pub(crate) llm: &'a StructuredLlm<'a>,
     /// `ProcessLimits.latency_budget_ms` (P6, ADR-0011) — SLA отбора
     /// провайдера на КАЖДОМ `llm_structured`-шаге, не убывающий бюджет
     /// цикла: то же значение передаётся в каждый вызов `llm.execute`.
-    latency_budget_ms: Option<u64>,
+    pub(crate) latency_budget_ms: Option<u64>,
 }
 
 impl engine::StepExecutor for CliExecutor<'_> {
@@ -317,7 +351,7 @@ impl engine::StepExecutor for CliExecutor<'_> {
 
 /// Подтверждение в терминале: «да» — opt-in, всё остальное (включая
 /// EOF) — отказ.
-struct TerminalConfirmer;
+pub(crate) struct TerminalConfirmer;
 
 impl ConfirmationHandler for TerminalConfirmer {
     fn confirm(&self, action: &ProposedAction, reason: &str) -> bool {

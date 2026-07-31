@@ -137,6 +137,7 @@ version = "0.6.0"
 dependencies = [
  "berimor-capability",
  "berimor-context-engine",
+ "berimor-eval",
  "berimor-executors",
  "berimor-memory",
  "berimor-model-pool",
