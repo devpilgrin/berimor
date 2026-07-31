@@ -201,17 +201,41 @@ fn run(program: &str, input: &serde_json::Value) -> Result<serde_json::Value, St
         }
 
         let eval_result = ctx.eval::<(), _>(program.as_bytes());
-        // TD3.2: если `finish` уже был вызван, `eval_result` почти
-        // наверняка `Err` — это НАШЕ собственное останавливающее
-        // исключение из `finish_fn` (см. выше), не сбой программы.
-        // Проверяем ПЕРЕД тем, как трактовать `Err` как реальную ошибку —
-        // иначе легитимный `finish(r)` без ничего после нёс бы
-        // `outcome?` в ошибку на пустом месте (сам вызов `finish`
-        // теперь ВСЕГДА завершается исключением по конструкции).
-        if *finished_called.borrow() {
-            return Ok(());
-        }
-        eval_result.map_err(|e| {
+        if let Err(e) = eval_result {
+            if *finished_called.borrow() {
+                // Независимое ревью (закрытие техдолга TD3.2) нашло
+                // major-дефект в исходной версии этого фикса: булев флаг
+                // `finished_called` сам по себе не отличает «это НАШЕ
+                // завершающее исключение из finish, дошедшее до верха
+                // необработанным» от «finish был вызван и ПЕРЕХВАЧЕН
+                // try/catch, а ПОЗЖЕ произошла совершенно несвязанная
+                // необработанная ошибка» — второй случай раньше молча
+                // трактовался как успех со СТАРЫМ записанным значением,
+                // маскируя реальный сбой скрипта. Различаем: реально
+                // ПРОПАГИРУЮЩЕЕ сейчас исключение (`ctx.catch()`)
+                // обязано быть буквально тем же значением, что записал
+                // `finish` — сравниваем через JSON-сериализацию (тот же
+                // канал, каким `finish_fn` сохраняет `finished`).
+                let propagating = ctx.catch();
+                let propagating_text = ctx
+                    .json_stringify(propagating.clone())
+                    .ok()
+                    .flatten()
+                    .and_then(|s| s.to_string().ok());
+                if propagating_text.as_deref() == finished.borrow().as_deref() {
+                    // Действительно наше собственное исключение из
+                    // finish — легитимная остановка, не сбой.
+                    return Ok(());
+                }
+                let detail = propagating
+                    .as_exception()
+                    .and_then(|exc| exc.message())
+                    .or(propagating_text)
+                    .unwrap_or_else(|| e.to_string());
+                return Err(format!(
+                    "необработанное исключение JS после finish(...) (не само служебное завершение, finish был перехвачен раньше): {detail}"
+                ));
+            }
             // `ctx.catch()` достаёт сам объект исключения — без него
             // сообщение об ошибке из `rquickjs::Error::Exception` не
             // содержит текста самого JS-исключения (только факт, что
@@ -221,8 +245,8 @@ fn run(program: &str, input: &serde_json::Value) -> Result<serde_json::Value, St
                 .as_exception()
                 .and_then(|exc| exc.message())
                 .unwrap_or_else(|| e.to_string());
-            format!("необработанное исключение JS: {detail}")
-        })?;
+            return Err(format!("необработанное исключение JS: {detail}"));
+        }
 
         Ok(())
     });

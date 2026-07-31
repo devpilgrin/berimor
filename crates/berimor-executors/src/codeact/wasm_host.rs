@@ -667,6 +667,34 @@ mod tests {
         assert_eq!(result, json!(2));
     }
 
+    /// Найдено независимым ревью при закрытии TD3.2 (major): булев флаг
+    /// `finished_called` сам по себе не отличал «наше собственное
+    /// завершающее исключение из finish дошло до верха необработанным»
+    /// от «finish был перехвачен try/catch, а ПОЗЖЕ произошла
+    /// совершенно несвязанная необработанная ошибка» — второй случай
+    /// маскировался под успех со старым записанным значением. Теперь
+    /// сверяется, что РЕАЛЬНО пропагирующее исключение — буквально то
+    /// же значение, что записал `finish`.
+    #[test]
+    fn unrelated_error_after_a_caught_finish_is_a_real_failure_not_masked_success() {
+        let host = host(PanicIfCalledDispatch, AllowAll);
+        let err = host
+            .run(
+                GUEST_WASM,
+                &program(
+                    json!(null),
+                    "try { finish(1); } catch (e) {} null.someProp;",
+                ),
+                &WasmLimits::strong(),
+                &[],
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, WasmHostError::GuestFailed { .. }),
+            "несвязанная ошибка после перехваченного finish не должна маскироваться под успех: {err:?}"
+        );
+    }
+
     /// Техдолг TD3.1: раньше `host_call_tool` не сверял имя инструмента с
     /// `allowed_tools` вообще — только capability-гейт мог отказать (и
     /// только если он в принципе знал об этом конкретном инструменте).

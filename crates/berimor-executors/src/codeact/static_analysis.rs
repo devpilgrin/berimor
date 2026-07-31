@@ -228,6 +228,21 @@ impl<'a> Visit<'a> for ReferenceChecker<'_> {
             ));
             return;
         }
+        // Найдено независимым ревью при закрытии TD3.1 (minor): та же
+        // категория узлов, что и `this` — `new.target`/`import.meta`
+        // тоже отдельные узлы AST (`Expression::NewTarget`/`ImportMeta`),
+        // не `IdentifierReference`, и визитор их тоже не видел вообще.
+        // Ни один не даёт прямого пути к запрещённым глобалам сам по
+        // себе (эксплуатируемости не найдено), но той же логике «this не
+        // нужен процедурной программе» они подчиняются один в один —
+        // закрываем для консистентности, не дожидаясь, пока кто-то
+        // найдёт способ применения.
+        if matches!(it, Expression::NewTarget(_) | Expression::ImportMeta(_)) {
+            self.violation = Some(StaticAnalysisError::DisallowedIdentifier(
+                "new.target/import.meta".to_string(),
+            ));
+            return;
+        }
         // `call_tool('имя', args)` — имя инструмента передаётся строковым
         // ЛИТЕРАЛОМ, не идентификатором: `visit_identifier_reference`
         // выше его в принципе не видит (строки не идентификаторы-ссылки
@@ -329,6 +344,21 @@ mod tests {
         assert!(matches!(
             err,
             StaticAnalysisError::DisallowedIdentifier(name) if name == "this"
+        ));
+    }
+
+    /// Найдено независимым ревью при закрытии TD3.1 (minor): та же
+    /// категория непосещаемых узлов, что `this` — не встроенные
+    /// идентификаторы, а отдельные узлы AST.
+    #[test]
+    fn rejects_new_target_and_import_meta() {
+        assert!(matches!(
+            analyze("function f() { return new.target; } f()", &[]).unwrap_err(),
+            StaticAnalysisError::DisallowedIdentifier(_)
+        ));
+        assert!(matches!(
+            analyze("import.meta", &[]).unwrap_err(),
+            StaticAnalysisError::DisallowedIdentifier(_)
         ));
     }
 
