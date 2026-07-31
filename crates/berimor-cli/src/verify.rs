@@ -38,13 +38,13 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use sigstore::bundle::Bundle;
 use sigstore::bundle::verify::blocking::Verifier;
 use sigstore::bundle::verify::policy::{
     AllOf, GitHubWorkflowName, GitHubWorkflowRepository, OIDCIssuer, SingleX509ExtPolicy,
     VerificationPolicy,
 };
 use sigstore::bundle::verify::VerificationError;
+use sigstore::bundle::Bundle;
 use sigstore::errors::SigstoreError;
 
 const GITHUB_OIDC_ISSUER: &str = "https://token.actions.githubusercontent.com";
@@ -128,8 +128,7 @@ mod tests {
     use super::*;
 
     fn fixtures_dir() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/golden/signing")
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/golden/signing")
     }
 
     #[test]
@@ -175,14 +174,16 @@ mod tests {
         fs::write(&artifact, &original).unwrap();
         fs::copy(&valid_bundle, bundle_path_for(&artifact)).unwrap();
 
-        let err = verify_artifact(&artifact).expect_err("должен быть отказ на подменённом контенте");
+        let err =
+            verify_artifact(&artifact).expect_err("должен быть отказ на подменённом контенте");
         assert!(matches!(err, VerifyError::Verification(_)));
     }
 
     #[test]
     fn tampered_bundle_signature_bytes_fail() {
         let valid_artifact = fixtures_dir().join("RELEASE.txt");
-        let valid_bundle_json = fs::read_to_string(fixtures_dir().join("RELEASE.txt.sigstore.json")).unwrap();
+        let valid_bundle_json =
+            fs::read_to_string(fixtures_dir().join("RELEASE.txt.sigstore.json")).unwrap();
 
         let dir = tempdir();
         let artifact = dir.path().join("RELEASE.txt");
