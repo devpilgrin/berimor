@@ -282,6 +282,7 @@ impl AgentStepExecutor<'_> {
                 system_context: system_context.to_string(),
                 prompt,
                 contract_name: Some(AgentTurnDecision::NAME.into()),
+                expects_structured_output: true,
             })?;
 
             let outcome = pipeline::mediate::<AgentTurnDecision>(
@@ -391,6 +392,7 @@ impl AgentStepExecutor<'_> {
             system_context: system_context.to_string(),
             prompt,
             contract_name: Some(AgentVerdict::NAME.into()),
+            expects_structured_output: true,
         })?;
 
         let outcome = pipeline::mediate::<AgentVerdict>(

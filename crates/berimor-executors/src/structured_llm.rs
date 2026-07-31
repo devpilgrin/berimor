@@ -205,6 +205,7 @@ impl StructuredLlm<'_> {
                 system_context: system_context.clone(),
                 prompt,
                 contract_name: Some(adapter.name.to_string()),
+                expects_structured_output: true,
             })?;
 
             let rules = (adapter.policy_rules)();

@@ -142,6 +142,10 @@ impl CodeActExecutor<'_> {
                 system_context: system_context.clone(),
                 prompt,
                 contract_name: Some(adapter.name.to_string()),
+                // TD3.3: ответ модели — текст JS-программы, не JSON по
+                // контракту (контракт применяется позже, к результату
+                // исполнения программы, не к самому ответу).
+                expects_structured_output: false,
             })?;
 
             if let Err(violation) = static_analysis::analyze(

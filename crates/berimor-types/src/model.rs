@@ -47,6 +47,16 @@ pub struct CompletionRequest {
     pub system_context: String,
     pub prompt: String,
     pub contract_name: Option<String>,
+    /// Техдолг TD3.3 (`docs/audit-2026-07-31.md`): раньше HTTP-клиент
+    /// включал `response_format: json_object` по факту `contract_name.is_some()`
+    /// — но CodeAct тоже всегда передаёт `contract_name` (контракт
+    /// РЕЗУЛЬТАТА для последующей Mediation), хотя от модели ожидается
+    /// текст JS-программы, не JSON-объект. Явное поле, не выведенное из
+    /// `contract_name`: `true` — `StructuredLlm`/`AgentStep` (ответ
+    /// модели САМ — JSON по контракту), `false` — `CodeAct` (ответ —
+    /// исходный текст программы; контракт применяется ПОЗЖЕ, к
+    /// результату исполнения, не к самому ответу модели).
+    pub expects_structured_output: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

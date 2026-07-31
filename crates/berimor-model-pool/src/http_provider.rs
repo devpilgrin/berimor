@@ -24,6 +24,14 @@ use berimor_types::{
     executor::ModelProvider,
     model::{CompletionRequest, CompletionResponse, ModelError, ModelIdentity},
 };
+use std::time::Duration;
+
+/// Техдолг TD3.4 (`docs/audit-2026-07-31.md`): не документированный
+/// нигде в системе SLA, разумный дефолт — «есть хоть какой-то потолок»
+/// важнее точной цифры. Клиент блокирующий (`reqwest::blocking`),
+/// синхронный цикл `berimor run`: без таймаута зависший endpoint
+/// блокировал бы весь процесс навсегда.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Провайдер с OpenAI-совместимым HTTP API (`POST {base_url}/chat/completions`).
 /// Такой формат де-факто поддерживает большинство удалённых провайдеров и
@@ -46,6 +54,7 @@ impl OpenAiCompatibleProvider {
         allow_private_endpoint: bool,
     ) -> Result<Self, ModelError> {
         let client = reqwest::blocking::Client::builder()
+            .timeout(REQUEST_TIMEOUT)
             .build()
             .map_err(|err| {
                 ModelError::Unavailable(format!("не удалось собрать HTTP-клиент: {err}"))
@@ -135,8 +144,15 @@ impl ModelProvider for OpenAiCompatibleProvider {
             // ради воспроизводимости (replay по журналу, ideal-agent §3.11).
             temperature: 0.0,
             // Подсказка формата — только подсказка; валидирует ответ всё
-            // равно Mediation, не сервер и не этот клиент.
-            response_format: request.contract_name.as_ref().map(|_| ResponseFormat {
+            // равно Mediation, не сервер и не этот клиент. TD3.3: раньше
+            // включалось по `contract_name.is_some()` — но CodeAct тоже
+            // всегда передаёт `contract_name` (контракт результата, не
+            // формат самого ответа модели), из-за чего структурно не мог
+            // работать через реальный OpenAI-совместимый endpoint (сервер
+            // заставлял бы модель ответить JSON вместо JS-текста).
+            // Явное поле `expects_structured_output` — не вывод из
+            // `contract_name`.
+            response_format: request.expects_structured_output.then_some(ResponseFormat {
                 kind: "json_object",
             }),
         };
@@ -238,6 +254,7 @@ mod tests {
             system_context: "Ты — классификатор.".into(),
             prompt: "Классифицируй обращение.".into(),
             contract_name: Some("ClassificationOut".into()),
+            expects_structured_output: true,
         }
     }
 
@@ -267,6 +284,29 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&response.raw_text).unwrap();
         assert_eq!(parsed["category"], "card");
         assert_eq!(response.model.provider, "mock");
+    }
+
+    /// Техдолг TD3.3: `contract_name` присутствует (нужен Mediation
+    /// результата — CodeAct тоже его передаёт), но `expects_structured_output:
+    /// false` — сервер не должен получить `response_format`. Раньше поле
+    /// включалось по одному `contract_name.is_some()`, что делало CodeAct
+    /// структурно неработоспособным через реальный endpoint.
+    #[test]
+    fn expects_structured_output_false_omits_response_format_even_with_a_contract_name() {
+        let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
+        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true).unwrap();
+        let request = CompletionRequest {
+            expects_structured_output: false,
+            ..request()
+        };
+
+        provider.complete(request).unwrap();
+
+        let captured = server.join().unwrap();
+        assert!(
+            !captured.to_lowercase().contains("response_format"),
+            "CodeAct не должен получать response_format: {captured}"
+        );
     }
 
     #[test]
