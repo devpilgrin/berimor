@@ -168,3 +168,49 @@ fn eval_runs_every_scenario_and_prints_branch_coverage() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// `eval` обязан работать на эфемерном журнале, не на `config.storage_path`
+/// — два подряд запуска против одного и того же конфига не должны ни
+/// давать разные метрики, ни оставлять след в реальном журнале прогонов
+/// (найдено независимым ревью интеграции CLI-M1/M2/M3: до фикса
+/// `run_golden_set` копил события повторных eval-прогонов под одним и
+/// тем же детерминированным instance_id в общем `storage_path`).
+#[test]
+fn eval_does_not_pollute_the_real_run_journal_across_repeated_invocations() {
+    let dir = temp_dir("eval-no-pollution");
+    let config = write_config(&dir);
+    let golden_dir = dir.join("golden");
+    std::fs::create_dir_all(&golden_dir).unwrap();
+    std::fs::write(golden_dir.join("process.yaml"), SINGLE_TOOL_PROCESS).unwrap();
+    std::fs::write(
+        golden_dir.join("scenario-a.json"),
+        serde_json::to_string(&serde_json::json!({"user": {"id": "u-1"}})).unwrap(),
+    )
+    .unwrap();
+
+    let (ok1, stdout1, stderr1) = run_cli(&["eval", golden_dir.to_str().unwrap()], &config);
+    assert!(
+        ok1,
+        "первый eval обязан завершиться успехом:\n{stdout1}\n{stderr1}"
+    );
+    let (ok2, stdout2, stderr2) = run_cli(&["eval", golden_dir.to_str().unwrap()], &config);
+    assert!(
+        ok2,
+        "второй eval обязан завершиться успехом:\n{stdout2}\n{stderr2}"
+    );
+    assert_eq!(
+        stdout1, stdout2,
+        "повторный eval против того же config.toml обязан давать идентичный отчёт"
+    );
+
+    // Реальный журнал прогонов (тот же storage_path, что видит `run`)
+    // не должен знать об инстансах eval-сценариев вообще.
+    let (ok, stdout, stderr) = run_cli(&["trace", "single-tool::scenario-a"], &config);
+    assert!(ok, "trace обязан завершиться успехом:\n{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("не найден"),
+        "eval не должен писать в реальный журнал storage_path:\n{stdout}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -66,7 +66,19 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
     let process =
         parser::parse(&process_text).map_err(|err| ObserveError::ParseProcess(err.to_string()))?;
 
-    let storage = open_storage(config)?;
+    // Эфемерный журнал (не config.storage_path!): id инстанса сценария —
+    // "{процесс}::{сценарий}" (детерминированный, решает run_golden_set),
+    // без проверки уникальности. Указать eval на реальный журнал прогонов
+    // значило бы копить события повторных запусков под тем же id при
+    // каждой перезапуске eval против одного config.toml — метрики (доля
+    // веток/отказов) читались бы из объединённой истории всех прошлых
+    // прогонов eval, а не только текущего (найдено независимым ревью
+    // интеграции CLI-M1/M2/M3). Каждый вызов `eval` обязан начинать с
+    // чистого журнала.
+    let storage = SqliteEventLog::open_in_memory().map_err(|err| ObserveError::OpenStorage {
+        path: PathBuf::from(":memory:"),
+        reason: err.to_string(),
+    })?;
     let bundle = build_executor_bundle(config)?;
     let providers = bundle.providers();
     let memory_context = MemoryContextBuilder {

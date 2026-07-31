@@ -175,9 +175,15 @@ impl StructuredLlm<'_> {
             .ok_or_else(|| StructuredLlmError::ProviderNotWired(entry.identity.provider.clone()))?;
         let model_tier = entry.identity.tier;
 
+        // task_hint = step_id, не contract_name: только step_id реально
+        // журналируется (`EventKind::StepApplied{step_id}`) и потому
+        // присутствует в FTS-индексе, по которому ищет слой Session
+        // (`memory_builder::session_layer`) — имя контракта в журнал не
+        // попадает никогда, поиск по нему был бы декоративным (найдено
+        // независимым ревью интеграции CLI-M1/M2/M3).
         let layers = self
             .context
-            .build("llm_structured", model_tier, state, contract_name);
+            .build("llm_structured", model_tier, state, step_id);
         let system_context = layers
             .iter()
             .map(|l| format!("## {}\n{}", l.name, l.content))
@@ -358,6 +364,60 @@ mod tests {
         assert_eq!(patch.step_id, "classify");
         assert_eq!(patch.changes["risk"], 2);
         assert_eq!(patch.changes["category"], "card");
+    }
+
+    /// `task_hint` обязан быть `step_id`, не `contract_name` — только
+    /// `step_id` реально журналируется движком (`StepApplied{step_id}`),
+    /// значит только по нему слой Session (`memory_builder`) может
+    /// что-то найти в реальном журнале (найдено независимым ревью
+    /// интеграции CLI-M1/M2/M3, до этого теста было тихо декоративно).
+    struct RecordingContextBuilder {
+        seen_task_hint: Mutex<Option<String>>,
+    }
+
+    impl berimor_context_engine::ContextBuilder for RecordingContextBuilder {
+        fn build(
+            &self,
+            _step_kind: &str,
+            _tier: ModelTier,
+            _state: &Value,
+            task_hint: &str,
+        ) -> Vec<berimor_context_engine::ContextLayer> {
+            *self.seen_task_hint.lock().unwrap() = Some(task_hint.to_string());
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn context_builder_receives_step_id_as_task_hint_not_contract_name() {
+        let f = fixture(vec![
+            r#"{"category": "card", "risk": 2, "summary": "Вопрос по карте."}"#,
+        ]);
+        let context = RecordingContextBuilder {
+            seen_task_hint: Mutex::new(None),
+        };
+        let executor = StructuredLlm {
+            pool: &f.pool,
+            providers: &f.providers,
+            context: &context,
+            on_attempt: None,
+        };
+
+        executor
+            .execute(
+                "classify",
+                "ClassificationOut",
+                ModelTierRequirement::Any,
+                &json!({}),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(
+            context.seen_task_hint.lock().unwrap().as_deref(),
+            Some("classify"),
+            "task_hint обязан быть step_id ('classify'), не именем контракта"
+        );
     }
 
     #[test]

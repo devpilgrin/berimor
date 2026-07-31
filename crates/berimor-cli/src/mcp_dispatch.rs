@@ -115,6 +115,24 @@ impl McpToolDispatch {
     }
 }
 
+impl Drop for McpToolDispatch {
+    /// Без этого закрытие сессий полагалось бы на закрытие файловых
+    /// дескрипторов ОС при завершении процесса `berimor` и на то,
+    /// заметит ли внешний сервер EOF в stdin сам — случайная
+    /// корректность, не гарантия (найдено независимым ревью интеграции
+    /// CLI-M1/M2/M3). `McpClient::close()` асинхронный и требует `self`
+    /// по значению — `mem::take` вынимает клиентов из карты, чтобы
+    /// закрыть их через собственный рантайм до его собственного `Drop`.
+    fn drop(&mut self) {
+        let clients = std::mem::take(&mut self.clients);
+        self.runtime.block_on(async {
+            for (_, client) in clients {
+                let _ = client.close().await;
+            }
+        });
+    }
+}
+
 impl ToolDispatch for McpToolDispatch {
     fn call(&self, tool: &str, args: &Value) -> Result<Value, DispatchError> {
         let server_name = self.tool_to_server.get(tool).ok_or_else(|| DispatchError {
