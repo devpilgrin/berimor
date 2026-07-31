@@ -12,6 +12,8 @@
 
 use berimor_types::model::ModelTier;
 
+pub mod memory_builder;
+
 /// Слой контекста — единица сборки.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ContextLayer {
@@ -36,11 +38,19 @@ pub enum LayerKind {
 
 /// C1, маршрутизатор: класс задачи (тип шага) → набор слоёв. Правила —
 /// код, не модель (§3.5, I1). Для структурированного шага с моделью —
-/// системные правила и срез состояния; остальные слои отфильтрует
-/// сборщик, пока соответствующие слои памяти не реализованы.
+/// системные правила, срез состояния и слои Skills/Session (Фаза 6:
+/// процедурная и эпизодическая память). Personality/Project/Facts
+/// остаются вне списка — в системе нет источника профиля/арендатора и
+/// нет провайдера эмбеддингов (честный пробел, не забытая строка);
+/// добавление им места не требует менять порядок, только список.
 pub fn layers_for_step(step_kind: &str) -> Vec<LayerKind> {
     match step_kind {
-        "llm_structured" => vec![LayerKind::SystemRules, LayerKind::TaskState],
+        "llm_structured" => vec![
+            LayerKind::SystemRules,
+            LayerKind::Skills,
+            LayerKind::Session,
+            LayerKind::TaskState,
+        ],
         // У шагов без модели контекста для модели нет вовсе — не ошибка,
         // а следствие «если шаг не требует понимания текста — модели в
         // нём нет» (executors.md §2).
@@ -73,22 +83,46 @@ pub fn total_chars(layers: &[ContextLayer]) -> usize {
     layers.iter().map(|l| l.content.len()).sum()
 }
 
-/// `build(step, state) → context` — единственный путь чтения памяти в
-/// структурированных шагах (`memory-model.md` §3): у модели нет инструмента
-/// «сама поищи в памяти».
+/// `build(step, state, task_hint) → context` — единственный путь чтения
+/// памяти в структурированных шагах (`memory-model.md` §3): у модели нет
+/// инструмента «сама поищи в памяти». `task_hint` — короткий текстовый
+/// сигнал задачи (у вызывающего кода это обычно имя контракта/шага) —
+/// единственное, что нужно слою Session, чтобы искать релевантные прошлые
+/// сессии, не разбирая `state` эвристиками внутри построителя.
 pub trait ContextBuilder {
     fn build(
         &self,
         step_kind: &str,
         tier: ModelTier,
         state: &serde_json::Value,
+        task_hint: &str,
     ) -> Vec<ContextLayer>;
 }
 
-/// Минимальный построитель для Milestone 1: маршрутизатор + сборщик
-/// реальные, содержимое слоёв — то, что есть: системное правило шага и
-/// состояние целиком одним слоем (`docs/ROADMAP.md` §18.3 п.4 допускает
-/// именно это; полноценный срез по весам — за пределами milestone).
+/// Общая часть слоёв `SystemRules`/`TaskState`, одинаковая для
+/// [`SimpleContextBuilder`] и любого построителя, добавляющего слои
+/// памяти поверх — вынесена, чтобы не дублировать текст системного
+/// правила в двух местах.
+pub(crate) fn base_layer(kind: LayerKind, state: &serde_json::Value) -> Option<ContextLayer> {
+    match kind {
+        LayerKind::SystemRules => Some(ContextLayer {
+            name: "system_rules".into(),
+            content: "Отвечай строго JSON по схеме контракта. Без пояснений, без markdown.".into(),
+            weight: 1.0,
+        }),
+        LayerKind::TaskState => Some(ContextLayer {
+            name: "task_state".into(),
+            content: serde_json::to_string_pretty(state)
+                .expect("состояние процесса всегда сериализуемо"),
+            weight: 1.0,
+        }),
+        _ => None,
+    }
+}
+
+/// Минимальный построитель: маршрутизатор + сборщик реальные, но слоям
+/// памяти (Skills/Session) нечего наполнять без источника — используется
+/// там, где память не подключена (`docs/ROADMAP.md` §18.3 п.4).
 pub struct SimpleContextBuilder;
 
 impl ContextBuilder for SimpleContextBuilder {
@@ -97,28 +131,12 @@ impl ContextBuilder for SimpleContextBuilder {
         step_kind: &str,
         _tier: ModelTier,
         state: &serde_json::Value,
+        _task_hint: &str,
     ) -> Vec<ContextLayer> {
-        let mut available: Vec<(LayerKind, ContextLayer)> = Vec::new();
-        for kind in layers_for_step(step_kind) {
-            let layer = match kind {
-                LayerKind::SystemRules => ContextLayer {
-                    name: "system_rules".into(),
-                    content: "Отвечай строго JSON по схеме контракта. Без пояснений, без markdown."
-                        .into(),
-                    weight: 1.0,
-                },
-                LayerKind::TaskState => ContextLayer {
-                    name: "task_state".into(),
-                    content: serde_json::to_string_pretty(state)
-                        .expect("состояние процесса всегда сериализуемо"),
-                    weight: 1.0,
-                },
-                // Слои памяти — Фаза 6; маршрутизатор их уже перечисляет,
-                // здесь им просто нечего наполнять.
-                _ => continue,
-            };
-            available.push((kind, layer));
-        }
+        let available: Vec<(LayerKind, ContextLayer)> = layers_for_step(step_kind)
+            .into_iter()
+            .filter_map(|kind| base_layer(kind, state).map(|layer| (kind, layer)))
+            .collect();
         assemble(available)
     }
 }
@@ -139,7 +157,15 @@ mod tests {
     #[test]
     fn router_maps_structured_step_to_documented_layers() {
         let layers = layers_for_step("llm_structured");
-        assert_eq!(layers, vec![LayerKind::SystemRules, LayerKind::TaskState]);
+        assert_eq!(
+            layers,
+            vec![
+                LayerKind::SystemRules,
+                LayerKind::Skills,
+                LayerKind::Session,
+                LayerKind::TaskState,
+            ]
+        );
     }
 
     #[test]
@@ -170,8 +196,10 @@ mod tests {
     #[test]
     fn builder_returns_system_rules_and_full_state_as_layers() {
         let state = json!({"user": {"card_id": "c-1"}});
-        let layers = SimpleContextBuilder.build("llm_structured", ModelTier::Weak, &state);
+        let layers = SimpleContextBuilder.build("llm_structured", ModelTier::Weak, &state, "");
 
+        // Skills/Session перечислены маршрутизатором, но SimpleContextBuilder
+        // не умеет их наполнять — assemble() их молча опускает.
         assert_eq!(layers.len(), 2);
         assert_eq!(layers[0].name, "system_rules");
         assert_eq!(layers[1].name, "task_state");
@@ -180,7 +208,7 @@ mod tests {
 
     #[test]
     fn builder_gives_nothing_to_tool_steps() {
-        let layers = SimpleContextBuilder.build("tool", ModelTier::Weak, &json!({}));
+        let layers = SimpleContextBuilder.build("tool", ModelTier::Weak, &json!({}), "");
         assert!(layers.is_empty());
     }
 

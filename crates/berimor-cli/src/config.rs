@@ -62,6 +62,29 @@ pub struct ToolStub {
     pub response: serde_json::Value,
 }
 
+/// Настройки слоёв памяти в Context Engine (`MemoryContextBuilder`).
+/// Оба поля опциональны — без `skills_dir` слой Skills просто пуст, без
+/// изменения остального поведения (обратная совместимость с конфигом,
+/// в котором секции `[memory]` нет вовсе).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct MemoryConfig {
+    /// Директория с файлами навыков (`berimor_memory::procedural`
+    /// формат — YAML-фронтматтер + тело). Не задана — слой Skills пуст.
+    pub skills_dir: Option<PathBuf>,
+    /// Верхняя граница числа сессий в слое Session за один запрос.
+    pub session_search_limit: usize,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            skills_dir: None,
+            session_search_limit: 5,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -72,6 +95,7 @@ pub struct Config {
     pub update_channel: UpdateChannel,
     pub providers: Vec<ProviderConfig>,
     pub tool_stubs: Vec<ToolStub>,
+    pub memory: MemoryConfig,
 }
 
 impl Default for Config {
@@ -82,6 +106,7 @@ impl Default for Config {
             update_channel: UpdateChannel::Stable,
             providers: Vec::new(),
             tool_stubs: Vec::new(),
+            memory: MemoryConfig::default(),
         }
     }
 }

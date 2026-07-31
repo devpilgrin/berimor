@@ -7,5 +7,7 @@ description = "Маршрутизатор → сборщик → оценщик 
 
 [dependencies]
 berimor-types = { path = "../berimor-types" }
+berimor-memory = { path = "../berimor-memory" }
+berimor-storage = { path = "../berimor-storage" }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -13,6 +13,7 @@ path = "src/main.rs"
 berimor-capability = { path = "../berimor-capability" }
 berimor-context-engine = { path = "../berimor-context-engine" }
 berimor-executors = { path = "../berimor-executors" }
+berimor-memory = { path = "../berimor-memory" }
 berimor-model-pool = { path = "../berimor-model-pool" }
 berimor-process-engine = { path = "../berimor-process-engine" }
 berimor-secrets = { path = "../berimor-secrets" }

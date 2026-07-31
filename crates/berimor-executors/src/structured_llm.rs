@@ -175,7 +175,9 @@ impl StructuredLlm<'_> {
             .ok_or_else(|| StructuredLlmError::ProviderNotWired(entry.identity.provider.clone()))?;
         let model_tier = entry.identity.tier;
 
-        let layers = self.context.build("llm_structured", model_tier, state);
+        let layers = self
+            .context
+            .build("llm_structured", model_tier, state, contract_name);
         let system_context = layers
             .iter()
             .map(|l| format!("## {}\n{}", l.name, l.content))

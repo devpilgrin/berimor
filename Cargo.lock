@@ -138,6 +138,7 @@ dependencies = [
  "berimor-capability",
  "berimor-context-engine",
  "berimor-executors",
+ "berimor-memory",
  "berimor-model-pool",
  "berimor-process-engine",
  "berimor-secrets",
@@ -154,6 +155,8 @@ dependencies = [
 name = "berimor-context-engine"
 version = "0.6.0"
 dependencies = [
+ "berimor-memory",
+ "berimor-storage",
  "berimor-types",
  "serde",
  "serde_json",

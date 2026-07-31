@@ -10,7 +10,7 @@
 
 use crate::config::Config;
 use berimor_capability::confirm::{StandardCapability, ToolPolicy};
-use berimor_context_engine::SimpleContextBuilder;
+use berimor_context_engine::memory_builder::MemoryContextBuilder;
 use berimor_executors::{
     structured_llm::StructuredLlm,
     tool_only::{self, ConfirmationHandler, StaticToolDispatch},
@@ -186,10 +186,17 @@ pub fn run(
         ));
     };
 
+    let skills = load_skills(config.memory.skills_dir.as_deref());
+    let memory_context = MemoryContextBuilder {
+        episodic: &storage,
+        skills: &skills,
+        session_search_limit: config.memory.session_search_limit,
+    };
+
     let llm = StructuredLlm {
         pool: &pool,
         providers: &providers,
-        context: &SimpleContextBuilder,
+        context: &memory_context,
         on_attempt: Some(&on_attempt),
     };
 
@@ -355,6 +362,52 @@ fn interpolate(template: &str, state: &Value) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Читает `skills_dir` и разбирает каждый файл через `procedural::parse_summary`
+/// (только фронтматтер — тело навыку в контексте не нужно, §3
+/// memory-model.md). Обогащение контекста не критично для прогона:
+/// нечитаемая директория или неразбираемый файл — предупреждение в
+/// stderr и пропуск, не фатальная ошибка `run`.
+fn load_skills(
+    skills_dir: Option<&std::path::Path>,
+) -> Vec<berimor_memory::procedural::SkillSummary> {
+    let Some(dir) = skills_dir else {
+        return Vec::new();
+    };
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) => {
+            eprintln!(
+                "[berimor] не удалось прочитать директорию навыков {}: {err}",
+                dir.display()
+            );
+            return Vec::new();
+        }
+    };
+
+    let mut skills = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(err) => {
+                eprintln!(
+                    "[berimor] навык {}: не удалось прочитать: {err}",
+                    path.display()
+                );
+                continue;
+            }
+        };
+        match berimor_memory::procedural::parse_summary(&raw) {
+            Ok(summary) => skills.push(summary),
+            Err(err) => eprintln!("[berimor] навык {}: не разобран: {err}", path.display()),
+        }
+    }
+    skills
 }
 
 fn new_instance_id(process_text: &str) -> String {
