@@ -1,0 +1,7 @@
+# Golden-фикстуры подписи (D2) сверяются побайтово с криптографическим
+# дайджестом внутри бандла — конвертация LF→CRLF при чекауте на Windows
+# (git core.autocrlf=true по умолчанию на windows-latest раннерах)
+# меняет содержимое файла и ломает верификацию: обнаружено на реальном
+# CI-прогоне (Rust · windows-latest, verify::tests::valid_fixture_verifies
+# упал с PublicKeyVerificationError — дайджест не совпал).
+fixtures/golden/signing/** -text
