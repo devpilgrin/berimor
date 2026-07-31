@@ -1,0 +1,13 @@
+# Минимальный процесс для E9 (AgentStep): один свободный ход-вызов
+# инструмента, затем Finish с результатом по контракту SupportReply —
+# используется tests/agent_step_cli.rs.
+process: agent-step-support
+version: 1
+steps:
+  - id: answer
+    type: agent_step
+    contract: SupportReply
+    max_turns: 5
+limits:
+  max_steps: 20
+  timeout: 1m

@@ -13,6 +13,7 @@ use crate::mcp_dispatch::{CompositeToolDispatch, McpToolDispatch};
 use berimor_capability::confirm::{StandardCapability, ToolPolicy};
 use berimor_context_engine::memory_builder::MemoryContextBuilder;
 use berimor_executors::{
+    agent_step::AgentStepExecutor,
     structured_llm::StructuredLlm,
     tool_only::{self, ConfirmationHandler, StaticToolDispatch, ToolDispatch},
 };
@@ -136,12 +137,24 @@ pub fn run(
         on_attempt: Some(&on_attempt),
     };
 
+    let agent_step = AgentStepExecutor {
+        pool: &bundle.pool,
+        providers: &providers,
+        context: &memory_context,
+        on_attempt: Some(&on_attempt),
+        gate: &bundle.gate,
+        mode: config.confirmation_mode,
+        confirmer: &bundle.confirmer,
+        dispatch: &bundle.dispatch,
+    };
+
     let executor = CliExecutor {
         gate: &bundle.gate,
         mode: config.confirmation_mode,
         confirmer: &bundle.confirmer,
         dispatch: &bundle.dispatch,
         llm: &llm,
+        agent_step: &agent_step,
         latency_budget_ms: instance.process.limits.latency_budget_ms,
     };
 
@@ -303,9 +316,11 @@ pub(crate) struct CliExecutor<'a> {
     pub(crate) confirmer: &'a TerminalConfirmer,
     pub(crate) dispatch: &'a dyn ToolDispatch,
     pub(crate) llm: &'a StructuredLlm<'a>,
+    pub(crate) agent_step: &'a AgentStepExecutor<'a>,
     /// `ProcessLimits.latency_budget_ms` (P6, ADR-0011) — SLA отбора
-    /// провайдера на КАЖДОМ `llm_structured`-шаге, не убывающий бюджет
-    /// цикла: то же значение передаётся в каждый вызов `llm.execute`.
+    /// провайдера на КАЖДОМ `llm_structured`/`agent_step`-ходе, не
+    /// убывающий бюджет цикла: то же значение передаётся в каждый
+    /// вызов `llm.execute`/`agent_step.execute`.
     pub(crate) latency_budget_ms: Option<u64>,
 }
 
@@ -339,10 +354,30 @@ impl engine::StepExecutor for CliExecutor<'_> {
                     step_id: step.id.clone(),
                     reason: err.to_string(),
                 }),
+            StepKind::AgentStep {
+                contract,
+                max_turns,
+                self_critique,
+                verify_actions,
+            } => self
+                .agent_step
+                .execute(
+                    &step.id,
+                    contract,
+                    *max_turns,
+                    *self_critique,
+                    *verify_actions,
+                    state,
+                    self.latency_budget_ms,
+                )
+                .map_err(|err| ExecutorError {
+                    step_id: step.id.clone(),
+                    reason: err.to_string(),
+                }),
             other => Err(ExecutorError {
                 step_id: step.id.clone(),
                 reason: format!(
-                    "тип шага не поддержан в Milestone 1 (поддержаны: tool, llm_structured): {other:?}"
+                    "тип шага не поддержан в Milestone 1 (поддержаны: tool, llm_structured, agent_step): {other:?}"
                 ),
             }),
         }

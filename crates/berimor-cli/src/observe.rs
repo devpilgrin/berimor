@@ -11,7 +11,7 @@
 use crate::config::Config;
 use crate::run::{build_executor_bundle, CliExecutor, RunError};
 use berimor_context_engine::memory_builder::MemoryContextBuilder;
-use berimor_executors::structured_llm::StructuredLlm;
+use berimor_executors::{agent_step::AgentStepExecutor, structured_llm::StructuredLlm};
 use berimor_process_engine::{engine, parser};
 use berimor_storage::{SqliteEventLog, StorageError};
 use berimor_types::event::ProcessInstanceId;
@@ -98,10 +98,21 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         context: &memory_context,
         on_attempt: None,
     };
+    let agent_step = AgentStepExecutor {
+        pool: &bundle.pool,
+        providers: &providers,
+        context: &memory_context,
+        on_attempt: None,
+        gate: &bundle.gate,
+        mode: config.confirmation_mode,
+        confirmer: &bundle.confirmer,
+        dispatch: &bundle.dispatch,
+    };
     let executor = CliExecutor {
         gate: &bundle.gate,
         mode: config.confirmation_mode,
         confirmer: &bundle.confirmer,
+        agent_step: &agent_step,
         dispatch: &bundle.dispatch,
         llm: &llm,
         latency_budget_ms: process.limits.latency_budget_ms,
