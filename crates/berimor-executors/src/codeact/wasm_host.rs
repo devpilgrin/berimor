@@ -2,102 +2,140 @@
 //!
 //! Источник: `docs/arch/executors.md` §4, `ADR-0022` (структурная изоляция
 //! через WASM, а не списковая), `docs/arch/stack.md` §4. ROADMAP:
-//! **E6 — сделано** (этот модуль): встраивание Wasmtime как хоста —
-//! компиляция/инстанцирование гостевого WASM-модуля, вызов его
-//! экспортированной точки входа, host-функция `call_tool` как стаб
-//! инструмента, проведённая через тот же `tool_only::dispatch_confirmed`,
-//! что `ToolOnly`/`AgentStep` (capability-гейт не обходится,
-//! `executors.md` §7).
-//!
-//! Осознанно НЕ входит в E6 (следующие задачи ROADMAP §9):
-//! - **E7** (сделано, `super::static_analysis`) — белый список
-//!   идентификаторов над ТЕКСТОМ программы, ДО компиляции. Этот модуль
-//!   исполняет ЛЮБОЙ корректный WASM-модуль, поданный в
-//!   [`WasmHost::run`] — не только «программу на ограниченном
-//!   подмножестве JS», и НЕ вызывает `static_analysis::analyze`
-//!   изнутри: это два независимых, композируемых барьера
-//!   (`ADR-0022`), не один встроенный в другой; связывающий их код —
-//!   у вызывающей стороны (задача E8).
-//! - Реальный JS-движок (`stack.md` §4: встроенный QuickJS,
-//!   компилируемый в WASM) — тоже НЕ входит ни в E6, ни в E7 буквально:
-//!   ни одна строка ROADMAP §9 не называет эту работу явно. `analyze()`
-//!   проверяет ТЕКСТ JS-программы; [`WasmHost::run`] исполняет уже
-//!   ГОТОВЫЙ WASM. Компиляция проверенного JS в то, что реально запустит
-//!   `WasmHost` — честно не закрытый пробел, не задача какой-то одной
-//!   уже существующей строки ROADMAP; понадобится либо в рамках E8, либо
-//!   отдельной задачей — решать при подключении `StepKind::CodeAct`.
-//! - **E8** — лимиты песочницы (топливо/память/число вызовов host-функции
-//!   за прогон) и проводка результата через Mediation в `Patch`.
-//!   [`WasmHost::run`] НЕ ограничивает время/память исполнения гостя —
-//!   тот же класс честно не закрытого пробела, что `ProcessLimits.token_budget`
-//!   (P6) и бюджет токенов `AgentStep` (E9) до появления реального
-//!   прерывателя. Тестовые WAT-фикстуры этого модуля — авторские и
-//!   заведомо не зацикливаются.
-//! - `StepKind::CodeAct` не подключён к `CliExecutor` — подключать пока
-//!   нечего целиком (нет лимитов, нет проводки результата через
-//!   Mediation, нет компиляции проверенного JS в WASM) — это задача E8.
+//! **E6 — сделано** (этот модуль): встраивание Wasmtime как хоста.
+//! **E7 — сделано** (`super::static_analysis`): белый список
+//! идентификаторов над ТЕКСТОМ программы, ДО компиляции — независимый,
+//! композируемый барьер (`ADR-0022`), не вызывается отсюда.
+//! **E8 — сделано** (этот модуль): лимиты песочницы (топливо/память/число
+//! вызовов host-функции), реальный гость на QuickJS
+//! (`codeact-guest/`, `assets/codeact-guest.wasm`, коммитится собранным
+//! — см. `codeact-guest/README.md`).
 //!
 //! ## ABI хост↔гость
 //!
-//! Внутренний протокол ЭТОЙ задачи, не финальный провод CodeAct — у гостя
-//! нет `alloc`, вместо этого фиксированное соглашение об адресах в его
-//! линейной памяти (гость сам решает, что там лежит статически, при
-//! написании/компиляции гостевого модуля):
+//! **Пересмотрен целиком в E8** — прежний протокол (пользовательские
+//! смещения линейной памяти `INPUT_OFFSET`/`OUTPUT_OFFSET`, придуманные
+//! для рукописных WAT-фикстур E6/E7) был явно провизорным («не
+//! обещание совместимости»); реальному гостю на WASI (`rquickjs` тянет
+//! wasi-libc) он не подходит — заменён на идиоматичный для
+//! `wasm32-wasip1` command-модуль:
 //!
-//! - [`INPUT_OFFSET`] (байт 0) — куда хост пишет JSON входа ПЕРЕД вызовом
-//!   `run`.
-//! - [`OUTPUT_OFFSET`] (байт 4096) — откуда хост читает JSON результата
-//!   ПОСЛЕ вызова `run`.
-//! - Экспорт `run(input_len: i32, out_cap: i32) -> i32` — гость читает
-//!   `input_len` байт входа с [`INPUT_OFFSET`], пишет результат (не более
-//!   `out_cap` байт) на [`OUTPUT_OFFSET`], возвращает РЕАЛЬНУЮ длину
-//!   результата. Если она больше `out_cap` — хост трактует это как
-//!   усечение ([`WasmHostError::Truncated`]) и не читает память вовсе
-//!   (не читает мусор за пределами того, что гость подтвердил как
-//!   записанное).
-//! - Импорт `env.call_tool(tool_ptr, tool_len, args_ptr, args_len, out_ptr,
-//!   out_cap) -> i32` — гость сам выбирает адреса (это его собственная
-//!   память, он вызывающая сторона); хост читает имя инструмента и JSON
-//!   аргументов, вызывает `tool_only::dispatch_confirmed`, пишет ответ как
-//!   `{"ok": true, "value": ...}` или `{"ok": false, "error": ...}` —
-//!   ОБА пути (отказ capability-гейта/подтверждения и сбой самого
-//!   инструмента) идут этим каналом, не трапом. В отличие от `AgentStep`
-//!   (E9), где отказ capability-слоя терминален на уровне
-//!   Rust-исполнителя (останавливает цикл), а сбой самого инструмента —
-//!   нет: здесь host-функция не решает за гостя, что терминально, а что
-//!   нет — оба исхода одинаково нетерминальны НА ГРАНИЦЕ хоста, решение
-//!   «что делать дальше» целиком у гостевой программы (E7 может дать ей
-//!   средства различать их по содержимому `"error"`). Гейт при этом не
-//!   обходится и не «протухает» в разрешение — отрабатывает заново на
-//!   каждый вызов, независимо от предыдущих. Возвращает длину так же,
-//!   как `run` — с усечением по
-//!   тому же принципу. Отдельный сентинел `-1` — не про итог вызова
-//!   инструмента, а про то, что ХОСТ не смог прочитать память гостя по
-//!   переданным `ptr`/`len` (испорченный указатель со стороны гостя).
+//! - Гость — обычный WASI Preview1 "command" (`fn main()`, экспорт
+//!   `_start`). Хост настраивает `WasiCtx` с `stdin` =
+//!   `MemoryInputPipe(JSON входа)`, `stdout`/`stderr` =
+//!   `MemoryOutputPipe`, вызывает `_start`, читает результат из
+//!   захваченного stdout (успех) или stderr (отказ) — не из
+//!   произвольных смещений памяти, которыми хост более не управляет
+//!   напрямую.
+//! - `env.call_tool(tool_ptr, tool_len, args_ptr, args_len, out_ptr,
+//!   out_cap) -> i32` — ЕДИНСТВЕННОЕ, что осталось от прежнего
+//!   протокола: синхронный callback посреди исполнения (для него stdio
+//!   не годится — программа зовёт стаб инструмента в произвольной
+//!   точке, не только в начале/конце). Семантика не изменилась: гость
+//!   сам выбирает адреса в СВОЕЙ памяти, усечение — по возвращённой
+//!   длине, `-1` — сентинел «хост не смог прочитать/записать по этим
+//!   адресам» (порча указателя), НЕ про итог самого вызова инструмента.
+//!   Отказ capability-гейта, сбой инструмента И исчерпание лимита
+//!   вызовов (см. ниже) — все три идут ОДНИМ каналом, JSON-конвертом
+//!   `{"ok": true, "value": ...}` / `{"ok": false, "error": ...}`, не
+//!   `-1`: у хоста есть что сообщить гостю по существу, это не порча
+//!   памяти.
 //!
-//! E7, встраивая реальный JS-движок со своим C ABI, может пересмотреть
-//! этот протокол целиком — это не обещание совместимости.
+//! Различение успеха/отказа ВСЕГО прогона — по коду выхода `_start`
+//! (WASI `proc_exit`, `wasmtime_wasi::I32Exit`), не по содержимому
+//! stdout: `0` — гость вызвал `finish(result)`, stdout содержит JSON
+//! `result`; иначе — стандартный отказ (`finish` не вызван,
+//! необработанное исключение JS, невалидный вход), stderr содержит
+//! читаемое сообщение (для JS-исключений — реальный текст, через
+//! `ctx.catch()`, не просто факт исключения — см. `codeact-guest/src/main.rs`).
+//!
+//! ## Лимиты песочницы (E8, `executors.md` §4.2: «детерминированные прерыватели»)
+//!
+//! Три независимых предела, [`WasmLimits`]:
+//! - **Топливо** (`fuel`) — `wasmtime` fuel-метрика (ADR-0022: «метрика
+//!   топлива, а не wall-clock» — детерминированный лимит по числу
+//!   инструкций). Исчерпание — трап при вызове `_start`.
+//! - **Память** (`memory_bytes`) — потолок роста линейной памяти гостя
+//!   через `wasmtime::StoreLimits`. Независим от собственного лимита
+//!   кучи QuickJS внутри гостя (`codeact-guest`) — второй, более
+//!   строгий рубеж на уровне движка JS, не единственная линия обороны.
+//! - **Число вызовов инструмента** (`max_tool_calls`) — счётчик в
+//!   `HostState`, инкрементируется в `host_call_tool`. Исчерпание НЕ
+//!   обрывает исполнение гостя трапом — программа получает обычный
+//!   отказ `{"ok": false, "error": "..."}"` тем же каналом, что и
+//!   отказ capability-гейта/сбой инструмента (грациозная деградация:
+//!   программа может доработать с тем, что уже получила, или сама
+//!   решить остановиться — `finish`/исключение); что становится
+//!   недоступно детерминированно — дальнейшие ЭФФЕКТЫ через
+//!   инструменты, не сам факт исполнения WASM.
+//!
+//! WASI подключается (в отличие от исходного решения E6 — «WASI не
+//! подключается вообще», пересмотрено здесь по необходимости: гостю на
+//! `rquickjs`/wasi-libc нужен минимум окружения — аллокатор, стандартный
+//! ввод/вывод) с ПУСТЫМ `WasiCtx`: без `inherit_stdio`/`inherit_env`,
+//! без `preopened_dir`, без сети — deny-by-default. Та же гарантия «нет
+//! ambient-доступа к ОС/сети», другой механизм: не полное отсутствие
+//! WASI-рантайма (было — `Linker` не регистрировал ничего кроме
+//! `call_tool`), а WASI-рантайм с пустыми правами (`WasiCtxBuilder::new()`
+//! без единого гранта, кроме явно заданных `stdin`/`stdout`/`stderr` —
+//! памятных pipe, не файлов/сети).
 
 use crate::tool_only::{self, ConfirmationHandler, ToolDispatch};
 use berimor_capability::CapabilityGate;
 use berimor_types::capability::ConfirmationMode;
 use serde_json::Value;
 use std::sync::Arc;
-use wasmtime::{Caller, Engine, Linker, Memory, Module, Store, TypedFunc};
+use wasmtime::{
+    Caller, Config, Engine, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder,
+};
+use wasmtime_wasi::p1::{self, WasiP1Ctx};
+use wasmtime_wasi::p2::pipe::{MemoryInputPipe, MemoryOutputPipe};
+use wasmtime_wasi::{I32Exit, WasiCtxBuilder};
 
-/// Смещение в линейной памяти гостя, куда хост пишет JSON входа перед
-/// вызовом `run` (см. doc-комментарий модуля — «ABI хост↔гость»).
-pub const INPUT_OFFSET: usize = 0;
+/// Ёмкость захваченного stdout гостя — верхняя граница размера JSON
+/// результата ОДНОГО прогона CodeAct. Не тот же лимит, что
+/// `call_tool`-ответы (те ограничены `CALL_TOOL_RESPONSE_CAP` внутри
+/// `codeact-guest`) — независимые буферы разного назначения.
+const STDOUT_CAPACITY_BYTES: usize = 1024 * 1024;
+const STDERR_CAPACITY_BYTES: usize = 64 * 1024;
 
-/// Смещение в линейной памяти гостя, откуда хост читает JSON результата
-/// после вызова `run` (см. doc-комментарий модуля — «ABI хост↔гость»).
-pub const OUTPUT_OFFSET: usize = 4096;
+/// Три независимых предела песочницы — см. doc-комментарий модуля.
+/// Значения — обоснованный, но не выведенный из спецификации выбор
+/// (`executors.md` §4.3 говорит «уменьшенный лимит» для среднего класса
+/// моделей, не называет чисел) — тот же класс решения, что
+/// `MAX_ATTEMPTS = 3` у `StructuredLlm`.
+#[derive(Debug, Clone, Copy)]
+pub struct WasmLimits {
+    pub fuel: u64,
+    pub memory_bytes: usize,
+    pub max_tool_calls: u32,
+}
 
-/// Ёмкость буфера результата, которую хост сообщает гостю через `out_cap`
-/// параметр `run` — весь остаток первой страницы линейной памяти после
-/// [`OUTPUT_OFFSET`]. Единственная страница (64 КиБ) — минимум, который
-/// требует WASM MVP; тестовые фикстуры этой задачи меньше на порядки.
-const WASM_PAGE_SIZE: usize = 65536;
+impl WasmLimits {
+    /// Полный бюджет — для сильного класса моделей (`executors.md`
+    /// §4.3: «полный CodeAct»).
+    pub fn strong() -> Self {
+        Self {
+            fuel: 500_000_000,
+            memory_bytes: 64 * 1024 * 1024,
+            max_tool_calls: 32,
+        }
+    }
+
+    /// Уменьшенный бюджет — для среднего/слабого класса
+    /// (`executors.md` §4.3: «CodeAct с уменьшенным лимитом»). Допуск
+    /// «слабый — только с явным разрешением в процессе» этот модуль НЕ
+    /// проверяет — в системе нет понятия «явное разрешение в процессе»
+    /// ни для одного шага; честно не закрытый пробел, тот же класс, что
+    /// нереализованный `capability_ceiling` у `AgentStep` (E9).
+    pub fn reduced() -> Self {
+        Self {
+            fuel: 100_000_000,
+            memory_bytes: 16 * 1024 * 1024,
+            max_tool_calls: 8,
+        }
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum WasmHostError {
@@ -115,47 +153,45 @@ pub enum WasmHostError {
     InvalidUtf8,
     #[error("гость вернул невалидный JSON: {0}")]
     InvalidJson(String),
-    #[error("результат гостя ({needed} байт) не поместился в буфер хоста ({cap} байт)")]
-    Truncated { needed: i32, cap: i32 },
+    #[error("гость завершился с кодом {code}: {message}")]
+    GuestFailed { code: i32, message: String },
 }
 
-/// Состояние `Store` — то, что нужно host-функциям, зарегистрированным в
-/// `Linker`, чтобы дойти до `tool_only::dispatch_confirmed`. Держит
-/// `Arc`, а не заимствование (`&'a dyn Trait`, как у прочих исполнителей
-/// — `tool_only.rs`/`agent_step.rs`) — не стилистический выбор:
-/// замыкания, зарегистрированные в `wasmtime::Linker::func_wrap`, обязаны
-/// быть `'static` (`Store`/`Linker` могут пережить конкретный вызов
-/// `WasmHost::run`), а заимствование с произвольным временем жизни этому
-/// требованию не удовлетворяет. `Arc`-обёртка на границе встраивания
-/// хоста — устоявшийся паттерн `wasmtime`, не изобретение этой задачи.
+/// Состояние `Store`. Держит `Arc<dyn Trait + Send + Sync>`, а не
+/// заимствование (`&'a dyn Trait`, как у прочих исполнителей) — не
+/// стилистический выбор: замыкания в `wasmtime::Linker::func_wrap`
+/// обязаны быть `'static`, а `wasmtime_wasi::p1::add_to_linker_sync`
+/// прямо требует `T: Send + 'static` — граница жёстче, чем была на
+/// момент E6 (тогда WASI не подключался и `Send`/`Sync` компилятору не
+/// требовались; теперь требуются реально, не по осторожности).
 struct HostState {
-    dispatch: Arc<dyn ToolDispatch>,
-    gate: Arc<dyn CapabilityGate>,
+    wasi: WasiP1Ctx,
+    limits: StoreLimits,
+    dispatch: Arc<dyn ToolDispatch + Send + Sync>,
+    gate: Arc<dyn CapabilityGate + Send + Sync>,
     mode: ConfirmationMode,
-    confirmer: Arc<dyn ConfirmationHandler>,
+    confirmer: Arc<dyn ConfirmationHandler + Send + Sync>,
+    tool_calls_made: u32,
+    max_tool_calls: u32,
 }
 
-/// Хост Wasmtime: компилирует и исполняет один гостевой WASM-модуль за
-/// вызов [`WasmHost::run`], с `call_tool` как host-функцией-стабом
-/// инструмента. Никакой WASI-рантайм не подключается — `Linker`
-/// регистрирует ровно одну явно определённую host-функцию, ничего
-/// больше; гостевой модуль, попытавшийся импортировать что-то ещё (в
-/// том числе что угодно из `wasi_snapshot_preview1`), не слинкуется —
-/// это и есть «нет ambient-доступа к ОС/сети» структурно, а не через
-/// выключенные права внутри WASI-контекста.
+/// Хост Wasmtime: компилирует и исполняет один гостевой WASM-модуль
+/// (WASI Preview1 command) за вызов [`WasmHost::run`], с `call_tool`
+/// как host-функцией-стабом инструмента и WASI, ограниченным пустым
+/// `WasiCtx` (см. doc-комментарий модуля).
 pub struct WasmHost {
-    dispatch: Arc<dyn ToolDispatch>,
-    gate: Arc<dyn CapabilityGate>,
+    dispatch: Arc<dyn ToolDispatch + Send + Sync>,
+    gate: Arc<dyn CapabilityGate + Send + Sync>,
     mode: ConfirmationMode,
-    confirmer: Arc<dyn ConfirmationHandler>,
+    confirmer: Arc<dyn ConfirmationHandler + Send + Sync>,
 }
 
 impl WasmHost {
     pub fn new(
-        dispatch: Arc<dyn ToolDispatch>,
-        gate: Arc<dyn CapabilityGate>,
+        dispatch: Arc<dyn ToolDispatch + Send + Sync>,
+        gate: Arc<dyn CapabilityGate + Send + Sync>,
         mode: ConfirmationMode,
-        confirmer: Arc<dyn ConfirmationHandler>,
+        confirmer: Arc<dyn ConfirmationHandler + Send + Sync>,
     ) -> Self {
         Self {
             dispatch,
@@ -165,88 +201,104 @@ impl WasmHost {
         }
     }
 
-    /// Компилирует `wasm` (бинарный WASM или WAT-текст — `wasmtime`
-    /// определяет формат автоматически), пишет `input` на
-    /// [`INPUT_OFFSET`], вызывает экспортированную `run`, читает результат
-    /// с [`OUTPUT_OFFSET`]. См. doc-комментарий модуля — полный ABI.
-    pub fn run(&self, wasm: &[u8], input: &Value) -> Result<Value, WasmHostError> {
-        let engine = Engine::default();
+    /// Компилирует `wasm` (WASI Preview1 command-модуль — бинарный WASM
+    /// или WAT-текст, `wasmtime` определяет формат автоматически),
+    /// пишет `input` в stdin гостя, вызывает `_start`, читает результат
+    /// из stdout (успех) или stderr (отказ). `limits` — см.
+    /// [`WasmLimits`]. Полный ABI — doc-комментарий модуля.
+    pub fn run(
+        &self,
+        wasm: &[u8],
+        input: &Value,
+        limits: &WasmLimits,
+    ) -> Result<Value, WasmHostError> {
+        let mut config = Config::new();
+        config.consume_fuel(true);
+        let engine = Engine::new(&config).map_err(|err| WasmHostError::Compile(err.to_string()))?;
         let module =
             Module::new(&engine, wasm).map_err(|err| WasmHostError::Compile(err.to_string()))?;
 
         let mut linker: Linker<HostState> = Linker::new(&engine);
+        p1::add_to_linker_sync(&mut linker, |state: &mut HostState| &mut state.wasi)
+            .map_err(|err| WasmHostError::Instantiate(err.to_string()))?;
         linker
             .func_wrap("env", "call_tool", host_call_tool)
             .map_err(|err| WasmHostError::Instantiate(err.to_string()))?;
 
+        let input_bytes =
+            serde_json::to_vec(input).map_err(|err| WasmHostError::InvalidJson(err.to_string()))?;
+        let stdout = MemoryOutputPipe::new(STDOUT_CAPACITY_BYTES);
+        let stderr = MemoryOutputPipe::new(STDERR_CAPACITY_BYTES);
+
+        // Deny-by-default: ни inherit_stdio/inherit_env/args, ни
+        // preopened_dir, ни сеть — единственное, что гость получает,
+        // это память-pipe'ы, которые хост сам сюда положил.
+        let wasi = WasiCtxBuilder::new()
+            .stdin(MemoryInputPipe::new(input_bytes))
+            .stdout(stdout.clone())
+            .stderr(stderr.clone())
+            .build_p1();
+
+        let store_limits = StoreLimitsBuilder::new()
+            .memory_size(limits.memory_bytes)
+            .build();
+
         let mut store = Store::new(
             &engine,
             HostState {
+                wasi,
+                limits: store_limits,
                 dispatch: Arc::clone(&self.dispatch),
                 gate: Arc::clone(&self.gate),
                 mode: self.mode,
                 confirmer: Arc::clone(&self.confirmer),
+                tool_calls_made: 0,
+                max_tool_calls: limits.max_tool_calls,
             },
         );
+        store.limiter(|state| &mut state.limits);
+        store
+            .set_fuel(limits.fuel)
+            .map_err(|err| WasmHostError::Compile(err.to_string()))?;
 
         let instance = linker
             .instantiate(&mut store, &module)
             .map_err(|err| WasmHostError::Instantiate(err.to_string()))?;
+        let start = instance
+            .get_typed_func::<(), ()>(&mut store, "_start")
+            .map_err(|err| WasmHostError::MissingExport(format!("_start: {err}")))?;
 
-        let memory = instance
-            .get_memory(&mut store, "memory")
-            .ok_or_else(|| WasmHostError::MissingExport("memory".to_string()))?;
-
-        let input_bytes =
-            serde_json::to_vec(input).map_err(|err| WasmHostError::InvalidJson(err.to_string()))?;
-        memory
-            .write(&mut store, INPUT_OFFSET, &input_bytes)
-            .map_err(|err| WasmHostError::MemoryAccess(err.to_string()))?;
-
-        let run_fn: TypedFunc<(i32, i32), i32> = instance
-            .get_typed_func(&mut store, "run")
-            .map_err(|err| WasmHostError::MissingExport(format!("run: {err}")))?;
-
-        let out_cap = (WASM_PAGE_SIZE - OUTPUT_OFFSET) as i32;
-        let written = run_fn
-            .call(&mut store, (input_bytes.len() as i32, out_cap))
-            .map_err(|err| WasmHostError::Trap(err.to_string()))?;
-
-        if written < 0 {
-            return Err(WasmHostError::Trap(format!(
-                "гость вернул отрицательную длину результата: {written}"
-            )));
+        match start.call(&mut store, ()) {
+            Ok(()) => read_result(&stdout),
+            Err(err) => match err.downcast::<I32Exit>() {
+                Ok(exit) if exit.0 == 0 => read_result(&stdout),
+                Ok(exit) => Err(WasmHostError::GuestFailed {
+                    code: exit.0,
+                    message: read_text(&stderr),
+                }),
+                Err(err) => Err(WasmHostError::Trap(err.to_string())),
+            },
         }
-        if written > out_cap {
-            return Err(WasmHostError::Truncated {
-                needed: written,
-                cap: out_cap,
-            });
-        }
-
-        let mut buf = vec![0u8; written as usize];
-        memory
-            .read(&store, OUTPUT_OFFSET, &mut buf)
-            .map_err(|err| WasmHostError::MemoryAccess(err.to_string()))?;
-
-        let text = String::from_utf8(buf).map_err(|_| WasmHostError::InvalidUtf8)?;
-        serde_json::from_str(&text).map_err(|err| WasmHostError::InvalidJson(err.to_string()))
     }
 }
 
+fn read_result(pipe: &MemoryOutputPipe) -> Result<Value, WasmHostError> {
+    let bytes = pipe.contents();
+    let text = std::str::from_utf8(&bytes).map_err(|_| WasmHostError::InvalidUtf8)?;
+    serde_json::from_str(text).map_err(|err| WasmHostError::InvalidJson(err.to_string()))
+}
+
+fn read_text(pipe: &MemoryOutputPipe) -> String {
+    String::from_utf8_lossy(&pipe.contents()).into_owned()
+}
+
 /// Читает `len` байт по `ptr` из линейной памяти гостя. `None`, если
-/// указатель/длина некорректны или выходят за пределы памяти — вызывающий
-/// код трактует это как порчу со стороны гостя, не как трап.
-///
-/// Проверяет `ptr + len` против реального размера памяти гостя ДО
-/// аллокации буфера — независимого ревью нашло, что аллокация
-/// `vec![0u8; len]` для необоснованного `len` (гость волен передать
-/// вплоть до `i32::MAX`, независимо от того, что его собственная память
-/// — одна страница в 64 КиБ) до вызова `memory.read` (единственного
-/// места, которое реально делает bounds-check) — host-side вектор
-/// исчерпания памяти: не тот же класс пробела, что отсутствие
-/// fuel-лимитов (E8, про число WASM-инструкций гостя), а ошибка
-/// дисциплины «проверяй перед аллокацией» именно в этой функции.
+/// указатель/длина некорректны или выходят за пределы памяти —
+/// вызывающий код трактует это как порчу со стороны гостя, не как
+/// трап. Проверяет `ptr + len` против реального размера памяти гостя ДО
+/// аллокации буфера (не после — независимое ревью E6 нашло здесь
+/// host-side вектор исчерпания памяти на заявленной гостем длине
+/// вплоть до `i32::MAX`).
 fn read_guest_utf8(
     caller: &mut Caller<'_, HostState>,
     memory: &Memory,
@@ -266,11 +318,15 @@ fn read_guest_utf8(
     String::from_utf8(buf).ok()
 }
 
-/// Host-функция `env.call_tool` — единственный импорт, который регистрирует
-/// [`WasmHost`]. Читает имя инструмента и JSON аргументов из памяти гостя,
-/// проводит вызов через `tool_only::dispatch_confirmed` (тот же выбор
-/// точки входа, что у `AgentStep`, E9 — capability-гейт не обходится),
-/// пишет JSON-конверт `{"ok":...}` обратно в память гостя.
+/// Host-функция `env.call_tool` — единственный НЕ-WASI импорт, который
+/// регистрирует [`WasmHost`]. Читает имя инструмента и JSON аргументов
+/// из памяти гостя, проверяет лимит числа вызовов, проводит вызов через
+/// `tool_only::dispatch_confirmed` (тот же выбор точки входа, что у
+/// `AgentStep`, E9 — capability-гейт не обходится), пишет JSON-конверт
+/// `{"ok":...}` обратно в память гостя. Отказ капability-гейта, сбой
+/// инструмента И исчерпание лимита вызовов — все три через этот
+/// конверт, не через сентинел `-1` (тот — только про порчу
+/// указателя/памяти, не про содержательный отказ).
 #[allow(clippy::too_many_arguments)]
 fn host_call_tool(
     mut caller: Caller<'_, HostState>,
@@ -298,15 +354,34 @@ fn host_call_tool(
         return -1;
     };
 
-    let envelope = {
-        let state = caller.data();
+    let (budget_ok, dispatch, gate, mode, confirmer) = {
+        let state = caller.data_mut();
+        let budget_ok = state.tool_calls_made < state.max_tool_calls;
+        if budget_ok {
+            state.tool_calls_made += 1;
+        }
+        (
+            budget_ok,
+            Arc::clone(&state.dispatch),
+            Arc::clone(&state.gate),
+            state.mode,
+            Arc::clone(&state.confirmer),
+        )
+    };
+
+    let envelope = if !budget_ok {
+        serde_json::json!({
+            "ok": false,
+            "error": "лимит вызовов инструментов на эту программу исчерпан"
+        })
+    } else {
         match tool_only::dispatch_confirmed(
             &tool,
             &args,
-            state.dispatch.as_ref(),
-            state.gate.as_ref(),
-            state.mode,
-            state.confirmer.as_ref(),
+            dispatch.as_ref(),
+            gate.as_ref(),
+            mode,
+            confirmer.as_ref(),
         ) {
             Ok(value) => serde_json::json!({ "ok": true, "value": value }),
             Err(err) => serde_json::json!({ "ok": false, "error": err.to_string() }),
@@ -337,106 +412,19 @@ mod tests {
     use serde_json::json;
     use tool_only::DispatchError;
 
-    /// Модуль без импортов: `run` игнорирует вход и всегда возвращает
-    /// один и тот же статический JSON — проверяет голое встраивание
-    /// (компиляция → инстанцирование → вызов экспорта → чтение памяти)
-    /// без единой host-функции.
-    const WAT_ECHO_STATIC: &str = r#"
-        (module
-          (memory (export "memory") 1)
-          (data (i32.const 4096) "{\"hello\":\"world\"}")
-          (func (export "run") (param $input_len i32) (param $out_cap i32) (result i32)
-            i32.const 17))
-    "#;
+    /// Реальный гость (E8) — `codeact-guest/src/main.rs`, собран под
+    /// `wasm32-wasip1`, коммитится как артефакт (см.
+    /// `codeact-guest/README.md`). Тесты этого модуля намеренно
+    /// проверяют HOST-механику (WASI stdin/stdout, `call_tool`,
+    /// лимиты) через РЕАЛЬНОГО гостя, а не рукописные WAT-фикстуры —
+    /// хвост стал WASI-командой (нужны настоящие `fd_read`/`fd_write`
+    /// синтаксически корректно, что вручную писать в WAT практического
+    /// смысла не имеет, когда есть работающий гость).
+    const GUEST_WASM: &[u8] = include_bytes!("../../assets/codeact-guest.wasm");
 
-    /// `run` исполняет `unreachable` — гость обязан упасть трапом, хост
-    /// обязан вернуть управляемую ошибку, а не запаниковать сам.
-    const WAT_TRAP: &str = r#"
-        (module
-          (memory (export "memory") 1)
-          (func (export "run") (param i32 i32) (result i32)
-            unreachable))
-    "#;
-
-    /// Гость объявляет импорт из WASI — `Linker` в `WasmHost` не
-    /// регистрирует WASI вообще, поэтому линковка обязана упасть.
-    /// Структурное доказательство «нет ambient-доступа», не список
-    /// запретов.
-    const WAT_UNRESOLVED_WASI_IMPORT: &str = r#"
-        (module
-          (import "wasi_snapshot_preview1" "fd_write"
-            (func $fd_write (param i32 i32 i32 i32) (result i32)))
-          (memory (export "memory") 1)
-          (func (export "run") (param i32 i32) (result i32)
-            i32.const 0))
-    "#;
-
-    /// Гость зовёт `env.call_tool` с зашитыми `tool`/`args`
-    /// (`"echo_tool"`, `"{}"`) и напрямую возвращает то, что вернул
-    /// host — проверяет весь путь host-функция → `dispatch_confirmed` →
-    /// ответ обратно в гостя.
-    const WAT_CALL_TOOL: &str = r#"
-        (module
-          (import "env" "call_tool"
-            (func $call_tool (param i32 i32 i32 i32 i32 i32) (result i32)))
-          (memory (export "memory") 1)
-          (data (i32.const 512) "echo_tool")
-          (data (i32.const 600) "{}")
-          (func (export "run") (param $input_len i32) (param $out_cap i32) (result i32)
-            (call $call_tool
-              (i32.const 512) (i32.const 9)
-              (i32.const 600) (i32.const 2)
-              (i32.const 4096) (local.get $out_cap))))
-    "#;
-
-    /// `run` всегда заявляет длину результата, заведомо превышающую
-    /// ёмкость буфера хоста, ничего реально не записывая — проверяет,
-    /// что усечение обнаруживается по возвращённой длине, а не читается
-    /// как мусор за пределами записанного.
-    const WAT_OVERSIZED_RESULT: &str = r#"
-        (module
-          (memory (export "memory") 1)
-          (func (export "run") (param i32 i32) (result i32)
-            i32.const 999999))
-    "#;
-
-    /// Гость зовёт `call_tool` с отрицательной `tool_len` — проверяет
-    /// сентинел `-1` (порча указателя со стороны гостя), НЕ канал
-    /// `{"ok":false,...}`. `run` напрямую возвращает то, что вернул
-    /// `call_tool`, поэтому `-1` долетает до `WasmHost::run` как
-    /// отрицательная длина результата — тот же путь, что и обычный
-    /// отрицательный возврат `run`.
-    const WAT_CALL_TOOL_NEGATIVE_LEN: &str = r#"
-        (module
-          (import "env" "call_tool"
-            (func $call_tool (param i32 i32 i32 i32 i32 i32) (result i32)))
-          (memory (export "memory") 1)
-          (data (i32.const 512) "echo_tool")
-          (func (export "run") (param $input_len i32) (param $out_cap i32) (result i32)
-            (call $call_tool
-              (i32.const 512) (i32.const -1)
-              (i32.const 512) (i32.const 9)
-              (i32.const 4096) (local.get $out_cap))))
-    "#;
-
-    /// Гость зовёт `call_tool` с легитимно неотрицательными, но
-    /// выходящими за пределы его единственной страницы памяти (64 КиБ)
-    /// `tool_ptr`/`tool_len` — проверяет, что out-of-bounds указатель
-    /// отклоняется как порча ДО попытки прочитать память (граница —
-    /// `crates/berimor-executors/src/codeact.rs::read_guest_utf8`, не
-    /// после аллокации буфера произвольного размера).
-    const WAT_CALL_TOOL_OUT_OF_BOUNDS_PTR: &str = r#"
-        (module
-          (import "env" "call_tool"
-            (func $call_tool (param i32 i32 i32 i32 i32 i32) (result i32)))
-          (memory (export "memory") 1)
-          (data (i32.const 600) "{}")
-          (func (export "run") (param $input_len i32) (param $out_cap i32) (result i32)
-            (call $call_tool
-              (i32.const 65530) (i32.const 100)
-              (i32.const 600) (i32.const 2)
-              (i32.const 4096) (local.get $out_cap))))
-    "#;
+    fn program(input: Value, js: &str) -> Value {
+        json!({"program": js, "input": input})
+    }
 
     struct CannedDispatch {
         expected_tool: &'static str,
@@ -500,8 +488,8 @@ mod tests {
     }
 
     fn host(
-        dispatch: impl ToolDispatch + 'static,
-        gate: impl CapabilityGate + 'static,
+        dispatch: impl ToolDispatch + Send + Sync + 'static,
+        gate: impl CapabilityGate + Send + Sync + 'static,
     ) -> WasmHost {
         WasmHost::new(
             Arc::new(dispatch),
@@ -512,28 +500,29 @@ mod tests {
     }
 
     #[test]
-    fn bare_module_echoes_static_output_without_host_functions() {
+    fn happy_path_finish_produces_the_final_value() {
         let host = host(PanicIfCalledDispatch, AllowAll);
         let result = host
-            .run(WAT_ECHO_STATIC.as_bytes(), &json!({"ignored": true}))
+            .run(
+                GUEST_WASM,
+                &program(json!(null), "finish(1 + 1)"),
+                &WasmLimits::strong(),
+            )
             .unwrap();
-        assert_eq!(result, json!({"hello": "world"}));
+        assert_eq!(result, json!(2));
     }
 
     #[test]
-    fn guest_trap_surfaces_as_wasm_host_error_not_a_panic() {
+    fn input_global_carries_the_supplied_json() {
         let host = host(PanicIfCalledDispatch, AllowAll);
-        let err = host.run(WAT_TRAP.as_bytes(), &json!(null)).unwrap_err();
-        assert!(matches!(err, WasmHostError::Trap(_)), "{err:?}");
-    }
-
-    #[test]
-    fn guest_importing_wasi_fails_to_link_because_wasi_is_never_registered() {
-        let host = host(PanicIfCalledDispatch, AllowAll);
-        let err = host
-            .run(WAT_UNRESOLVED_WASI_IMPORT.as_bytes(), &json!(null))
-            .unwrap_err();
-        assert!(matches!(err, WasmHostError::Instantiate(_)), "{err:?}");
+        let result = host
+            .run(
+                GUEST_WASM,
+                &program(json!({"x": 5}), "finish(input.x * 2)"),
+                &WasmLimits::strong(),
+            )
+            .unwrap();
+        assert_eq!(result, json!(10));
     }
 
     #[test]
@@ -545,14 +534,32 @@ mod tests {
             },
             AllowAll,
         );
-        let result = host.run(WAT_CALL_TOOL.as_bytes(), &json!(null)).unwrap();
+        let result = host
+            .run(
+                GUEST_WASM,
+                &program(
+                    json!(null),
+                    "var r = call_tool('echo_tool', {}); finish(r);",
+                ),
+                &WasmLimits::strong(),
+            )
+            .unwrap();
         assert_eq!(result, json!({"ok": true, "value": {"echoed": true}}));
     }
 
     #[test]
     fn capability_deny_blocks_call_tool_before_dispatch_is_ever_called() {
         let host = host(PanicIfCalledDispatch, DenyAll);
-        let result = host.run(WAT_CALL_TOOL.as_bytes(), &json!(null)).unwrap();
+        let result = host
+            .run(
+                GUEST_WASM,
+                &program(
+                    json!(null),
+                    "var r = call_tool('echo_tool', {}); finish(r);",
+                ),
+                &WasmLimits::strong(),
+            )
+            .unwrap();
         assert_eq!(result["ok"], json!(false));
         assert!(result["error"]
             .as_str()
@@ -563,7 +570,16 @@ mod tests {
     #[test]
     fn dispatch_failure_is_recoverable_and_still_returns_an_envelope() {
         let host = host(AlwaysFailsDispatch, AllowAll);
-        let result = host.run(WAT_CALL_TOOL.as_bytes(), &json!(null)).unwrap();
+        let result = host
+            .run(
+                GUEST_WASM,
+                &program(
+                    json!(null),
+                    "var r = call_tool('echo_tool', {}); finish(r);",
+                ),
+                &WasmLimits::strong(),
+            )
+            .unwrap();
         assert_eq!(result["ok"], json!(false));
         assert!(result["error"]
             .as_str()
@@ -572,32 +588,103 @@ mod tests {
     }
 
     #[test]
-    fn truncated_result_is_detected_not_read_as_garbage() {
+    fn tool_call_budget_exhausted_returns_envelope_not_a_trap() {
+        let host = host(
+            CannedDispatch {
+                expected_tool: "echo_tool",
+                value: json!(1),
+            },
+            AllowAll,
+        );
+        let limits = WasmLimits {
+            max_tool_calls: 1,
+            ..WasmLimits::strong()
+        };
+        let result = host
+            .run(
+                GUEST_WASM,
+                &program(
+                    json!(null),
+                    "call_tool('echo_tool', {}); var r = call_tool('echo_tool', {}); finish(r);",
+                ),
+                &limits,
+            )
+            .unwrap();
+        assert_eq!(result["ok"], json!(false));
+        assert!(result["error"].as_str().unwrap().contains("лимит"));
+    }
+
+    #[test]
+    fn unhandled_js_exception_surfaces_as_guest_failed_with_real_message() {
         let host = host(PanicIfCalledDispatch, AllowAll);
         let err = host
-            .run(WAT_OVERSIZED_RESULT.as_bytes(), &json!(null))
+            .run(
+                GUEST_WASM,
+                &program(json!(null), "throw new Error('boom')"),
+                &WasmLimits::strong(),
+            )
             .unwrap_err();
         match err {
-            WasmHostError::Truncated { needed, .. } => assert_eq!(needed, 999_999),
-            other => panic!("ожидался Truncated, получено {other:?}"),
+            WasmHostError::GuestFailed { code, message } => {
+                assert_eq!(code, 1);
+                assert!(message.contains("boom"), "{message}");
+            }
+            other => panic!("ожидался GuestFailed, получено {other:?}"),
         }
     }
 
     #[test]
-    fn call_tool_negative_length_is_rejected_as_sentinel_not_dispatched() {
+    fn program_that_never_calls_finish_is_a_guest_failure() {
         let host = host(PanicIfCalledDispatch, AllowAll);
         let err = host
-            .run(WAT_CALL_TOOL_NEGATIVE_LEN.as_bytes(), &json!(null))
+            .run(
+                GUEST_WASM,
+                &program(json!(null), "1 + 1"),
+                &WasmLimits::strong(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, WasmHostError::GuestFailed { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn fuel_exhaustion_traps_instead_of_hanging() {
+        let host = host(PanicIfCalledDispatch, AllowAll);
+        let tiny = WasmLimits {
+            fuel: 1_000,
+            ..WasmLimits::strong()
+        };
+        let err = host
+            .run(GUEST_WASM, &program(json!(null), "while (true) {}"), &tiny)
             .unwrap_err();
         assert!(matches!(err, WasmHostError::Trap(_)), "{err:?}");
     }
 
     #[test]
-    fn call_tool_out_of_bounds_pointer_is_rejected_before_dispatch() {
+    fn memory_limit_stops_growth_instead_of_letting_it_run_unbounded() {
         let host = host(PanicIfCalledDispatch, AllowAll);
+        // Одна страница WASM (64 КиБ) заведомо мало для инициализации
+        // QuickJS/wasi-libc (аллокатору некуда расти) — гость обязан
+        // упасть управляемо, не повиснуть и не дать хосту попытаться
+        // выделить сколько угодно. На практике манифестируется ещё на
+        // инстанцировании: у гостя есть минимальный размер памяти
+        // (статические данные wasi-libc), уже превышающий такой
+        // потолок — `Instantiate` тут не менее весомое доказательство
+        // ограничения, чем трап во время исполнения (`memory.grow`).
+        let tiny_memory = WasmLimits {
+            memory_bytes: 64 * 1024,
+            ..WasmLimits::strong()
+        };
         let err = host
-            .run(WAT_CALL_TOOL_OUT_OF_BOUNDS_PTR.as_bytes(), &json!(null))
+            .run(GUEST_WASM, &program(json!(null), "finish(1)"), &tiny_memory)
             .unwrap_err();
-        assert!(matches!(err, WasmHostError::Trap(_)), "{err:?}");
+        assert!(
+            matches!(
+                err,
+                WasmHostError::Trap(_)
+                    | WasmHostError::GuestFailed { .. }
+                    | WasmHostError::Instantiate(_)
+            ),
+            "{err:?}"
+        );
     }
 }
