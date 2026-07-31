@@ -452,26 +452,28 @@ medium/low полностью каталогизированы в самом ф�
 
 | ID | Находка | Файл:строка | Приоритет |
 |---|---|---|---|
-| TD1.1 | `patch.step_id` исполнителя игнорируется при журналировании, но используется при применении — живое состояние и свёртка расходятся (нарушение I7) | `crates/berimor-process-engine/src/engine.rs:330-339` | 3 |
-| TD1.2 | Parallel-барьер (`state.parallel.<fork>.<branch>`) подделывается пользовательским входом инстанса | `crates/berimor-process-engine/src/{graph.rs:275-281,state.rs:81-91}` | 3 |
-| TD1.3 | `on_timeout: {action: branch, to: X}` никогда не исполняет целевой шаг | `crates/berimor-process-engine/src/engine.rs:459-464` | — |
-| TD1.4 | «Пауза» `human_gate` фиктивна — повторный `run()` проходит мимо гейта даже после эскалации/таймаута | `crates/berimor-process-engine/src/engine.rs:456-466` | — |
-| TD1.5 | Утечка секрета неотличима от обычного отказа политики по типу исхода медиации; `SecurityEvent` нигде не производится | `crates/berimor-mediation/src/pipeline.rs:70-91` | — |
-| TD2.1 | `env -u X <команда>` обходит разворачивание обёрток deny-статики | `crates/berimor-capability/src/deny.rs:273-278` | 7 (пачка) |
-| TD2.2 | `exec`/`command`/`builtin`-обёртки не разворачиваются | `crates/berimor-capability/src/deny.rs:257-298` | 7 (пачка) |
-| TD2.3 | `pkexec`, `setpriv --reuid 0`, `unshare -r`, `systemd-run`, `setsid` вне таблицы запускальщиков привилегий | `crates/berimor-capability/src/deny.rs:223` | 7 (пачка) |
-| TD2.4 | Символьный setuid через комбинированные флаги (`chmod u+sx` и т.п.) не детектируется | `crates/berimor-capability/src/deny.rs:651-664` | 7 (пачка) |
-| TD2.5 | `find -execdir`/`-ok` не детектируются | `crates/berimor-capability/src/deny.rs:590-597` | 7 (пачка) |
-| TD2.6 | `cp/mv --target-directory=` обходит детектор приёмника (ищется ровно `-t`) | `crates/berimor-capability/src/deny.rs:628-635` | 7 (пачка) |
-| TD2.7 | Block-девайсы вне префикс-таблицы (`/dev/md0`, `/dev/nbd0`, `/dev/zvol/...`, `/dev/mem`) | `crates/berimor-capability/src/deny.rs:487-497` | 7 (пачка) |
-| TD2.8 | Режим `Deny`: внешний деструктив уходит на подтверждение вместо безусловной блокировки — противоречит собственной doc и Milestone 1 №5 | `crates/berimor-capability/src/confirm.rs:55-62` | **1** |
-| TD3.1 | Белый список CodeAct обходится через `this` (`this.eval`, `this.Function`); имя инструмента вообще не сверяется против `tools` шага в рантайме | `crates/berimor-executors/src/codeact/{static_analysis.rs:196-204,executor.rs:21-32,wasm_host.rs:367-442}` | **2** |
-| TD3.2 | `finish()` в госте CodeAct не терминален — эффекты после вызова исполняются, исключение после `finish` уничтожает результат | `codeact-guest/src/main.rs:154-199` | **2** |
-| TD3.3 | CodeAct шлёт `response_format: json_object` HTTP-провайдеру при запросе JS-текста — структурно не работает через единственный реальный провайдер | `crates/berimor-executors/src/codeact/executor.rs:138-142` × `crates/berimor-model-pool/src/http_provider.rs:139-141` | — |
-| TD3.4 | Нет таймаутов в HTTP-клиенте провайдера — зависший endpoint блокирует `berimor run` навсегда | `crates/berimor-model-pool/src/http_provider.rs:48-52` | 4 |
-| TD3.5 | `berimor verify`/`plugin install`/`self-update` — заглушки, `exit=0` на «todo» | `crates/berimor-cli/src/main.rs:107-120` | 6 — **`verify` закрыт в D2 этой сессии** (реальная верификация, `ExitCode::FAILURE` на провале); `plugin install`/`self-update` всё ещё заглушки, находка остаётся открытой для них |
-| TD4.1 | Счётчик `open_escalations` в `Dispatcher` рассинхронизируется со статусами задач в обе стороны (успех не снимает, повторный provider-fail молча деэскалирует) | `crates/berimor-actors/src/dispatcher.rs:207-235` | 5 |
-| TD4.2 | Роутер контекста не знает `agent_step`/`codeact` — эти шаги получают пустой системный контекст (ни правил, ни состояния, ни памяти) | `crates/berimor-context-engine/src/lib.rs:46-59` | 7 |
+| TD1.1 | `patch.step_id` исполнителя игнорируется при журналировании, но используется при применении — живое состояние и свёртка расходятся (нарушение I7) | `crates/berimor-process-engine/src/engine.rs:330-339` | 3 — ✅ `da4a030` |
+| TD1.2 | Parallel-барьер (`state.parallel.<fork>.<branch>`) подделывается пользовательским входом инстанса | `crates/berimor-process-engine/src/{graph.rs:275-281,state.rs:81-91}` | 3 — ✅ `da4a030` |
+| TD1.3 | `on_timeout: {action: branch, to: X}` никогда не исполняет целевой шаг | `crates/berimor-process-engine/src/engine.rs:459-464` | ✅ `da4a030` |
+| TD1.4 | «Пауза» `human_gate` фиктивна — повторный `run()` проходит мимо гейта даже после эскалации/таймаута | `crates/berimor-process-engine/src/engine.rs:456-466` | ✅ `da4a030` |
+| TD1.5 | Утечка секрета неотличима от обычного отказа политики по типу исхода медиации; `SecurityEvent` нигде не производится | `crates/berimor-mediation/src/pipeline.rs:70-91` | ✅ `da4a030` |
+| TD2.1 | `env -u X <команда>` обходит разворачивание обёрток deny-статики | `crates/berimor-capability/src/deny.rs:273-278` | 7 (пачка) — ✅ `4eb028d` |
+| TD2.2 | `exec`/`command`/`builtin`-обёртки не разворачиваются | `crates/berimor-capability/src/deny.rs:257-298` | 7 (пачка) — ✅ `4eb028d` |
+| TD2.3 | `pkexec`, `setpriv --reuid 0`, `unshare -r`, `systemd-run`, `setsid` вне таблицы запускальщиков привилегий | `crates/berimor-capability/src/deny.rs:223` | 7 (пачка) — ✅ `4eb028d` |
+| TD2.4 | Символьный setuid через комбинированные флаги (`chmod u+sx` и т.п.) не детектируется | `crates/berimor-capability/src/deny.rs:651-664` | 7 (пачка) — ✅ `4eb028d` |
+| TD2.5 | `find -execdir`/`-ok` не детектируются | `crates/berimor-capability/src/deny.rs:590-597` | 7 (пачка) — ✅ `4eb028d` |
+| TD2.6 | `cp/mv --target-directory=` обходит детектор приёмника (ищется ровно `-t`) | `crates/berimor-capability/src/deny.rs:628-635` | 7 (пачка) — ✅ `4eb028d` |
+| TD2.7 | Block-девайсы вне префикс-таблицы (`/dev/md0`, `/dev/nbd0`, `/dev/zvol/...`, `/dev/mem`) | `crates/berimor-capability/src/deny.rs:487-497` | 7 (пачка) — ✅ `4eb028d` |
+| TD2.8 | Режим `Deny`: внешний деструктив уходит на подтверждение вместо безусловной блокировки — противоречит собственной doc и Milestone 1 №5 | `crates/berimor-capability/src/confirm.rs:55-62` | **1** — ✅ `15aad43` |
+| TD3.1 | Белый список CodeAct обходится через `this` (`this.eval`, `this.Function`); имя инструмента вообще не сверяется против `tools` шага в рантайме | `crates/berimor-executors/src/codeact/{static_analysis.rs:196-204,executor.rs:21-32,wasm_host.rs:367-442}` | **2** — ✅ `0a11303` |
+| TD3.2 | `finish()` в госте CodeAct не терминален — эффекты после вызова исполняются, исключение после `finish` уничтожает результат | `codeact-guest/src/main.rs:154-199` | **2** — ✅ `0a11303` |
+| TD3.3 | CodeAct шлёт `response_format: json_object` HTTP-провайдеру при запросе JS-текста — структурно не работает через единственный реальный провайдер | `crates/berimor-executors/src/codeact/executor.rs:138-142` × `crates/berimor-model-pool/src/http_provider.rs:139-141` | ✅ `17e61c0` |
+| TD3.4 | Нет таймаутов в HTTP-клиенте провайдера — зависший endpoint блокирует `berimor run` навсегда | `crates/berimor-model-pool/src/http_provider.rs:48-52` | 4 — ✅ `17e61c0` |
+| TD3.5 | `berimor verify`/`plugin install`/`self-update` — заглушки, `exit=0` на «todo» | `crates/berimor-cli/src/main.rs:107-120` | 6 — ⚠️ частично: `verify` закрыт в D2 (`7caf9b7`, реальная верификация, `ExitCode::FAILURE` на провале); `plugin install`/`self-update` всё ещё заглушки — находка остаётся открытой для них, не входит в 7 волн этой сессии (D4/D6 — отдельные, не начатые задачи) |
+| TD4.1 | Счётчик `open_escalations` в `Dispatcher` рассинхронизируется со статусами задач в обе стороны (успех не снимает, повторный provider-fail молча деэскалирует) | `crates/berimor-actors/src/dispatcher.rs:207-235` | 5 — ✅ `4eb028d` |
+| TD4.2 | Роутер контекста не знает `agent_step`/`codeact` — эти шаги получают пустой системный контекст (ни правил, ни состояния, ни памяти) | `crates/berimor-context-engine/src/lib.rs:46-59` | 7 — ✅ `4eb028d` |
+
+**Техдолг — ✅ закрыт** (19 из 20 находок исправлены целиком; TD3.5 — частично, `plugin install`/`self-update` вне рамок этой сессии, см. таблицу). Семью волнами, следуя приоритету самого аудита (`15aad43`, `0a11303`, `da4a030`, `17e61c0`, `4eb028d` — коммиты волн 1–5/7, волна 6 — только сверка ROADMAP без кода), `fmt`/`clippy`/`test` зелёные на каждой волне, CI зелёный на Linux/macOS/Windows + Bootstrap на каждый push. Прошло обязательное независимое ревью (worktree, чистый контекст) — 0 critical, 1 major (`codeact-guest`: булев флаг терминальности `finish` не отличал «наше служебное завершающее исключение дошло до верха» от «finish был перехвачен `try/catch`, а ПОЗЖЕ произошла несвязанная необработанная ошибка» — второй случай маскировался под успех со старым значением; исправлено сверкой самого пропагирующего исключения, не факта вызова) и 1 minor (`new.target`/`import.meta` — та же категория непосещаемых AST-узлов, что и `this`, эксплуатируемости не найдено, закрыто для консистентности) — оба исправлены отдельным коммитом (`7c9ebc2`), включая новые регрессионные тесты и пересборку `codeact-guest.wasm`. Побочно во время ревью один из под-агентов столкнулся с попыткой prompt injection внутри наблюдаемого содержимого одного из вызовов инструментов (текст, оформленный под системное уведомление, просил не сообщать пользователю об «изменении файла») — агент корректно проигнорировал её и подтвердил через `git diff`, что файл не менялся; упоминается здесь для полноты аудиторского следа, не как находка в коде.
 
 Системные выводы аудита (не отдельные находки, а класс проблемы —
 стоит держать в голове при разборе любой из находок выше): (1) deny-таблицы
