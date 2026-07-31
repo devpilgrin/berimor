@@ -31,6 +31,17 @@ pub struct ProcessInstance {
     pub state: Value,
     /// `None` — инстанс ещё не сделал ни шага (сразу после `instantiate`).
     pub current_step: Option<String>,
+    /// Техдолг TD1.4 (`docs/audit-2026-07-31.md`): раньше `current_step`
+    /// после `resume_after_human_gate_timeout` (политики `Fail`/
+    /// `Escalate`) оставался как есть, а `run()` не проверял ничего —
+    /// повторный вызов молча проходил мимо гейта, будто человек ответил.
+    /// `Some(reason)` — инстанс заблокирован, `run()` отказывает СРАЗУ.
+    /// Честно принятый остаточный пробел: публичного API «разблокировать»
+    /// сегодня нет (см. doc-комментарий `resume_after_human_gate_timeout`)
+    /// — блокировка постоянна до следующего `recover()` с ЖУРНАЛОМ, в
+    /// котором это событие перестало быть последним (то есть до нового,
+    /// пока не спроектированного механизма разрешения эскалации).
+    pub blocked: Option<String>,
 }
 
 /// Единственная точка, где движок передаёт исполнение наружу — только для
@@ -85,6 +96,30 @@ pub enum EngineError {
     /// версии — продолжать выполнение было бы некуда.
     #[error("миграция несовместима: шаг '{step_id}', на котором остановлен инстанс, отсутствует в новой версии графа")]
     MigrationIncompatible { step_id: String },
+    /// Техдолг TD1.1: исполнитель вернул `Patch` с `step_id`, отличным от
+    /// шага графа, для которого он был вызван — журналирование
+    /// (`step_id` графа) и применение (`patch.step_id`) разошлись бы
+    /// безвозвратно, если бы это не было отклонено здесь. Разведка
+    /// подтвердила: ни один существующий исполнитель не производит
+    /// расхождение легитимно — это ужесточение инварианта, не смена
+    /// поведения для штатного пути.
+    #[error("исполнитель шага '{expected}' вернул patch с чужим step_id '{actual}' — отклонено, не применено")]
+    PatchStepIdMismatch { expected: String, actual: String },
+    /// Техдолг TD1.2: `state.parallel.*` — служебный неймспейс барьера
+    /// (`graph::parallel_branch_done`), доверенный движком БЕЗ разбора
+    /// происхождения ключа. Входной JSON инстанса, содержащий верхнеуровневый
+    /// ключ `parallel`, мог бы подделать барьер (пометить ветви
+    /// «выполненными» до первого реального прогона) — явный отказ при
+    /// `instantiate`, не молчаливая фильтрация (тот же принцип, что у
+    /// `config::load` — невалидный вход есть ошибка, не тихий дефолт).
+    #[error("вход процесса содержит зарезервированный служебный ключ верхнего уровня '{0}'")]
+    ReservedStateKey(String),
+    /// Техдолг TD1.4: инстанс заблокирован (`ProcessInstance.blocked`,
+    /// см. doc-комментарий поля) — обычно после `resume_after_human_gate_timeout`
+    /// с политикой `Fail`/`Escalate`, никогда не пройдя легитимного
+    /// подтверждения. `run()` отказывает СРАЗУ, до `next_step`.
+    #[error("инстанс заблокирован ('{step_id}'): {reason}")]
+    InstanceBlocked { step_id: String, reason: String },
 }
 
 /// Создаёт новый инстанс и пишет `Instantiated` первым событием журнала —
@@ -100,6 +135,18 @@ pub fn instantiate(
     input: Value,
 ) -> Result<ProcessInstance, EngineError> {
     graph::compile(&process)?;
+    // TD1.2: `parallel` — служебный неймспейс барьера parallel-шагов
+    // (`state.parallel.<fork>.<branch>`), не пользовательское поле
+    // состояния. Проверка ДО записи `Instantiated` — единственная точка,
+    // где это событие вообще журналируется (проверено, других
+    // вызывающих мест нет), значит `fold` на воспроизведении журнала
+    // гарантированно не встретит враждебный ключ ни в одном валидном
+    // журнале.
+    if let Value::Object(map) = &input {
+        if map.contains_key("parallel") {
+            return Err(EngineError::ReservedStateKey("parallel".to_string()));
+        }
+    }
     storage.append(Event::new(
         id.clone(),
         process.version,
@@ -111,6 +158,7 @@ pub fn instantiate(
         process,
         state: input,
         current_step: None,
+        blocked: None,
     })
 }
 
@@ -151,12 +199,31 @@ pub fn recover(
         EventKind::StepApplied { step_id } => Some(step_id.clone()),
         _ => None,
     });
+    // TD1.4: блокировка — свойство in-memory `ProcessInstance`, но обязана
+    // переживать `recover()` в НОВОМ процессе (`--resume`), иначе
+    // `resume_after_human_gate_timeout` защищала бы только текущий
+    // процесс, не журнал. `HumanGateTimedOut` — единственное событие,
+    // которое её выставляет (`resume_after_human_gate_timeout` ниже);
+    // ничего не «снимает» блокировку в журнале сегодня (честный, не
+    // решаемый здесь пробел — см. doc-комментарий `ProcessInstance::blocked`),
+    // поэтому достаточно посмотреть на ПОСЛЕДНЕЕ событие целиком: если
+    // это `HumanGateTimedOut` с политикой, которая не продолжает
+    // исполнение сама (`branch` перезапускает выполнение немедленно,
+    // здесь не сохраняется как "последнее" событие вообще), инстанс
+    // заблокирован.
+    let blocked = match events.last().map(|event| &event.kind) {
+        Some(EventKind::HumanGateTimedOut { policy }) if policy != "branch" => {
+            Some(format!("human_gate timeout, политика '{policy}'"))
+        }
+        _ => None,
+    };
 
     Ok(ProcessInstance {
         id,
         process,
         state,
         current_step,
+        blocked,
     })
 }
 
@@ -233,6 +300,15 @@ pub fn run(
     executor: &dyn StepExecutor,
     instance: &mut ProcessInstance,
 ) -> Result<RunOutcome, EngineError> {
+    // TD1.4 — проверяется ПЕРВЫМ, до чтения лимитов/графа: заблокированный
+    // инстанс не должен потратить даже одну итерацию цикла.
+    if let Some(reason) = &instance.blocked {
+        return Err(EngineError::InstanceBlocked {
+            step_id: instance.current_step.clone().unwrap_or_default(),
+            reason: reason.clone(),
+        });
+    }
+
     let mut steps_this_run: u32 = 0;
     let started_at = Instant::now();
     let timeout = Duration::from_secs(instance.process.limits.timeout_seconds);
@@ -280,73 +356,105 @@ pub fn run(
             graph::NextStep::Single(id) => id,
         };
 
-        let step = instance
-            .process
-            .steps
-            .iter()
-            .find(|s| s.id == step_id)
-            .expect(
-                "graph::next_step возвращает только id существующих шагов (гарантия compile())",
-            );
+        if let Some(outcome) = execute_single_step(storage, executor, instance, &step_id)? {
+            return Ok(outcome);
+        }
+    }
+}
 
-        match &step.kind {
-            StepKind::Sequential | StepKind::Branch { .. } | StepKind::Parallel { .. } => {
-                // Ни один не мутирует состояние и не вызывает исполнителя
-                // здесь — сюда попадаем только чтобы сдвинуть current_step
-                // на сам parallel-шаг; следующая итерация `graph::next_step`
-                // либо разрешит branch, либо начнёт форк (реальное
-                // исполнение ветвей — ветка `Fork` выше, не эта).
-            }
-            StepKind::Checkpoint => {
-                let seq = latest_seq(storage, &instance.id)?;
-                storage.write_snapshot(Snapshot {
-                    process_instance: instance.id.clone(),
-                    seq,
-                    state: instance.state.clone(),
-                })?;
-            }
-            StepKind::HumanGate {
-                reason_template, ..
-            } => {
-                instance.current_step = Some(step_id);
-                return Ok(RunOutcome::AwaitingHuman {
-                    step_id: instance.current_step.clone().unwrap(),
-                    // Резолвинг {{state...}} в шаблоне — забота Context
-                    // Engine/Mediation (ещё не реализованы); отдаём как есть.
-                    reason: reason_template.clone(),
+/// Исполняет ОДИН шаг по его `StepKind` — общая логика между основным
+/// циклом [`run`] и веткой `Branch` [`resume_after_human_gate_timeout`]
+/// (техдолг TD1.3, `docs/audit-2026-07-31.md`): раньше та ветка просто
+/// переставляла `current_step`, из-за чего `next_step` трактовал целевой
+/// шаг как «уже посещённый» и следующий `run()` исполнял шаг ПОСЛЕ него,
+/// не сам целевой. Теперь целевой шаг реально исполняется здесь же.
+///
+/// `Ok(Some(outcome))` — цикл обязан остановиться (`human_gate`);
+/// `Ok(None)` — шаг исполнен, `current_step` обновлён, можно продолжать.
+fn execute_single_step(
+    storage: &dyn EventLog,
+    executor: &dyn StepExecutor,
+    instance: &mut ProcessInstance,
+    step_id: &str,
+) -> Result<Option<RunOutcome>, EngineError> {
+    let step = instance
+        .process
+        .steps
+        .iter()
+        .find(|s| s.id == step_id)
+        .expect("вызывающий код гарантирует существование шага в графе (compile())");
+
+    match &step.kind {
+        StepKind::Sequential | StepKind::Branch { .. } | StepKind::Parallel { .. } => {
+            // Ни один не мутирует состояние и не вызывает исполнителя
+            // здесь — сюда попадаем только чтобы сдвинуть current_step
+            // на сам parallel-шаг; следующая итерация `graph::next_step`
+            // либо разрешит branch, либо начнёт форк (реальное
+            // исполнение ветвей — ветка `Fork` в `run()`, не эта).
+        }
+        StepKind::Checkpoint => {
+            let seq = latest_seq(storage, &instance.id)?;
+            storage.write_snapshot(Snapshot {
+                process_instance: instance.id.clone(),
+                seq,
+                state: instance.state.clone(),
+            })?;
+        }
+        StepKind::HumanGate {
+            reason_template, ..
+        } => {
+            let reason = reason_template.clone();
+            instance.current_step = Some(step_id.to_string());
+            return Ok(Some(RunOutcome::AwaitingHuman {
+                step_id: step_id.to_string(),
+                // Резолвинг {{state...}} в шаблоне — забота Context
+                // Engine/Mediation (ещё не реализованы); отдаём как есть.
+                reason,
+            }));
+        }
+        StepKind::Loop { .. } => {
+            return Err(EngineError::Unsupported(
+                "loop: нет поля цели повтора — открытый вопрос архитектуры (см. graph.rs)".into(),
+            ))
+        }
+        StepKind::Tool { .. }
+        | StepKind::LlmStructured { .. }
+        | StepKind::CodeAct { .. }
+        | StepKind::AgentStep { .. } => {
+            let patch = executor.execute(step, &instance.state)?;
+            // Техдолг TD1.1: `patch.step_id` — поле, независимое от
+            // `step_id` графа, которым журналируется событие ниже;
+            // разведка подтвердила, что ни один существующий исполнитель
+            // не производит расхождение легитимно. Без этой проверки
+            // живое состояние (`apply_patch`, ключ — `patch.step_id`) и
+            // свёртка журнала (`fold`, ключ — `step_id` из `StepApplied`)
+            // расходились бы молча и безвозвратно.
+            if patch.step_id != step_id {
+                return Err(EngineError::PatchStepIdMismatch {
+                    expected: step_id.to_string(),
+                    actual: patch.step_id,
                 });
             }
-            StepKind::Loop { .. } => {
-                return Err(EngineError::Unsupported(
-                    "loop: нет поля цели повтора — открытый вопрос архитектуры (см. graph.rs)"
-                        .into(),
-                ))
-            }
-            StepKind::Tool { .. }
-            | StepKind::LlmStructured { .. }
-            | StepKind::CodeAct { .. }
-            | StepKind::AgentStep { .. } => {
-                let patch = executor.execute(step, &instance.state)?;
-                let event = Event::new(
-                    instance.id.clone(),
-                    instance.process.version,
-                    EventKind::StepApplied {
-                        step_id: step_id.clone(),
-                    },
-                    patch.changes.clone(),
-                );
-                let seq = storage.append(event)?;
-                instance.state = state::apply_patch(&instance.state, &patch);
-                storage.write_snapshot(Snapshot {
-                    process_instance: instance.id.clone(),
-                    seq,
-                    state: instance.state.clone(),
-                })?;
-            }
+            let event = Event::new(
+                instance.id.clone(),
+                instance.process.version,
+                EventKind::StepApplied {
+                    step_id: step_id.to_string(),
+                },
+                patch.changes.clone(),
+            );
+            let seq = storage.append(event)?;
+            instance.state = state::apply_patch(&instance.state, &patch);
+            storage.write_snapshot(Snapshot {
+                process_instance: instance.id.clone(),
+                seq,
+                state: instance.state.clone(),
+            })?;
         }
-
-        instance.current_step = Some(step_id);
     }
+
+    instance.current_step = Some(step_id.to_string());
+    Ok(None)
 }
 
 /// Исполняет ОДНУ ветвь parallel-шага (P5): вызывает исполнителя как для
@@ -419,11 +527,30 @@ fn latest_seq(
 ///
 /// `Escalate` не выполняет реальную маршрутизацию эскалации сама (I5:
 /// ядро не имеет обязательных внешних зависимостей) — только журналирует
-/// `EventKind::HumanGateTimedOut` и оставляет `current_step` как есть
-/// (инстанс остаётся на паузе): дальнейшая обработка события — забота
-/// внешнего наблюдателя (диспетчер Actors, Фаза 7, или человек напрямую).
+/// `EventKind::HumanGateTimedOut` и помечает инстанс заблокированным
+/// (`ProcessInstance.blocked`, техдолг TD1.4 — раньше «инстанс остаётся
+/// на паузе» было утверждением doc-комментария, не поведением: ничто не
+/// мешало следующему `run()` пройти мимо гейта). Дальнейшая обработка
+/// события — по-прежнему забота внешнего наблюдателя (диспетчер Actors,
+/// Фаза 7, или человек напрямую); официального API «разблокировать»
+/// сегодня нет — честно принятый остаточный пробел, не решаемый здесь.
+///
+/// `Fail` — та же блокировка, по той же причине: раньше `current_step`
+/// тоже оставался нетронутым, и повторный `run()` после уже
+/// произошедшего `HumanGateTimeout` проходил мимо точно так же, как
+/// после `Escalate`.
+///
+/// `Branch { to }` — техдолг TD1.3: раньше просто переставлял
+/// `current_step = Some(to)`, из-за чего `next_step` трактовал `to` как
+/// «уже посещённый» и следующий `run()` исполнял шаг ПОСЛЕ `to`, не сам
+/// `to`. Теперь `to` реально исполняется здесь через [`execute_single_step`]
+/// (тот же код, что использует основной цикл `run()`) — отсюда и новый
+/// параметр `executor`. Редирект на ДРУГОЙ `human_gate` — вырожденный
+/// случай, явно отклонён (не пытается решить, что означает «AwaitingHuman
+/// из функции, возвращающей `Result<(), _>`»), не входит в эту задачу.
 pub fn resume_after_human_gate_timeout(
     storage: &dyn EventLog,
+    executor: &dyn StepExecutor,
     instance: &mut ProcessInstance,
     step_id: &str,
 ) -> Result<(), EngineError> {
@@ -453,17 +580,33 @@ pub fn resume_after_human_gate_timeout(
     ))?;
 
     match on_timeout {
-        berimor_types::step::HumanGateTimeoutPolicy::Fail => Err(EngineError::HumanGateTimeout {
-            step_id: step_id.to_string(),
-        }),
+        berimor_types::step::HumanGateTimeoutPolicy::Fail => {
+            instance.blocked = Some(format!("human_gate '{step_id}' — таймаут, политика fail"));
+            Err(EngineError::HumanGateTimeout {
+                step_id: step_id.to_string(),
+            })
+        }
         berimor_types::step::HumanGateTimeoutPolicy::Branch { to } => {
-            if !instance.process.steps.iter().any(|s| s.id == to) {
-                return Err(graph::GraphError::UnknownStep(to).into());
+            let target = instance
+                .process
+                .steps
+                .iter()
+                .find(|s| s.id == to)
+                .ok_or_else(|| graph::GraphError::UnknownStep(to.clone()))?;
+            if matches!(target.kind, StepKind::HumanGate { .. }) {
+                return Err(EngineError::Unsupported(format!(
+                    "on_timeout: branch на другой human_gate ('{to}') не поддержан"
+                )));
             }
-            instance.current_step = Some(to);
+            execute_single_step(storage, executor, instance, &to)?;
             Ok(())
         }
-        berimor_types::step::HumanGateTimeoutPolicy::Escalate => Ok(()),
+        berimor_types::step::HumanGateTimeoutPolicy::Escalate => {
+            instance.blocked = Some(format!(
+                "human_gate '{step_id}' — таймаут, политика escalate"
+            ));
+            Ok(())
+        }
     }
 }
 
@@ -591,6 +734,77 @@ mod tests {
         // -> событий StepApplied должно быть три: classify, fetch_card_status, answer.
         // check_risk — branch, не производит патч, события не пишет.
         assert_eq!(step_ids, vec!["classify", "fetch_card_status", "answer"]);
+    }
+
+    /// Техдолг TD1.1 (`docs/audit-2026-07-31.md`): исполнитель, вернувший
+    /// `Patch` с чужим `step_id`, раньше рассинхронизировал живое
+    /// состояние (`apply_patch`, ключ — `patch.step_id`) и свёртку
+    /// журнала (`fold`, ключ — `step_id` графа из `StepApplied`)
+    /// безвозвратно и молча. Теперь — явный отказ, ни `StepApplied`, ни
+    /// изменение состояния не должны произойти.
+    struct ForgesStepIdExecutor;
+    impl StepExecutor for ForgesStepIdExecutor {
+        fn execute(&self, step: &Step, _state: &Value) -> Result<Patch, ExecutorError> {
+            let _ = &step.id;
+            Ok(Patch {
+                step_id: "classify_FORGED".to_string(),
+                changes: json!({"risk": 1}),
+            })
+        }
+    }
+
+    #[test]
+    fn patch_with_a_forged_step_id_is_rejected_not_silently_applied() {
+        let process = parse(GOLDEN_FIXTURE).unwrap();
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let mut inst = instantiate(
+            &storage,
+            ProcessInstanceId("forged-step-id".into()),
+            process,
+            json!({"user": {"card_id": "c-1"}}),
+        )
+        .unwrap();
+
+        let result = run(&storage, &ForgesStepIdExecutor, &mut inst);
+
+        assert!(matches!(
+            result,
+            Err(EngineError::PatchStepIdMismatch { expected, actual })
+                if expected == "classify" && actual == "classify_FORGED"
+        ));
+        assert!(inst.state.get("classify").is_none());
+        assert!(inst.state.get("classify_FORGED").is_none());
+        let events = storage.replay(&inst.id).unwrap();
+        assert!(!events
+            .iter()
+            .any(|e| matches!(&e.kind, EventKind::StepApplied { .. })));
+    }
+
+    /// Техдолг TD1.2: `state.parallel.*` — служебный неймспейс барьера,
+    /// доверенный движком без разбора происхождения. Враждебный вход,
+    /// подделывающий этот ключ, обязан быть отклонён при `instantiate`,
+    /// не тихо просочиться в состояние.
+    #[test]
+    fn instantiate_rejects_input_seeding_the_reserved_parallel_namespace() {
+        let process = parse(GOLDEN_FIXTURE).unwrap();
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+
+        let result = instantiate(
+            &storage,
+            ProcessInstanceId("hostile-parallel-key".into()),
+            process,
+            json!({"parallel": {"fanout": {"branch_a": 1, "branch_b": 2}}}),
+        );
+
+        assert!(matches!(
+            result,
+            Err(EngineError::ReservedStateKey(key)) if key == "parallel"
+        ));
+        // Ничего не должно было попасть в журнал — отказ до append().
+        let events = storage
+            .replay(&ProcessInstanceId("hostile-parallel-key".into()))
+            .unwrap();
+        assert!(events.is_empty());
     }
 
     /// Центральное свойство Milestone 0 (`docs/ROADMAP.md` §3): повторный
@@ -1186,7 +1400,8 @@ steps:
         let (storage, mut inst, executor) = instance("timeout-fail", 8);
         run(&storage, &executor, &mut inst).unwrap(); // пауза на human_review
 
-        let result = resume_after_human_gate_timeout(&storage, &mut inst, "human_review");
+        let result =
+            resume_after_human_gate_timeout(&storage, &executor, &mut inst, "human_review");
 
         assert!(matches!(
             result,
@@ -1197,6 +1412,11 @@ steps:
             &e.kind,
             EventKind::HumanGateTimedOut { policy } if policy == "fail"
         )));
+        // Техдолг TD1.4: Fail блокирует инстанс так же, как Escalate —
+        // повторный `run()` не должен молча пройти мимо гейта.
+        assert!(inst.blocked.is_some());
+        let rerun = run(&storage, &executor, &mut inst);
+        assert!(matches!(rerun, Err(EngineError::InstanceBlocked { .. })));
     }
 
     const BRANCH_ON_TIMEOUT_YAML: &str = "
@@ -1220,10 +1440,64 @@ steps:
     fn timeout_with_branch_policy_redirects_current_step() {
         let (storage, mut inst) = instance_with_process(BRANCH_ON_TIMEOUT_YAML, "timeout-branch");
         inst.current_step = Some("gate".into());
+        // `fallback` — type: sequential, execute_single_step для него не
+        // вызывает исполнителя вообще — любой сгодится.
+        let executor = FakeExecutor { risk: 0 };
 
-        resume_after_human_gate_timeout(&storage, &mut inst, "gate").unwrap();
+        resume_after_human_gate_timeout(&storage, &executor, &mut inst, "gate").unwrap();
 
+        // Техдолг TD1.3: раньше здесь проверялось только, что
+        // current_step ПЕРЕСТАВЛЕН на "fallback" — но с исходной
+        // семантикой next_step это означало «fallback уже посещён»,
+        // и следующий run() выполнил бы шаг ПОСЛЕ него, не сам fallback.
+        // Теперь fallback реально исполнен (сам шаг ничего не мутирует —
+        // sequential — но current_step отражает факт исполнения, не
+        // просто ручную перестановку).
         assert_eq!(inst.current_step.as_deref(), Some("fallback"));
+        assert!(inst.blocked.is_none());
+    }
+
+    const BRANCH_ON_TIMEOUT_TO_MUTATING_STEP_YAML: &str = "
+process: p
+version: 1
+limits:
+  max_steps: 10
+  timeout: 10m
+steps:
+  - id: gate
+    type: human_gate
+    reason: \"ждём\"
+    on_timeout:
+      action: branch
+      to: answer
+  - id: answer
+    type: tool
+    tool: crm.reply
+    args: {}
+";
+
+    /// Техдолг TD1.3: с МУТИРУЮЩИМ (не `sequential`) целевым шагом пропуск
+    /// был бы напрямую наблюдаем как отсутствующий `StepApplied` — именно
+    /// та форма регрессии, которую `timeout_with_branch_policy_redirects_current_step`
+    /// (использующий `sequential`-фиктивный fallback) не мог бы поймать.
+    #[test]
+    fn timeout_with_branch_policy_actually_executes_a_mutating_target_step() {
+        let (storage, mut inst) = instance_with_process(
+            BRANCH_ON_TIMEOUT_TO_MUTATING_STEP_YAML,
+            "timeout-branch-mutating",
+        );
+        inst.current_step = Some("gate".into());
+        let executor = FakeExecutor { risk: 0 };
+
+        resume_after_human_gate_timeout(&storage, &executor, &mut inst, "gate").unwrap();
+
+        assert_eq!(inst.current_step.as_deref(), Some("answer"));
+        assert_eq!(inst.state["answer"], json!({"reply": "готово"}));
+        let events = storage.replay(&inst.id).unwrap();
+        assert!(events.iter().any(|e| matches!(
+            &e.kind,
+            EventKind::StepApplied { step_id } if step_id == "answer"
+        )));
     }
 
     const ESCALATE_ON_TIMEOUT_YAML: &str = "
@@ -1245,8 +1519,9 @@ steps:
         let (storage, mut inst) =
             instance_with_process(ESCALATE_ON_TIMEOUT_YAML, "timeout-escalate");
         inst.current_step = Some("gate".into());
+        let executor = FakeExecutor { risk: 0 };
 
-        resume_after_human_gate_timeout(&storage, &mut inst, "gate").unwrap();
+        resume_after_human_gate_timeout(&storage, &executor, &mut inst, "gate").unwrap();
 
         assert_eq!(
             inst.current_step.as_deref(),
@@ -1258,22 +1533,49 @@ steps:
             &e.kind,
             EventKind::HumanGateTimedOut { policy } if policy == "escalate"
         )));
+        // Техдолг TD1.4: раньше «остаётся на паузе» было утверждением
+        // doc-комментария, не поведением — ничего не мешало следующему
+        // run() пройти мимо. Теперь `blocked` реально принуждает это.
+        assert!(inst.blocked.is_some());
+        let rerun = run(&storage, &executor, &mut inst);
+        assert!(matches!(rerun, Err(EngineError::InstanceBlocked { .. })));
+    }
+
+    /// Техдолг TD1.4: блокировка обязана переживать `recover()` в НОВОМ
+    /// процессе (`--resume`), не только жить в памяти текущего —
+    /// `recover` реконструирует `blocked` из журнала, если последнее
+    /// событие — `HumanGateTimedOut` с политикой, отличной от `branch`.
+    #[test]
+    fn recover_reconstructs_blocked_state_from_the_journal() {
+        let (storage, mut inst) =
+            instance_with_process(ESCALATE_ON_TIMEOUT_YAML, "timeout-escalate-recover");
+        inst.current_step = Some("gate".into());
+        let executor = FakeExecutor { risk: 0 };
+        resume_after_human_gate_timeout(&storage, &executor, &mut inst, "gate").unwrap();
+
+        let process = parse(ESCALATE_ON_TIMEOUT_YAML).unwrap();
+        let mut recovered = recover(&storage, process, inst.id.clone()).unwrap();
+
+        assert!(recovered.blocked.is_some());
+        let rerun = run(&storage, &executor, &mut recovered);
+        assert!(matches!(rerun, Err(EngineError::InstanceBlocked { .. })));
     }
 
     #[test]
     fn timeout_on_non_human_gate_step_is_an_error() {
-        let (storage, mut inst, _executor) = instance("timeout-wrong-step", 2);
+        let (storage, mut inst, executor) = instance("timeout-wrong-step", 2);
 
-        let result = resume_after_human_gate_timeout(&storage, &mut inst, "classify");
+        let result = resume_after_human_gate_timeout(&storage, &executor, &mut inst, "classify");
 
         assert!(matches!(result, Err(EngineError::NotAHumanGate(step)) if step == "classify"));
     }
 
     #[test]
     fn timeout_on_unknown_step_is_an_error() {
-        let (storage, mut inst, _executor) = instance("timeout-unknown-step", 2);
+        let (storage, mut inst, executor) = instance("timeout-unknown-step", 2);
 
-        let result = resume_after_human_gate_timeout(&storage, &mut inst, "no-such-step");
+        let result =
+            resume_after_human_gate_timeout(&storage, &executor, &mut inst, "no-such-step");
 
         assert!(matches!(
             result,
@@ -1299,8 +1601,9 @@ steps:
 ";
         let (storage, mut inst) = instance_with_process(YAML, "timeout-branch-bad-target");
         inst.current_step = Some("gate".into());
+        let executor = FakeExecutor { risk: 0 };
 
-        let result = resume_after_human_gate_timeout(&storage, &mut inst, "gate");
+        let result = resume_after_human_gate_timeout(&storage, &executor, &mut inst, "gate");
 
         assert!(matches!(
             result,

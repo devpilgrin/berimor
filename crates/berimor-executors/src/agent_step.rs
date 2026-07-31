@@ -86,6 +86,9 @@ pub enum AgentStepError {
     VerificationFailed(String),
     #[error("свободный цикл исчерпал лимит ходов ({max_turns}) без Finish")]
     TurnsExhausted { max_turns: u32 },
+    /// TD1.5: `SecurityEvent` уже журналируется хуком `on_attempt`.
+    #[error("инцидент безопасности: {reason}")]
+    SecurityViolation { reason: String },
 }
 
 /// Исполнитель `agent_step`-шагов. Объединяет зависимости `StructuredLlm`
@@ -315,6 +318,9 @@ impl AgentStepExecutor<'_> {
                         stage: escalated_from,
                     })
                 }
+                MediationOutcome::SecurityViolation { reason } => {
+                    return Err(AgentStepError::SecurityViolation { reason })
+                }
             }
         }
         unreachable!("последняя попытка завершается Escalate, не Retry (pipeline::mediate)")
@@ -417,6 +423,9 @@ impl AgentStepExecutor<'_> {
                 reason,
                 stage: escalated_from,
             }),
+            MediationOutcome::SecurityViolation { reason } => {
+                Err(AgentStepError::SecurityViolation { reason })
+            }
         }
     }
 
@@ -457,6 +466,9 @@ impl AgentStepExecutor<'_> {
                 reason,
                 stage: escalated_from,
             }),
+            MediationOutcome::SecurityViolation { reason } => {
+                Err(AgentStepError::SecurityViolation { reason })
+            }
         }
     }
 }

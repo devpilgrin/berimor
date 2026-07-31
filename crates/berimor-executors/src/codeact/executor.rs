@@ -75,6 +75,9 @@ pub enum CodeActError {
     },
     #[error("исчерпаны попытки ({max_attempts}) написать программу, проходящую все проверки")]
     AttemptsExhausted { max_attempts: u8 },
+    /// TD1.5: `SecurityEvent` уже журналируется хуком `on_attempt`.
+    #[error("инцидент безопасности: {reason}")]
+    SecurityViolation { reason: String },
 }
 
 /// Исполнитель `codeact`-шагов. `wasm_host` уже несёт `dispatch`/`gate`/
@@ -199,6 +202,9 @@ impl CodeActExecutor<'_> {
                         reason,
                         stage: escalated_from,
                     })
+                }
+                MediationOutcome::SecurityViolation { reason } => {
+                    return Err(CodeActError::SecurityViolation { reason })
                 }
             }
         }

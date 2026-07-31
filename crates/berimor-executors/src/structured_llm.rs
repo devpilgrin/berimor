@@ -140,6 +140,10 @@ pub enum StructuredLlmError {
         reason: String,
         stage: MediationStage,
     },
+    /// TD1.5: `SecurityEvent` уже журналируется хуком `on_attempt` —
+    /// здесь только пробрасывается терминальная ошибка шага.
+    #[error("инцидент безопасности: {reason}")]
+    SecurityViolation { reason: String },
 }
 
 /// Исполнитель `llm_structured`-шагов. Собирается один раз на запуск
@@ -237,6 +241,9 @@ impl StructuredLlm<'_> {
                         reason,
                         stage: escalated_from,
                     })
+                }
+                MediationOutcome::SecurityViolation { reason } => {
+                    return Err(StructuredLlmError::SecurityViolation { reason })
                 }
             }
         }

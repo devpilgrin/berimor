@@ -33,4 +33,13 @@ pub enum MediationOutcome<T> {
         reason: String,
         escalated_from: MediationStage,
     },
+    /// Техдолг TD1.5 (`docs/audit-2026-07-31.md`): утечка секрета была
+    /// неотличима от обычного отказа политики — обе давали
+    /// `Escalate{escalated_from: Policy, ..}`, хотя doc-таблица
+    /// `pipeline.rs` §5 требует разного исхода: «утечка секрета — 0
+    /// повторов, падение процесса + событие безопасности», не «человек».
+    /// Отдельный вариант ТИПА, не просто другой текст `reason`.
+    SecurityViolation {
+        reason: String,
+    },
 }

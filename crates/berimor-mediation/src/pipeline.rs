@@ -66,11 +66,15 @@ pub fn mediate<C: Contract>(
     // Утечка секрета — не просто отказ политики, а немедленная эскалация
     // без повтора и с отдельной причиной (mediation.md §5: «попытка
     // утечки секрета» — своя строка в таблице, отдельная от «нарушение
-    // политики»), проверяется первой из трёх policy-проверок.
+    // политики»: «0 повторов, падение процесса + событие безопасности»,
+    // не «человек»), проверяется первой из трёх policy-проверок.
+    // Техдолг TD1.5: раньше здесь тоже возвращался `Escalate` — тот же
+    // вариант ТИПА, что обычное нарушение политики, хотя doc-таблица
+    // выше требует другого исхода. `SecurityViolation` — отдельный
+    // вариант, различимый вызывающим кодом БЕЗ разбора текста `reason`.
     if let Err(err) = policy::check_no_leaked_secrets(&parsed, rules.known_secrets) {
-        return MediationOutcome::Escalate {
+        return MediationOutcome::SecurityViolation {
             reason: err.to_string(),
-            escalated_from: MediationStage::Policy,
         };
     }
 
@@ -234,12 +238,12 @@ mod tests {
 
         let outcome = mediate::<SupportReply>("answer", raw, &state(), None, &rules, 0);
 
+        // Техдолг TD1.5: раньше здесь был `Escalate{escalated_from: Policy}`
+        // — тот же вариант, что обычное нарушение политики. Теперь —
+        // отдельный вариант типа, различимый без разбора текста `reason`.
         assert!(matches!(
             outcome,
-            MediationOutcome::Escalate {
-                escalated_from: MediationStage::Policy,
-                ..
-            }
+            MediationOutcome::SecurityViolation { .. }
         ));
     }
 

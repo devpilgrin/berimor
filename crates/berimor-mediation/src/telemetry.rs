@@ -30,6 +30,17 @@ pub fn outcome_to_event_kind<T>(outcome: &MediationOutcome<T>) -> EventKind {
         MediationOutcome::Escalate { reason, .. } => EventKind::MediationRejected {
             reason: reason.clone(),
         },
+        // Техдолг TD1.5 (`docs/audit-2026-07-31.md`): утечка секрета
+        // журналируется отдельным `SecurityEvent`, не `MediationRejected`
+        // — это и есть исход, который раньше был неотличим по типу
+        // (см. `pipeline.rs::mediate`). `on_attempt`-хук (M7, уже
+        // подключён во всех трёх исполнителях с моделью) вызывает эту
+        // функцию на КАЖДЫЙ исход, включая этот — реальное журналирование
+        // происходит там же, где уже пишутся остальные события Mediation,
+        // ничего нового вызывающему коду подключать не нужно.
+        MediationOutcome::SecurityViolation { reason } => EventKind::SecurityEvent {
+            detail: reason.clone(),
+        },
     }
 }
 
@@ -70,6 +81,11 @@ impl MediationAttempt {
             MediationOutcome::Escalate { escalated_from, .. } => {
                 (true, *escalated_from != MediationStage::Policy)
             }
+            // Утечка секрета — не Policy-эскалация по стадии (нет
+            // `escalated_from` вообще, это отдельный исход), но для
+            // агрегации «отклонено» — та же семантика: посчитана как
+            // отказ, не как повторно-эскалированный Policy-случай.
+            MediationOutcome::SecurityViolation { .. } => (true, false),
         };
         Self {
             process: process.to_string(),
