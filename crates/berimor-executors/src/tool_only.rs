@@ -56,10 +56,6 @@ pub enum ToolOnlyError {
 /// capability-слой и вызывает инструмент. Результат становится `changes`
 /// патча как есть — `ToolOnly` не требует контракта (`executors.md` §2),
 /// в отличие от шагов с моделью.
-///
-/// `ProposedAction.mutates` здесь — пессимистичный `true`: исполнитель не
-/// знает природу конкретного инструмента; точная декларация — в политике
-/// инструмента на стороне гейта (S4), которая перекрывает флаг.
 #[allow(clippy::too_many_arguments)]
 pub fn execute(
     step_id: &str,
@@ -72,6 +68,33 @@ pub fn execute(
     confirmer: &dyn ConfirmationHandler,
 ) -> Result<Patch, ToolOnlyError> {
     let resolved_args = resolve_template(args_template, state)?;
+    let result = dispatch_confirmed(tool, &resolved_args, dispatch, gate, mode, confirmer)?;
+    Ok(Patch {
+        step_id: step_id.to_string(),
+        changes: result,
+    })
+}
+
+/// Общая часть между `execute()` (аргументы — шаблон, резолвится ДО
+/// вызова из состояния процесса) и `AgentStep` (`agent_step.rs`, ROADMAP
+/// E9: аргументы хода — уже конкретные значения, которые выбрала модель
+/// за один ход, не шаблон доверенного процесса, резолвить нечего) —
+/// capability-гейт → подтверждение → вызов, без сборки `Patch`: у
+/// вызывающего кода разный смысл результата (у `ToolOnly` — сразу патч
+/// состояния, у `AgentStep` — наблюдение для следующего хода, в
+/// состояние попадает только после `Finish`, отдельным путём Mediation).
+///
+/// `ProposedAction.mutates` здесь — пессимистичный `true`: исполнитель не
+/// знает природу конкретного инструмента; точная декларация — в политике
+/// инструмента на стороне гейта (S4), которая перекрывает флаг.
+pub fn dispatch_confirmed(
+    tool: &str,
+    resolved_args: &Value,
+    dispatch: &dyn ToolDispatch,
+    gate: &dyn CapabilityGate,
+    mode: ConfirmationMode,
+    confirmer: &dyn ConfirmationHandler,
+) -> Result<Value, ToolOnlyError> {
     let action = ProposedAction {
         tool: tool.to_string(),
         args: resolved_args.clone(),
@@ -90,11 +113,7 @@ pub fn execute(
         }
     }
 
-    let result = dispatch.call(tool, &resolved_args)?;
-    Ok(Patch {
-        step_id: step_id.to_string(),
-        changes: result,
-    })
+    Ok(dispatch.call(tool, resolved_args)?)
 }
 
 /// Разрешает шаблоны вида `{{state.a.b}}` рекурсивно по объекту/массиву.

@@ -57,7 +57,11 @@ pub struct ContractAdapter {
     /// Политики шага: какие поля — ссылки на состояние, какие межполевые
     /// правила действуют. Знает шаг, не контракт вообще (см. pipeline.rs).
     pub policy_rules: fn() -> PolicyRules<'static>,
-    mediate: MediateFn,
+    /// `pub(crate)`, не `pub`: единственные вызывающие — `execute()` в
+    /// этом модуле и `agent_step::AgentStepExecutor::finalize` (E9,
+    /// тот же путь валидации финального результата, что у
+    /// `LlmStructured`) — оба внутри `berimor-executors`.
+    pub(crate) mediate: MediateFn,
 }
 
 /// Реестр контрактов Milestone 1: оба контракта golden-процесса. Имена

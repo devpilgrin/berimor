@@ -1,3 +1,742 @@
 //! AgentStep — свободный цикл «рассуждение → действие → наблюдение», выделенный случай.
 //!
 //! Источник: `docs/arch/executors.md` §5. ROADMAP: E9.
+//!
+//! Цикл: на каждом ходу модель отвечает `AgentTurnDecision`
+//! (`berimor_mediation::contracts`) — фиксированная форма, ОДНА на все
+//! `agent_step`-шаги системы, не зависящая от контракта финального
+//! результата. `Tool`-действие идёт через тот же путь
+//! «capability-гейт → подтверждение → диспетч», что и обычный `ToolOnly`
+//! (`tool_only::dispatch_confirmed` — общая функция, не копия). `Finish`
+//! завершает цикл: `result` валидируется отдельным проходом Mediation
+//! против КОНКРЕТНОГО контракта, который декларирует
+//! `StepKind::AgentStep.contract` (реестр `structured_llm::contract_registry`,
+//! тот же путь, что и у `LlmStructured`/`CodeAct`).
+//!
+//! Что честно не входит (см. `docs/ROADMAP.md`, задокументированный, не
+//! забытый пробел): бюджет токенов (`ModelProvider`/`CompletionResponse`
+//! нигде не считает использование — тот же класс, что
+//! `ProcessLimits.token_budget`, P6); суб-шаговый снапшот «перед каждой
+//! правкой» (Process Engine снапшотит после `AgentStep` целиком, как и
+//! после `CodeAct`/`LlmStructured` — синхронный контракт `StepExecutor`,
+//! один `Patch` на вызов); режим «пользовательский люк» вне процесса.
+
+use crate::structured_llm::{self, ContractAdapter};
+use crate::tool_only::{self, ConfirmationHandler, ToolDispatch};
+use berimor_capability::CapabilityGate;
+use berimor_context_engine::ContextBuilder;
+use berimor_mediation::{
+    contracts::{AgentAction, AgentTurnDecision, AgentVerdict},
+    pipeline::{self, PolicyRules},
+};
+use berimor_model_pool::ModelPool;
+use berimor_types::contract::Contract;
+use berimor_types::{
+    capability::ConfirmationMode,
+    executor::ModelProvider,
+    mediation::{MediationOutcome, MediationStage},
+    model::{CompletionRequest, ModelError, ModelTier, ModelTierRequirement},
+    step::Patch,
+};
+use serde_json::Value;
+use std::collections::HashMap;
+
+/// До 3 попыток на разбор/схему хода — то же число, что у `StructuredLlm`
+/// (`mediation.md` §5: до 2 повторов + первая попытка).
+const MAX_ATTEMPTS: u8 = 3;
+
+#[derive(Debug, thiserror::Error)]
+pub enum AgentStepError {
+    #[error("неизвестный контракт '{0}' (нет в реестре E2) для финального результата AgentStep")]
+    UnknownContract(String),
+    #[error("нет провайдера, удовлетворяющего требованию шага: {0} — молчаливое понижение класса недопустимо (ideal-agent §3.10)")]
+    NoProvider(String),
+    #[error("провайдер из реестра не подключён к пулу: '{0}'")]
+    ProviderNotWired(String),
+    #[error(transparent)]
+    Model(#[from] ModelError),
+    #[error("эскалация Mediation на стадии {stage:?}: {reason}")]
+    Escalated {
+        reason: String,
+        stage: MediationStage,
+    },
+    /// Capability-деним/отказ на подтверждении — терминальная ошибка
+    /// хода, не повод для ретрая: и то и другое — решение, которое
+    /// цикл обязан уважать, не пытаться обойти переформулировкой
+    /// (security-model.md: «нет неявного расширения привилегий»).
+    #[error("действие '{tool}' отклонено: {reason}")]
+    ActionRejected { tool: String, reason: String },
+    /// «Предложи-выполни-проверь» (executors.md §5): отрицательный
+    /// вердикт после `Tool`-действия — терминальный исход цикла, один
+    /// из трёх наравне с финальным ответом и исчерпанием `max_turns`.
+    #[error("проверка действия дала отрицательный вердикт: {0}")]
+    VerificationFailed(String),
+    #[error("свободный цикл исчерпал лимит ходов ({max_turns}) без Finish")]
+    TurnsExhausted { max_turns: u32 },
+}
+
+/// Исполнитель `agent_step`-шагов. Объединяет зависимости `StructuredLlm`
+/// (ход — решение модели) и `ToolOnly` (ход — вызов инструмента): один
+/// цикл может состоять из ходов обоих видов.
+pub struct AgentStepExecutor<'a> {
+    pub pool: &'a ModelPool,
+    pub providers: &'a HashMap<String, &'a dyn ModelProvider>,
+    pub context: &'a dyn ContextBuilder,
+    pub on_attempt: Option<&'a dyn Fn(berimor_types::event::EventKind)>,
+    pub gate: &'a dyn CapabilityGate,
+    pub mode: ConfirmationMode,
+    pub confirmer: &'a dyn ConfirmationHandler,
+    pub dispatch: &'a dyn ToolDispatch,
+}
+
+/// Один завершённый ход истории — то, что видит модель на следующем
+/// ходу (`executors.md` §5: «наблюдение» становится частью следующего
+/// «рассуждения»).
+struct TurnRecord {
+    thought: String,
+    action: String,
+    observation: String,
+}
+
+impl AgentStepExecutor<'_> {
+    /// `contract_name` — форма `Finish.result` (`StepKind::AgentStep.contract`).
+    /// `latency_budget_ms` — тот же SLA отбора провайдера, что у
+    /// `StructuredLlm` (ADR-0011), применяется к каждому ходу отдельно.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute(
+        &self,
+        step_id: &str,
+        contract_name: &str,
+        max_turns: u32,
+        self_critique: bool,
+        verify_actions: bool,
+        state: &Value,
+        latency_budget_ms: Option<u64>,
+    ) -> Result<Patch, AgentStepError> {
+        let final_adapter = structured_llm::find_contract(contract_name)
+            .ok_or_else(|| AgentStepError::UnknownContract(contract_name.into()))?;
+
+        // Требование по классу модели у AgentStep не декларируется
+        // отдельно (`StepKind::AgentStep` не несёт `model_tier`, в
+        // отличие от `LlmStructured`) — `Any` не молчаливое понижение
+        // (ideal-agent §3.10 запрещает понижать УЖЕ заявленное
+        // требование), это единственное требование, которое шаг вообще
+        // заявил.
+        let entry = self
+            .pool
+            .select(ModelTierRequirement::Any, latency_budget_ms)
+            .ok_or_else(|| AgentStepError::NoProvider("Any".into()))?;
+        let provider = *self
+            .providers
+            .get(&entry.identity.provider)
+            .ok_or_else(|| AgentStepError::ProviderNotWired(entry.identity.provider.clone()))?;
+        let model_tier = entry.identity.tier;
+
+        let layers = self.context.build("agent_step", model_tier, state, step_id);
+        let system_context = layers
+            .iter()
+            .map(|l| format!("## {}\n{}", l.name, l.content))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let mut history: Vec<TurnRecord> = Vec::new();
+        let mut retry_feedback: Option<String> = None;
+
+        for _turn in 0..max_turns {
+            let decision = self.decide_turn(
+                step_id,
+                final_adapter,
+                &system_context,
+                provider,
+                model_tier,
+                &history,
+                retry_feedback.take(),
+            )?;
+
+            match decision.action {
+                AgentAction::Tool { tool, args } => {
+                    let observation = tool_only::dispatch_confirmed(
+                        &tool,
+                        &args,
+                        self.dispatch,
+                        self.gate,
+                        self.mode,
+                        self.confirmer,
+                    )
+                    .map_err(|err| AgentStepError::ActionRejected {
+                        tool: tool.clone(),
+                        reason: err.to_string(),
+                    })?;
+
+                    if verify_actions {
+                        self.verify_action(
+                            step_id,
+                            &system_context,
+                            provider,
+                            model_tier,
+                            &tool,
+                            &args,
+                            &observation,
+                        )?;
+                    }
+
+                    history.push(TurnRecord {
+                        thought: decision.thought,
+                        action: format!("tool:{tool}({args})"),
+                        observation: observation.to_string(),
+                    });
+                }
+                AgentAction::Finish { result } => {
+                    if self_critique {
+                        if let Some(reason) = self.critique_finish(
+                            step_id,
+                            &system_context,
+                            provider,
+                            model_tier,
+                            &decision.thought,
+                            &result,
+                        )? {
+                            // Самокритика отклонила ответ — не
+                            // терминально: становится причиной повтора
+                            // хода (executors.md §5: «оценивает свой
+                            // шаг ДО продолжения»).
+                            retry_feedback = Some(format!(
+                                "Самокритика отклонила предложенный финальный ответ: {reason}. Попробуй снова."
+                            ));
+                            continue;
+                        }
+                    }
+                    return self.finalize(step_id, final_adapter, state, model_tier, result);
+                }
+            }
+        }
+
+        Err(AgentStepError::TurnsExhausted { max_turns })
+    }
+
+    /// Один ход: подсказка из истории + схемы (хода и финального
+    /// контракта) → модель → `AgentTurnDecision` через `pipeline::mediate`
+    /// (без реестра — тип известен статически, в отличие от финального
+    /// контракта, который выбирается декларацией процесса по имени).
+    #[allow(clippy::too_many_arguments)]
+    fn decide_turn(
+        &self,
+        step_id: &str,
+        final_adapter: &ContractAdapter,
+        system_context: &str,
+        provider: &dyn ModelProvider,
+        model_tier: ModelTier,
+        history: &[TurnRecord],
+        initial_feedback: Option<String>,
+    ) -> Result<AgentTurnDecision, AgentStepError> {
+        let mut retry_feedback = initial_feedback;
+        for attempt in 0..MAX_ATTEMPTS {
+            let prompt =
+                build_turn_prompt(step_id, final_adapter, history, retry_feedback.as_deref());
+            let response = provider.complete(CompletionRequest {
+                system_context: system_context.to_string(),
+                prompt,
+                contract_name: Some(AgentTurnDecision::NAME.into()),
+            })?;
+
+            let outcome = pipeline::mediate::<AgentTurnDecision>(
+                step_id,
+                &response.raw_text,
+                &Value::Null,
+                Some(model_tier),
+                &PolicyRules::default(),
+                attempt,
+            );
+            if let Some(hook) = self.on_attempt {
+                hook(berimor_mediation::telemetry::outcome_to_event_kind(
+                    &outcome,
+                ));
+            }
+
+            match outcome {
+                MediationOutcome::Committed(commit) => {
+                    return Ok(serde_json::from_value(commit.patch.changes)
+                        .expect("AgentTurnDecision, прошедший mediate, разбирается обратно"));
+                }
+                MediationOutcome::Retry(rejection) => {
+                    retry_feedback = Some(format!(
+                        "Предыдущий ход отклонён на стадии {:?}: {}. Ответь заново по схеме хода.",
+                        rejection.stage, rejection.reason
+                    ));
+                }
+                MediationOutcome::Escalate {
+                    reason,
+                    escalated_from,
+                } => {
+                    return Err(AgentStepError::Escalated {
+                        reason,
+                        stage: escalated_from,
+                    })
+                }
+            }
+        }
+        unreachable!("последняя попытка завершается Escalate, не Retry (pipeline::mediate)")
+    }
+
+    /// «Предложи-выполни-проверь»: отдельный вердикт после наблюдения за
+    /// `Tool`-действием. Одна попытка — вердикт сам по себе не то, что
+    /// имеет смысл повторять текстом ошибки валидации (в отличие от
+    /// хода): при отказе разбора/схемы самого вердикта — эскалация, не
+    /// повторный запрос вердикта.
+    #[allow(clippy::too_many_arguments)]
+    fn verify_action(
+        &self,
+        step_id: &str,
+        system_context: &str,
+        provider: &dyn ModelProvider,
+        model_tier: ModelTier,
+        tool: &str,
+        args: &Value,
+        observation: &Value,
+    ) -> Result<(), AgentStepError> {
+        let prompt = format!(
+            "Проверь действие шага '{step_id}'. Вызван инструмент '{tool}' с аргументами {args}, \
+             наблюдение: {observation}. Ответь JSON по схеме {{\"passed\": bool, \"reason\": string}} — \
+             прошло ли действие критерии задачи."
+        );
+        let verdict = self.single_verdict(system_context, provider, model_tier, step_id, prompt)?;
+        if verdict.passed {
+            Ok(())
+        } else {
+            Err(AgentStepError::VerificationFailed(verdict.reason))
+        }
+    }
+
+    /// Самокритика перед принятием `Finish`. `Ok(Some(reason))` — вердикт
+    /// отрицательный, `reason` — текст для повтора; `Ok(None)` — принят.
+    fn critique_finish(
+        &self,
+        step_id: &str,
+        system_context: &str,
+        provider: &dyn ModelProvider,
+        model_tier: ModelTier,
+        thought: &str,
+        result: &Value,
+    ) -> Result<Option<String>, AgentStepError> {
+        let prompt = format!(
+            "Оцени свой собственный шаг перед завершением шага '{step_id}'. Рассуждение: {thought}. \
+             Предложенный финальный результат: {result}. Ответь JSON по схеме \
+             {{\"passed\": bool, \"reason\": string}} — действительно ли это полный и корректный ответ на задачу."
+        );
+        let verdict = self.single_verdict(system_context, provider, model_tier, step_id, prompt)?;
+        Ok(if verdict.passed {
+            None
+        } else {
+            Some(verdict.reason)
+        })
+    }
+
+    fn single_verdict(
+        &self,
+        system_context: &str,
+        provider: &dyn ModelProvider,
+        model_tier: ModelTier,
+        step_id: &str,
+        prompt: String,
+    ) -> Result<AgentVerdict, AgentStepError> {
+        let response = provider.complete(CompletionRequest {
+            system_context: system_context.to_string(),
+            prompt,
+            contract_name: Some(AgentVerdict::NAME.into()),
+        })?;
+
+        let outcome = pipeline::mediate::<AgentVerdict>(
+            step_id,
+            &response.raw_text,
+            &Value::Null,
+            Some(model_tier),
+            &PolicyRules::default(),
+            0,
+        );
+        if let Some(hook) = self.on_attempt {
+            hook(berimor_mediation::telemetry::outcome_to_event_kind(
+                &outcome,
+            ));
+        }
+        match outcome {
+            MediationOutcome::Committed(commit) => Ok(serde_json::from_value(commit.patch.changes)
+                .expect("AgentVerdict, прошедший mediate, разбирается обратно")),
+            MediationOutcome::Retry(rejection) => Err(AgentStepError::Escalated {
+                reason: format!(
+                    "вердикт не прошёл {:?}: {} (вердикт не повторяется)",
+                    rejection.stage, rejection.reason
+                ),
+                stage: rejection.stage,
+            }),
+            MediationOutcome::Escalate {
+                reason,
+                escalated_from,
+            } => Err(AgentStepError::Escalated {
+                reason,
+                stage: escalated_from,
+            }),
+        }
+    }
+
+    /// Финальная валидация `Finish.result` против ЗАДЕКЛАРИРОВАННОГО
+    /// контракта шага (`adapter`) — тот же путь, что у `LlmStructured`/
+    /// `CodeAct`: `result` уже был один раз распарсен как JSON внутри
+    /// `AgentTurnDecision`, здесь он проходит СВОЙ собственный
+    /// parse→schema→policy→commit, не наследует статус проверки хода.
+    fn finalize(
+        &self,
+        step_id: &str,
+        adapter: &ContractAdapter,
+        state: &Value,
+        model_tier: ModelTier,
+        result: Value,
+    ) -> Result<Patch, AgentStepError> {
+        let raw = serde_json::to_string(&result).expect("Value всегда сериализуем в JSON-текст");
+        let rules = (adapter.policy_rules)();
+        let outcome = (adapter.mediate)(step_id, &raw, state, Some(model_tier), &rules, 0);
+        if let Some(hook) = self.on_attempt {
+            hook(berimor_mediation::telemetry::outcome_to_event_kind(
+                &outcome,
+            ));
+        }
+        match outcome {
+            MediationOutcome::Committed(commit) => Ok(commit.patch),
+            MediationOutcome::Retry(rejection) => Err(AgentStepError::Escalated {
+                reason: format!(
+                    "финальный результат отклонён на стадии {:?}: {} (без повтора — цикл уже завершался)",
+                    rejection.stage, rejection.reason
+                ),
+                stage: rejection.stage,
+            }),
+            MediationOutcome::Escalate {
+                reason,
+                escalated_from,
+            } => Err(AgentStepError::Escalated {
+                reason,
+                stage: escalated_from,
+            }),
+        }
+    }
+}
+
+/// Подсказка хода: схема `AgentTurnDecision` + описание финального
+/// контракта (чтобы модель знала форму `Finish.result`, когда решит
+/// завершить) + история прежних ходов + текст ошибки повтора, если есть.
+fn build_turn_prompt(
+    step_id: &str,
+    final_adapter: &ContractAdapter,
+    history: &[TurnRecord],
+    retry_feedback: Option<&str>,
+) -> String {
+    let turn_schema = serde_json::to_string_pretty(&schemars::schema_for!(AgentTurnDecision))
+        .expect("схема derive-типа всегда сериализуема");
+    let final_schema = serde_json::to_string_pretty(&(final_adapter.json_schema)())
+        .expect("схема контракта всегда сериализуема");
+    let final_example = serde_json::to_string_pretty(&(final_adapter.example)())
+        .expect("пример контракта всегда сериализуем");
+
+    let mut prompt = format!(
+        "Шаг процесса: {step_id}. Свободный цикл «рассуждение → действие → наблюдение» \
+         (executors.md §5): на каждом ходу выбери РОВНО одно действие.\n\
+         Ответь JSON-объектом по схеме хода (AgentTurnDecision):\n{turn_schema}\n\n\
+         Действие \"tool\" — вызов инструмента (пример: \
+         {{\"thought\": \"...\", \"action\": {{\"kind\": \"tool\", \"tool\": \"имя\", \"args\": {{}}}}}}).\n\
+         Действие \"finish\" завершает цикл — `result` ОБЯЗАН соответствовать контракту {name} \
+         (версия {version}):\n{final_schema}\n\
+         Пример корректного result: {final_example}",
+        name = final_adapter.name,
+        version = final_adapter.schema_version,
+    );
+
+    if !history.is_empty() {
+        prompt.push_str("\n\nИстория ходов:\n");
+        for (i, turn) in history.iter().enumerate() {
+            prompt.push_str(&format!(
+                "{}. рассуждение: {}\n   действие: {}\n   наблюдение: {}\n",
+                i + 1,
+                turn.thought,
+                turn.action,
+                turn.observation
+            ));
+        }
+    }
+
+    if let Some(feedback) = retry_feedback {
+        prompt.push_str("\n\n");
+        prompt.push_str(feedback);
+    }
+
+    prompt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use berimor_context_engine::SimpleContextBuilder;
+    use berimor_model_pool::{ModelEntry, ProviderKind};
+    use berimor_types::capability::{CapabilityDecision, ProposedAction};
+    use berimor_types::model::{CompletionResponse, ModelIdentity};
+    use serde_json::json;
+    use std::sync::Mutex;
+
+    struct ScriptedProvider {
+        responses: Mutex<Vec<String>>,
+    }
+
+    impl ScriptedProvider {
+        fn new(responses: Vec<&str>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().map(String::from).collect()),
+            }
+        }
+    }
+
+    impl ModelProvider for ScriptedProvider {
+        fn complete(&self, _request: CompletionRequest) -> Result<CompletionResponse, ModelError> {
+            let mut responses = self.responses.lock().unwrap();
+            assert!(
+                !responses.is_empty(),
+                "сценарий исчерпан раньше, чем ожидалось"
+            );
+            let raw = if responses.len() > 1 {
+                responses.remove(0)
+            } else {
+                responses[0].clone()
+            };
+            Ok(CompletionResponse {
+                raw_text: raw,
+                model: ModelIdentity {
+                    provider: "scripted".into(),
+                    model_id: "scripted-model".into(),
+                    tier: ModelTier::Weak,
+                },
+            })
+        }
+    }
+
+    struct AllowAll;
+    impl CapabilityGate for AllowAll {
+        fn check(&self, _action: &ProposedAction, _mode: ConfirmationMode) -> CapabilityDecision {
+            CapabilityDecision::Allow
+        }
+    }
+
+    struct DenyAll;
+    impl CapabilityGate for DenyAll {
+        fn check(&self, _action: &ProposedAction, _mode: ConfirmationMode) -> CapabilityDecision {
+            CapabilityDecision::Deny {
+                reason: "тестовый статический запрет".into(),
+            }
+        }
+    }
+
+    struct AutoConfirm;
+    impl ConfirmationHandler for AutoConfirm {
+        fn confirm(&self, _action: &ProposedAction, _reason: &str) -> bool {
+            true
+        }
+    }
+
+    struct FakeCrm;
+    impl ToolDispatch for FakeCrm {
+        fn call(&self, tool: &str, args: &Value) -> Result<Value, tool_only::DispatchError> {
+            match tool {
+                "crm.get_card_status" => Ok(json!({"status": "active", "card_id": args["id"]})),
+                other => Err(tool_only::DispatchError {
+                    tool: other.into(),
+                    reason: "неизвестный инструмент в фейке теста".into(),
+                }),
+            }
+        }
+    }
+
+    /// Дозволяет собрать `AgentStepExecutor`, никогда не должен реально
+    /// вызываться — доказывает, что заблокированное capability-слоем
+    /// действие не доходит до диспетча (не обходится).
+    struct PanicsIfCalled;
+    impl ToolDispatch for PanicsIfCalled {
+        fn call(&self, _tool: &str, _args: &Value) -> Result<Value, tool_only::DispatchError> {
+            panic!("диспетч не должен вызываться для действия, отклонённого capability-слоем")
+        }
+    }
+
+    fn pool_and_providers(
+        provider: &'static ScriptedProvider,
+    ) -> (ModelPool, HashMap<String, &'static dyn ModelProvider>) {
+        let mut pool = ModelPool::new();
+        pool.register(ModelEntry {
+            identity: ModelIdentity {
+                provider: "scripted".into(),
+                model_id: "scripted-model".into(),
+                tier: ModelTier::Weak,
+            },
+            kind: ProviderKind::Local,
+            cost_per_1k_tokens: None,
+            measured_latency_ms: None,
+        });
+        let mut providers: HashMap<String, &'static dyn ModelProvider> = HashMap::new();
+        providers.insert("scripted".into(), provider);
+        (pool, providers)
+    }
+
+    const TOOL_TURN: &str = r#"{"thought": "Нужен статус карты.", "action": {"kind": "tool", "tool": "crm.get_card_status", "args": {"id": "c-1"}}}"#;
+    const FINISH_TURN: &str = r#"{"thought": "Готово.", "action": {"kind": "finish", "result": {"card_id": "c-1", "reply": "готово"}}}"#;
+    const VERDICT_PASSED: &str = r#"{"passed": true, "reason": "критерии выполнены"}"#;
+    const VERDICT_FAILED: &str = r#"{"passed": false, "reason": "недостаточно данных"}"#;
+
+    #[test]
+    fn happy_path_tool_turn_then_finish_produces_patch() {
+        let provider: &'static ScriptedProvider = Box::leak(Box::new(ScriptedProvider::new(vec![
+            TOOL_TURN,
+            FINISH_TURN,
+        ])));
+        let (pool, providers) = pool_and_providers(provider);
+        let executor = AgentStepExecutor {
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            gate: &AllowAll,
+            mode: ConfirmationMode::Off,
+            confirmer: &AutoConfirm,
+            dispatch: &FakeCrm,
+        };
+
+        let state = json!({"user": {"card_id": "c-1"}});
+        let patch = executor
+            .execute("answer", "SupportReply", 5, false, false, &state, None)
+            .unwrap();
+
+        assert_eq!(patch.step_id, "answer");
+        assert_eq!(patch.changes["reply"], "готово");
+        assert_eq!(patch.changes["card_id"], "c-1");
+    }
+
+    #[test]
+    fn self_critique_rejects_first_finish_and_accepts_the_second() {
+        let provider: &'static ScriptedProvider = Box::leak(Box::new(ScriptedProvider::new(vec![
+            FINISH_TURN,
+            VERDICT_FAILED,
+            FINISH_TURN,
+            VERDICT_PASSED,
+        ])));
+        let (pool, providers) = pool_and_providers(provider);
+        let executor = AgentStepExecutor {
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            gate: &AllowAll,
+            mode: ConfirmationMode::Off,
+            confirmer: &AutoConfirm,
+            dispatch: &PanicsIfCalled,
+        };
+
+        let state = json!({"user": {"card_id": "c-1"}});
+        let patch = executor
+            .execute("answer", "SupportReply", 5, true, false, &state, None)
+            .unwrap();
+
+        assert_eq!(patch.changes["reply"], "готово");
+    }
+
+    #[test]
+    fn verify_actions_stops_the_loop_on_a_negative_verdict() {
+        let provider: &'static ScriptedProvider = Box::leak(Box::new(ScriptedProvider::new(vec![
+            TOOL_TURN,
+            VERDICT_FAILED,
+        ])));
+        let (pool, providers) = pool_and_providers(provider);
+        let executor = AgentStepExecutor {
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            gate: &AllowAll,
+            mode: ConfirmationMode::Off,
+            confirmer: &AutoConfirm,
+            dispatch: &FakeCrm,
+        };
+
+        let state = json!({"user": {"card_id": "c-1"}});
+        let result = executor.execute("answer", "SupportReply", 5, false, true, &state, None);
+
+        assert!(matches!(result, Err(AgentStepError::VerificationFailed(_))));
+    }
+
+    #[test]
+    fn turns_exhausted_without_finish_is_an_error_not_a_silent_empty_patch() {
+        let provider: &'static ScriptedProvider =
+            Box::leak(Box::new(ScriptedProvider::new(vec![TOOL_TURN])));
+        let (pool, providers) = pool_and_providers(provider);
+        let executor = AgentStepExecutor {
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            gate: &AllowAll,
+            mode: ConfirmationMode::Off,
+            confirmer: &AutoConfirm,
+            dispatch: &FakeCrm,
+        };
+
+        let state = json!({"user": {"card_id": "c-1"}});
+        let result = executor.execute("answer", "SupportReply", 1, false, false, &state, None);
+
+        assert!(matches!(
+            result,
+            Err(AgentStepError::TurnsExhausted { max_turns: 1 })
+        ));
+    }
+
+    #[test]
+    fn capability_deny_blocks_the_action_before_dispatch_is_ever_called() {
+        let provider: &'static ScriptedProvider =
+            Box::leak(Box::new(ScriptedProvider::new(vec![TOOL_TURN])));
+        let (pool, providers) = pool_and_providers(provider);
+        let executor = AgentStepExecutor {
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            gate: &DenyAll,
+            mode: ConfirmationMode::Off,
+            confirmer: &AutoConfirm,
+            dispatch: &PanicsIfCalled,
+        };
+
+        let state = json!({"user": {"card_id": "c-1"}});
+        let result = executor.execute("answer", "SupportReply", 5, false, false, &state, None);
+
+        assert!(matches!(result, Err(AgentStepError::ActionRejected { .. })));
+    }
+
+    #[test]
+    fn unknown_final_contract_is_an_error_before_any_model_call() {
+        let provider: &'static ScriptedProvider =
+            Box::leak(Box::new(ScriptedProvider::new(vec![FINISH_TURN])));
+        let (pool, providers) = pool_and_providers(provider);
+        let executor = AgentStepExecutor {
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            gate: &AllowAll,
+            mode: ConfirmationMode::Off,
+            confirmer: &AutoConfirm,
+            dispatch: &PanicsIfCalled,
+        };
+
+        let result = executor.execute(
+            "answer",
+            "NoSuchContract",
+            5,
+            false,
+            false,
+            &json!({}),
+            None,
+        );
+
+        assert!(matches!(result, Err(AgentStepError::UnknownContract(_))));
+    }
+}
