@@ -28,11 +28,15 @@ on:
 jobs:
   build:
     name: ${{ matrix.target }}
-    # Только чтение: сборка/упаковка/upload-artifact не пишут в
-    # репозиторий. contents: write нужен только publish, где реально
-    # создаётся релиз — не всей workflow заранее.
+    # contents: read — сборка/упаковка/upload-artifact не пишут в
+    # репозиторий, contents: write нужен только publish, где реально
+    # создаётся релиз — не всей workflow заранее. id-token: write — это
+    # ЕДИНСТВЕННОЕ, что нужно для keyless-подписи cosign (D2, ADR-0026):
+    # cosign запрашивает у Fulcio короткоживущий сертификат по OIDC-токену
+    # именно этого workflow-запуска, приватный ключ нигде не хранится.
     permissions:
       contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -68,6 +72,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+      - uses: sigstore/cosign-installer@v3
 
       - name: resolve version
         shell: bash
@@ -88,7 +93,7 @@ jobs:
           cp target/release/berimor dist/berimor
           ARCHIVE="berimor-${VERSION}-${{ matrix.target }}.tar.gz"
           tar -C dist -czf "$ARCHIVE" berimor
-          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: package (windows)
         if: runner.os == 'Windows'
@@ -98,21 +103,67 @@ jobs:
           Copy-Item target/release/berimor.exe dist/berimor.exe
           $Archive = "berimor-$env:VERSION-${{ matrix.target }}.zip"
           Compress-Archive -Path dist/berimor.exe -DestinationPath $Archive
-          (Get-FileHash $Archive -Algorithm SHA256).Hash.ToLower() + "  $Archive" | Out-File -Encoding ascii "$Archive.sha256"
+          "ARCHIVE=$Archive" | Out-File -Encoding ascii -Append $env:GITHUB_ENV
 
-      # Контрольная сумма — не замена подписи, только целостность на время,
-      # пока не сделан ROADMAP D2 (sigstore/cosign, keyless). Заменится, не
-      # дополнится: цель — одна подпись, привязанная к идентичности CI
-      # (ADR-0026), а не отдельный параллельный механизм.
+      # Keyless-подпись (D2, ADR-0026): cosign получает OIDC-токен этого
+      # workflow-запуска (id-token: write выше), Fulcio выдаёт короткоживущий
+      # сертификат, привязанный к идентичности workflow — не к чьему-то
+      # приватному ключу. Бандл (`--bundle`) — один JSON-файл с подписью,
+      # сертификатом и записью Rekor; заменяет контрольную сумму, не
+      # дополняет её — так и было задумано изначально в этом файле.
+      - name: sign artifact (cosign keyless)
+        shell: bash
+        run: cosign sign-blob --yes --bundle "${ARCHIVE}.sigstore.json" "$ARCHIVE"
+
       - name: upload build artifact
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: |
             berimor-*.tar.gz
-            berimor-*.tar.gz.sha256
+            berimor-*.tar.gz.sigstore.json
             berimor-*.zip
-            berimor-*.zip.sha256
+            berimor-*.zip.sigstore.json
+          if-no-files-found: error
+
+  # Маленький подписанный "канарейка"-артефакт — независим от матрицы
+  # платформ (одна подпись, не четыре одинаковых), не входит в assets
+  # реального релиза (publish его не трогает: не в `needs`, не читает его
+  # артефакт). Единственное назначение — дешёвый воспроизводимый пример
+  # РЕАЛЬНОЙ keyless-подписи именно этим workflow для golden-фикстур
+  # (`fixtures/golden/signing/`, D2) и будущих тестов внедрения сбоев
+  # (D8) — без необходимости коммитить в репозиторий полноразмерный
+  # платформенный архив ради теста верификации.
+  canary:
+    name: Sign release canary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: sigstore/cosign-installer@v3
+
+      - name: resolve version
+        shell: bash
+        run: echo "VERSION=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
+
+      - name: write canary
+        shell: bash
+        run: |
+          printf 'berimor release canary\nversion: %s\ncommit: %s\n' "$VERSION" "$GITHUB_SHA" > RELEASE.txt
+
+      - name: sign canary (cosign keyless)
+        shell: bash
+        run: cosign sign-blob --yes --bundle RELEASE.txt.sigstore.json RELEASE.txt
+
+      - name: upload canary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: canary
+          path: |
+            RELEASE.txt
+            RELEASE.txt.sigstore.json
           if-no-files-found: error
 
   publish:
@@ -149,6 +200,5 @@ jobs:
             --verify-tag
 
 # Не входит в этот пайплайн — отдельные задачи ROADMAP:
-# D2 — подпись sigstore/cosign (keyless, ADR-0026) вместо/вместе с sha256;
 # D7 — провенанс и SBOM;
 # D4-D6 — agent-self-update и установка плагина читают собранное здесь.

@@ -13,6 +13,7 @@ mod config;
 mod mcp_dispatch;
 mod observe;
 mod run;
+mod verify;
 
 #[derive(Parser)]
 #[command(
@@ -105,7 +106,14 @@ fn main() -> ExitCode {
             }
         }
         Command::Verify { artifact } => {
-            eprintln!("todo(ROADMAP D2): проверить подпись `{artifact}`");
+            let artifact_path = PathBuf::from(&artifact);
+            match verify::verify_artifact(&artifact_path) {
+                Ok(()) => println!("[berimor] подпись подтверждена: `{artifact}`"),
+                Err(err) => {
+                    eprintln!("[berimor] подпись НЕ подтверждена: `{artifact}` — {err}");
+                    return ExitCode::FAILURE;
+                }
+            }
         }
         Command::SelfUpdate => {
             eprintln!(
