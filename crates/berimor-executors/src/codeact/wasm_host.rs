@@ -183,6 +183,14 @@ struct HostState {
     confirmer: Arc<dyn ConfirmationHandler + Send + Sync>,
     tool_calls_made: u32,
     max_tool_calls: u32,
+    /// Техдолг TD3.1 (`docs/audit-2026-07-31.md`): раньше `host_call_tool`
+    /// не знал о списке `tools` шага вообще — сужение существовало
+    /// только на бумаге (doc-комментарий `codeact/executor.rs`) и в
+    /// статическом анализе (`call_tool('литерал', ...)`), которого
+    /// обходило вычисляемое имя или программа, прошедшая анализ иначе
+    /// (например через `this`, тоже техдолг). Теперь это реальная
+    /// рантайм-граница, не только текстовая.
+    allowed_tools: Vec<String>,
 }
 
 /// Хост Wasmtime: компилирует и исполняет один гостевой WASM-модуль
@@ -215,12 +223,17 @@ impl WasmHost {
     /// или WAT-текст, `wasmtime` определяет формат автоматически),
     /// пишет `input` в stdin гостя, вызывает `_start`, читает результат
     /// из stdout (успех) или stderr (отказ). `limits` — см.
-    /// [`WasmLimits`]. Полный ABI — doc-комментарий модуля.
+    /// [`WasmLimits`]. `allowed_tools` — имена инструментов, которые
+    /// `host_call_tool` реально разрешит продиспетчить (TD3.1) — те же
+    /// имена, что переданы `static_analysis::analyze`, но проверяются
+    /// здесь ЕЩЁ РАЗ, в рантайме, а не только в тексте программы. Полный
+    /// ABI — doc-комментарий модуля.
     pub fn run(
         &self,
         wasm: &[u8],
         input: &Value,
         limits: &WasmLimits,
+        allowed_tools: &[String],
     ) -> Result<Value, WasmHostError> {
         let mut config = Config::new();
         config.consume_fuel(true);
@@ -264,6 +277,7 @@ impl WasmHost {
                 confirmer: Arc::clone(&self.confirmer),
                 tool_calls_made: 0,
                 max_tool_calls: limits.max_tool_calls,
+                allowed_tools: allowed_tools.to_vec(),
             },
         );
         store.limiter(|state| &mut state.limits);
@@ -390,14 +404,16 @@ fn host_call_tool(
         return -1;
     };
 
-    let (budget_ok, dispatch, gate, mode, confirmer) = {
+    let (budget_ok, tool_allowed, dispatch, gate, mode, confirmer) = {
         let state = caller.data_mut();
+        let tool_allowed = state.allowed_tools.iter().any(|t| t == &tool);
         let budget_ok = state.tool_calls_made < state.max_tool_calls;
-        if budget_ok {
+        if budget_ok && tool_allowed {
             state.tool_calls_made += 1;
         }
         (
             budget_ok,
+            tool_allowed,
             Arc::clone(&state.dispatch),
             Arc::clone(&state.gate),
             state.mode,
@@ -405,7 +421,18 @@ fn host_call_tool(
         )
     };
 
-    let envelope = if !budget_ok {
+    let envelope = if !tool_allowed {
+        // TD3.1: рантайм-проверка имени инструмента — та же грациозная
+        // деградация, что и у остальных отказов этого канала (бюджет,
+        // capability-гейт, сбой диспетча): программа получает обычный
+        // JSON-конверт, не трап, но реально продиспетчить незаявленный
+        // инструмент не может — не только "не должна по статическому
+        // анализу", а структурно не может.
+        serde_json::json!({
+            "ok": false,
+            "error": "инструмент не входит в список 'tools' этого шага"
+        })
+    } else if !budget_ok {
         serde_json::json!({
             "ok": false,
             "error": "лимит вызовов инструментов на эту программу исчерпан"
@@ -535,6 +562,7 @@ mod tests {
                 GUEST_WASM,
                 &program(json!(null), "finish(1 + 1)"),
                 &WasmLimits::strong(),
+                &[],
             )
             .unwrap();
         assert_eq!(result, json!(2));
@@ -548,6 +576,7 @@ mod tests {
                 GUEST_WASM,
                 &program(json!({"x": 5}), "finish(input.x * 2)"),
                 &WasmLimits::strong(),
+                &[],
             )
             .unwrap();
         assert_eq!(result, json!(10));
@@ -570,6 +599,7 @@ mod tests {
                     "var r = call_tool('echo_tool', {}); finish(r);",
                 ),
                 &WasmLimits::strong(),
+                &["echo_tool".to_string()],
             )
             .unwrap();
         assert_eq!(result, json!({"ok": true, "value": {"echoed": true}}));
@@ -586,6 +616,7 @@ mod tests {
                     "var r = call_tool('echo_tool', {}); finish(r);",
                 ),
                 &WasmLimits::strong(),
+                &["echo_tool".to_string()],
             )
             .unwrap();
         assert_eq!(result["ok"], json!(false));
@@ -593,6 +624,72 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("заблокировано тестом"));
+    }
+
+    /// Техдолг TD3.2: `finish` теперь останавливает исполнение немедленно
+    /// (бросает служебное исключение) — `call_tool` после `finish` не
+    /// должен достигать диспетча вообще. `PanicIfCalledDispatch`
+    /// подтверждает: если бы эффект после `finish` всё ещё происходил,
+    /// тест упал бы паникой внутри диспетча, а не мягким `unwrap()`.
+    #[test]
+    fn side_effect_after_finish_does_not_reach_the_dispatcher() {
+        let host = host(PanicIfCalledDispatch, AllowAll);
+        let result = host
+            .run(
+                GUEST_WASM,
+                &program(json!(null), "finish(1); call_tool('echo_tool', {});"),
+                &WasmLimits::strong(),
+                &["echo_tool".to_string()],
+            )
+            .unwrap();
+        assert_eq!(result, json!(1));
+    }
+
+    /// Техдолг TD3.2: `finish`, вызванный внутри `try/catch`, который
+    /// перехватывает служебное исключение — честно принятый остаточный
+    /// пробел (doc-комментарий `codeact-guest/src/main.rs`), не тестовая
+    /// заглушка: первый `finish` всё равно записывает значение (успешно
+    /// перехватываемое исключение не отменяет уже произошедшую запись),
+    /// а СЛЕДУЮЩИЙ `finish` за пределами `catch` перезаписывает его —
+    /// это не «первый побеждает» в этом конкретном обходе, а
+    /// задокументированное ограничение, не новый регресс.
+    #[test]
+    fn finish_inside_try_catch_still_records_a_value_though_execution_continues() {
+        let host = host(PanicIfCalledDispatch, AllowAll);
+        let result = host
+            .run(
+                GUEST_WASM,
+                &program(json!(null), "try { finish(1); } catch (e) {} finish(2);"),
+                &WasmLimits::strong(),
+                &[],
+            )
+            .unwrap();
+        assert_eq!(result, json!(2));
+    }
+
+    /// Техдолг TD3.1: раньше `host_call_tool` не сверял имя инструмента с
+    /// `allowed_tools` вообще — только capability-гейт мог отказать (и
+    /// только если он в принципе знал об этом конкретном инструменте).
+    /// Программа, называющая инструмент, отсутствующий в списке `tools`
+    /// шага, обязана получить отказ ДО того, как `dispatch` вообще
+    /// увидит вызов — `PanicIfCalledDispatch` подтверждает, что диспетч
+    /// не достигается.
+    #[test]
+    fn call_tool_naming_a_tool_outside_the_allowed_list_is_rejected_gracefully_not_dispatched() {
+        let host = host(PanicIfCalledDispatch, AllowAll);
+        let result = host
+            .run(
+                GUEST_WASM,
+                &program(
+                    json!(null),
+                    "var r = call_tool('not_in_the_list', {}); finish(r);",
+                ),
+                &WasmLimits::strong(),
+                &["echo_tool".to_string()],
+            )
+            .unwrap();
+        assert_eq!(result["ok"], json!(false));
+        assert!(result["error"].as_str().unwrap().contains("tools"));
     }
 
     #[test]
@@ -606,6 +703,7 @@ mod tests {
                     "var r = call_tool('echo_tool', {}); finish(r);",
                 ),
                 &WasmLimits::strong(),
+                &["echo_tool".to_string()],
             )
             .unwrap();
         assert_eq!(result["ok"], json!(false));
@@ -636,6 +734,7 @@ mod tests {
                     "call_tool('echo_tool', {}); var r = call_tool('echo_tool', {}); finish(r);",
                 ),
                 &limits,
+                &["echo_tool".to_string()],
             )
             .unwrap();
         assert_eq!(result["ok"], json!(false));
@@ -650,6 +749,7 @@ mod tests {
                 GUEST_WASM,
                 &program(json!(null), "throw new Error('boom')"),
                 &WasmLimits::strong(),
+                &[],
             )
             .unwrap_err();
         match err {
@@ -669,6 +769,7 @@ mod tests {
                 GUEST_WASM,
                 &program(json!(null), "1 + 1"),
                 &WasmLimits::strong(),
+                &[],
             )
             .unwrap_err();
         assert!(matches!(err, WasmHostError::GuestFailed { .. }), "{err:?}");
@@ -682,7 +783,12 @@ mod tests {
             ..WasmLimits::strong()
         };
         let err = host
-            .run(GUEST_WASM, &program(json!(null), "while (true) {}"), &tiny)
+            .run(
+                GUEST_WASM,
+                &program(json!(null), "while (true) {}"),
+                &tiny,
+                &[],
+            )
             .unwrap_err();
         // На каком этапе (instantiate у гостя ещё до `_start`, или сам
         // вызов `_start`) исчерпание топлива трапит — эмпирически
@@ -709,7 +815,12 @@ mod tests {
             ..WasmLimits::strong()
         };
         let err = host
-            .run(GUEST_WASM, &program(json!(null), "finish(1)"), &tiny_memory)
+            .run(
+                GUEST_WASM,
+                &program(json!(null), "finish(1)"),
+                &tiny_memory,
+                &[],
+            )
             .unwrap_err();
         assert!(
             matches!(

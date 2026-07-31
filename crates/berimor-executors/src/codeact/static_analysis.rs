@@ -213,6 +213,21 @@ impl<'a> Visit<'a> for ReferenceChecker<'_> {
             ));
             return;
         }
+        // Техдолг TD3.1 (`docs/audit-2026-07-31.md`): `this` на верхнем
+        // уровне гостевой программы равен `globalThis` (rquickjs), а
+        // `this` — отдельный узел `ThisExpression`, не
+        // `IdentifierReference` — `visit_identifier_reference` выше его
+        // не видит вообще. Без этой проверки `this.eval(...)`/
+        // `this.Function(...)` обходили белый список целиком: программе
+        // `this` не нужен (процедурный JS, вызывающий `call_tool`/
+        // `finish`, не про объекты/методы) — трактуем любое
+        // использование как запрещённый идентификатор.
+        if matches!(it, Expression::ThisExpression(_)) {
+            self.violation = Some(StaticAnalysisError::DisallowedIdentifier(
+                "this".to_string(),
+            ));
+            return;
+        }
         // `call_tool('имя', args)` — имя инструмента передаётся строковым
         // ЛИТЕРАЛОМ, не идентификатором: `visit_identifier_reference`
         // выше его в принципе не видит (строки не идентификаторы-ссылки
@@ -293,6 +308,27 @@ mod tests {
         assert!(matches!(
             err,
             StaticAnalysisError::DisallowedIdentifier(name) if name == "fetch"
+        ));
+    }
+
+    /// Техдолг TD3.1: `this` на верхнем уровне гостевого рантайма ==
+    /// `globalThis` — без явной проверки `this.eval(...)` обходил бы
+    /// белый список целиком (`this` — не `IdentifierReference`).
+    #[test]
+    fn rejects_this_expression_used_to_reach_globalthis() {
+        let err = analyze("this.eval('1+1')", &[]).unwrap_err();
+        assert!(matches!(
+            err,
+            StaticAnalysisError::DisallowedIdentifier(name) if name == "this"
+        ));
+    }
+
+    #[test]
+    fn rejects_bare_this_reference() {
+        let err = analyze("this", &[]).unwrap_err();
+        assert!(matches!(
+            err,
+            StaticAnalysisError::DisallowedIdentifier(name) if name == "this"
         ));
     }
 

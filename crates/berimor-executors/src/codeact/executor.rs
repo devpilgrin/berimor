@@ -159,7 +159,7 @@ impl CodeActExecutor<'_> {
             let result_value =
                 match self
                     .wasm_host
-                    .run(wasm_host::GUEST_WASM, &program_input, &limits)
+                    .run(wasm_host::GUEST_WASM, &program_input, &limits, tools)
                 {
                     Ok(value) => value,
                     Err(err) => {

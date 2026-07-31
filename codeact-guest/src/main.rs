@@ -129,6 +129,16 @@ fn run(program: &str, input: &serde_json::Value) -> Result<serde_json::Value, St
         Context::full(&runtime).map_err(|e| format!("не удалось создать Context QuickJS: {e}"))?;
 
     let finished: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    // Техдолг TD3.2 (`docs/audit-2026-07-31.md`): раньше `finish` только
+    // писала значение и ВОЗВРАЩАЛА управление программе — код после
+    // `finish(...)` всё равно исполнялся (побочные эффекты через
+    // `call_tool`), а исключение ПОСЛЕ `finish` уничтожало уже записанный
+    // результат (весь прогон падал в `GuestFailed`). `finish` — заявленный
+    // единственный выход (`executors.md` §4.2), обязан реально
+    // останавливать исполнение. Флаг ниже отличает «наше собственное
+    // останавливающее исключение из finish» от настоящего сбоя программы —
+    // без него пришлось бы сравнивать текст исключения (хрупко).
+    let finished_called: Rc<RefCell<bool>> = Rc::new(RefCell::new(false));
     let input_text = serde_json::to_string(input).map_err(|e| e.to_string())?;
 
     let outcome: Result<(), String> = context.with(|ctx| {
@@ -143,6 +153,7 @@ fn run(program: &str, input: &serde_json::Value) -> Result<serde_json::Value, St
 
         {
             let finished = Rc::clone(&finished);
+            let finished_called = Rc::clone(&finished_called);
             // Ctx достаётся из `value.ctx()`, а не отдельным параметром
             // замыкания — с ДВУМЯ независимо параметризованными по
             // `'js` параметрами (`Ctx<'js>` и `Value<'js>`) компилятор
@@ -151,15 +162,30 @@ fn run(program: &str, input: &serde_json::Value) -> Result<serde_json::Value, St
             // возвращает `&Ctx<'js>` С ТЕМ ЖЕ `'js`, что и сам `value`,
             // по построению — это снимает проблему без unsafe и без
             // отдельного захваченного клона `ctx` с чужим временем жизни.
-            let finish_fn = Function::new(ctx.clone(), move |value: rquickjs::Value| {
-                let text = value
-                    .ctx()
-                    .json_stringify(value.clone())
-                    .ok()
-                    .flatten()
-                    .and_then(|s| s.to_string().ok());
-                *finished.borrow_mut() = text;
-            })
+            //
+            // Возврат `rquickjs::Result<()>` — не `()` — намеренно: это
+            // и есть механизм остановки (TD3.2). `rquickjs::IntoJs`
+            // реализован для `Result<T, E>` блок-импломом крейта, `Err`
+            // из замыкания пробрасывается как настоящее JS-исключение
+            // через `Ctx::throw`, а не молча теряется — `ctx.throw(...)`
+            // сам вызывает `JS_Throw` и возвращает `Error::Exception`,
+            // ЭТО и есть корректный способ прервать `ctx.eval(...)`
+            // изнутри Rust-функции у rquickjs (не паника, не `std::process::exit`
+            // — оба не размотали бы стек QuickJS корректно).
+            let finish_fn = Function::new(
+                ctx.clone(),
+                move |value: rquickjs::Value| -> rquickjs::Result<()> {
+                    let ctx = value.ctx().clone();
+                    let text = ctx
+                        .json_stringify(value.clone())
+                        .ok()
+                        .flatten()
+                        .and_then(|s| s.to_string().ok());
+                    *finished.borrow_mut() = text;
+                    *finished_called.borrow_mut() = true;
+                    Err(ctx.throw(value))
+                },
+            )
             .map_err(|e| e.to_string())?;
             globals
                 .set("finish", finish_fn)
@@ -174,7 +200,18 @@ fn run(program: &str, input: &serde_json::Value) -> Result<serde_json::Value, St
                 .map_err(|e| e.to_string())?;
         }
 
-        ctx.eval::<(), _>(program.as_bytes()).map_err(|e| {
+        let eval_result = ctx.eval::<(), _>(program.as_bytes());
+        // TD3.2: если `finish` уже был вызван, `eval_result` почти
+        // наверняка `Err` — это НАШЕ собственное останавливающее
+        // исключение из `finish_fn` (см. выше), не сбой программы.
+        // Проверяем ПЕРЕД тем, как трактовать `Err` как реальную ошибку —
+        // иначе легитимный `finish(r)` без ничего после нёс бы
+        // `outcome?` в ошибку на пустом месте (сам вызов `finish`
+        // теперь ВСЕГДА завершается исключением по конструкции).
+        if *finished_called.borrow() {
+            return Ok(());
+        }
+        eval_result.map_err(|e| {
             // `ctx.catch()` достаёт сам объект исключения — без него
             // сообщение об ошибке из `rquickjs::Error::Exception` не
             // содержит текста самого JS-исключения (только факт, что
