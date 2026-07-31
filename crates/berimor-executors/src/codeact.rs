@@ -51,9 +51,16 @@
 //!   аргументов, вызывает `tool_only::dispatch_confirmed`, пишет ответ как
 //!   `{"ok": true, "value": ...}` или `{"ok": false, "error": ...}` —
 //!   ОБА пути (отказ capability-гейта/подтверждения и сбой самого
-//!   инструмента) идут этим каналом, не трапом: сбой инструмента
-//!   восстановим для программы, как и для `AgentStep` (E9), а не обрывает
-//!   исполнение. Возвращает длину так же, как `run` — с усечением по
+//!   инструмента) идут этим каналом, не трапом. В отличие от `AgentStep`
+//!   (E9), где отказ capability-слоя терминален на уровне
+//!   Rust-исполнителя (останавливает цикл), а сбой самого инструмента —
+//!   нет: здесь host-функция не решает за гостя, что терминально, а что
+//!   нет — оба исхода одинаково нетерминальны НА ГРАНИЦЕ хоста, решение
+//!   «что делать дальше» целиком у гостевой программы (E7 может дать ей
+//!   средства различать их по содержимому `"error"`). Гейт при этом не
+//!   обходится и не «протухает» в разрешение — отрабатывает заново на
+//!   каждый вызов, независимо от предыдущих. Возвращает длину так же,
+//!   как `run` — с усечением по
 //!   тому же принципу. Отдельный сентинел `-1` — не про итог вызова
 //!   инструмента, а про то, что ХОСТ не смог прочитать память гостя по
 //!   переданным `ptr`/`len` (испорченный указатель со стороны гостя).
@@ -92,6 +99,8 @@ pub enum WasmHostError {
     MissingExport(String),
     #[error("ловушка (trap) во время исполнения гостя: {0}")]
     Trap(String),
+    #[error("не удалось получить доступ к памяти гостя: {0}")]
+    MemoryAccess(String),
     #[error("гость вернул невалидный UTF-8")]
     InvalidUtf8,
     #[error("гость вернул невалидный JSON: {0}")]
@@ -182,7 +191,7 @@ impl WasmHost {
             serde_json::to_vec(input).map_err(|err| WasmHostError::InvalidJson(err.to_string()))?;
         memory
             .write(&mut store, INPUT_OFFSET, &input_bytes)
-            .map_err(|err| WasmHostError::Trap(err.to_string()))?;
+            .map_err(|err| WasmHostError::MemoryAccess(err.to_string()))?;
 
         let run_fn: TypedFunc<(i32, i32), i32> = instance
             .get_typed_func(&mut store, "run")
@@ -208,7 +217,7 @@ impl WasmHost {
         let mut buf = vec![0u8; written as usize];
         memory
             .read(&store, OUTPUT_OFFSET, &mut buf)
-            .map_err(|err| WasmHostError::Trap(err.to_string()))?;
+            .map_err(|err| WasmHostError::MemoryAccess(err.to_string()))?;
 
         let text = String::from_utf8(buf).map_err(|_| WasmHostError::InvalidUtf8)?;
         serde_json::from_str(&text).map_err(|err| WasmHostError::InvalidJson(err.to_string()))
@@ -218,6 +227,16 @@ impl WasmHost {
 /// Читает `len` байт по `ptr` из линейной памяти гостя. `None`, если
 /// указатель/длина некорректны или выходят за пределы памяти — вызывающий
 /// код трактует это как порчу со стороны гостя, не как трап.
+///
+/// Проверяет `ptr + len` против реального размера памяти гостя ДО
+/// аллокации буфера — независимого ревью нашло, что аллокация
+/// `vec![0u8; len]` для необоснованного `len` (гость волен передать
+/// вплоть до `i32::MAX`, независимо от того, что его собственная память
+/// — одна страница в 64 КиБ) до вызова `memory.read` (единственного
+/// места, которое реально делает bounds-check) — host-side вектор
+/// исчерпания памяти: не тот же класс пробела, что отсутствие
+/// fuel-лимитов (E8, про число WASM-инструкций гостя), а ошибка
+/// дисциплины «проверяй перед аллокацией» именно в этой функции.
 fn read_guest_utf8(
     caller: &mut Caller<'_, HostState>,
     memory: &Memory,
@@ -227,8 +246,13 @@ fn read_guest_utf8(
     if ptr < 0 || len < 0 {
         return None;
     }
-    let mut buf = vec![0u8; len as usize];
-    memory.read(&mut *caller, ptr as usize, &mut buf).ok()?;
+    let (ptr, len) = (ptr as usize, len as usize);
+    let end = ptr.checked_add(len)?;
+    if end > memory.data_size(&*caller) {
+        return None;
+    }
+    let mut buf = vec![0u8; len];
+    memory.read(&mut *caller, ptr, &mut buf).ok()?;
     String::from_utf8(buf).ok()
 }
 
@@ -364,6 +388,44 @@ mod tests {
           (memory (export "memory") 1)
           (func (export "run") (param i32 i32) (result i32)
             i32.const 999999))
+    "#;
+
+    /// Гость зовёт `call_tool` с отрицательной `tool_len` — проверяет
+    /// сентинел `-1` (порча указателя со стороны гостя), НЕ канал
+    /// `{"ok":false,...}`. `run` напрямую возвращает то, что вернул
+    /// `call_tool`, поэтому `-1` долетает до `WasmHost::run` как
+    /// отрицательная длина результата — тот же путь, что и обычный
+    /// отрицательный возврат `run`.
+    const WAT_CALL_TOOL_NEGATIVE_LEN: &str = r#"
+        (module
+          (import "env" "call_tool"
+            (func $call_tool (param i32 i32 i32 i32 i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 512) "echo_tool")
+          (func (export "run") (param $input_len i32) (param $out_cap i32) (result i32)
+            (call $call_tool
+              (i32.const 512) (i32.const -1)
+              (i32.const 512) (i32.const 9)
+              (i32.const 4096) (local.get $out_cap))))
+    "#;
+
+    /// Гость зовёт `call_tool` с легитимно неотрицательными, но
+    /// выходящими за пределы его единственной страницы памяти (64 КиБ)
+    /// `tool_ptr`/`tool_len` — проверяет, что out-of-bounds указатель
+    /// отклоняется как порча ДО попытки прочитать память (граница —
+    /// `crates/berimor-executors/src/codeact.rs::read_guest_utf8`, не
+    /// после аллокации буфера произвольного размера).
+    const WAT_CALL_TOOL_OUT_OF_BOUNDS_PTR: &str = r#"
+        (module
+          (import "env" "call_tool"
+            (func $call_tool (param i32 i32 i32 i32 i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 600) "{}")
+          (func (export "run") (param $input_len i32) (param $out_cap i32) (result i32)
+            (call $call_tool
+              (i32.const 65530) (i32.const 100)
+              (i32.const 600) (i32.const 2)
+              (i32.const 4096) (local.get $out_cap))))
     "#;
 
     struct CannedDispatch {
@@ -509,5 +571,23 @@ mod tests {
             WasmHostError::Truncated { needed, .. } => assert_eq!(needed, 999_999),
             other => panic!("ожидался Truncated, получено {other:?}"),
         }
+    }
+
+    #[test]
+    fn call_tool_negative_length_is_rejected_as_sentinel_not_dispatched() {
+        let host = host(PanicIfCalledDispatch, AllowAll);
+        let err = host
+            .run(WAT_CALL_TOOL_NEGATIVE_LEN.as_bytes(), &json!(null))
+            .unwrap_err();
+        assert!(matches!(err, WasmHostError::Trap(_)), "{err:?}");
+    }
+
+    #[test]
+    fn call_tool_out_of_bounds_pointer_is_rejected_before_dispatch() {
+        let host = host(PanicIfCalledDispatch, AllowAll);
+        let err = host
+            .run(WAT_CALL_TOOL_OUT_OF_BOUNDS_PTR.as_bytes(), &json!(null))
+            .unwrap_err();
+        assert!(matches!(err, WasmHostError::Trap(_)), "{err:?}");
     }
 }
