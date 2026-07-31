@@ -29,6 +29,9 @@ clap = { version = "4", features = ["derive"] }
 rmcp = { version = "3.0.1", features = ["client", "server", "transport-child-process", "transport-io"] }
 serde = { workspace = true, features = ["derive"] }
 sigstore = { version = "0.14", default-features = false, features = ["bundle", "sigstore-trust-root", "rustls-tls"] }
+const-oid = "0.9"
+dirs = "6"
+x509-cert = "0.2"
 serde_json.workspace = true
 thiserror.workspace = true
 tokio = { version = "1.53.1", features = ["process", "io-util", "rt"] }

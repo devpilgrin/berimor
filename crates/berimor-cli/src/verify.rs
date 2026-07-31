@@ -27,33 +27,124 @@
 //! Entry Timestamp Rekor ещё не реализована — верификация здесь честно
 //! наследует это ограничение библиотеки, не маскирует его. Используется
 //! офлайн-режим (`offline: true`): сверка идёт по записи транспарентного
-//! лога, ВСТРОЕННОЙ в сам бандл, без обращения к живому Rekor API — не
-//! слабее по факту (те же проверки crate всё равно не делает online), но
-//! не требует сетевой доступности Rekor на машине пользователя для этого
-//! конкретного шага (доступность Fulcio/CTFE trust root по TUF всё равно
-//! нужна — тот же сетевой шаг, что уже выполняет `download.ts` для самого
-//! артефакта).
+//! лога, ВСТРОЕННОЙ в сам бандл, без обращения к живому Rekor API.
+//!
+//! **Кэш доверенного корня.** По итогам независимого ревью D2 (Major-1):
+//! `Verifier::production()` из крейта не кэширует TUF-корень на диске —
+//! каждый вызов заново тянет его по сети. Здесь корень строится вручную
+//! (`build_verifier`) с явным `cache_dir` (`dirs::cache_dir()/berimor/sigstore`)
+//! — повторные вызовы `verify` (а `agent-self-update`/установка плагина,
+//! `deployment.md` §5, вызывают проверку на каждый артефакт) не платят
+//! сетевым TUF-фетчем каждый раз. Если платформенный кэш-каталог
+//! недоступен — деградация тихая, но только по СКОРОСТИ: verify всё
+//! равно работает (просто без кэша), сама проверка подписи от этого не
+//! слабее — I6 здесь не затронут.
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use const_oid::ObjectIdentifier;
 use sigstore::bundle::verify::blocking::Verifier;
 use sigstore::bundle::verify::policy::{
-    AllOf, GitHubWorkflowName, GitHubWorkflowRepository, OIDCIssuer, SingleX509ExtPolicy,
+    AllOf, GitHubWorkflowRepository, OIDCIssuer, PolicyError, PolicyResult, SingleX509ExtPolicy,
     VerificationPolicy,
 };
 use sigstore::bundle::verify::VerificationError;
 use sigstore::bundle::Bundle;
 use sigstore::errors::SigstoreError;
+use sigstore::rekor::apis::configuration::Configuration as RekorConfiguration;
+use sigstore::trust::sigstore::SigstoreTrustRoot;
+use x509_cert::ext::pkix::name::GeneralName;
+use x509_cert::ext::pkix::SubjectAltName;
+use x509_cert::Certificate;
 
 const GITHUB_OIDC_ISSUER: &str = "https://token.actions.githubusercontent.com";
 const RELEASE_REPOSITORY: &str = "devpilgrin/berimor";
-/// Значение поля `name:` в `.github/workflows/release.yml` — не путь к файлу
-/// (для пути к файлу пришлось бы разбирать SAN-идентичность сертификата
-/// вручную; имя workflow — уже есть отдельным X.509-расширением Fulcio,
-/// не зависит от того, какой ref/событие вызвали прогон).
-const RELEASE_WORKFLOW_NAME: &str = "Release";
+
+/// OID сигстор-специфичного `otherName` в SAN сертификата Fulcio —
+/// публично задокументирован в
+/// <https://github.com/sigstore/fulcio/blob/main/docs/oid-info.md>,
+/// приватная константа с тем же значением есть и внутри крейта `sigstore`
+/// (`bundle::verify::policy`), но не экспортируется наружу.
+const FULCIO_SAN_OTHERNAME_OID: ObjectIdentifier =
+    ObjectIdentifier::new_unwrap("1.3.6.1.4.1.57264.1.7");
+
+/// Префикс SAN-идентичности для КОНКРЕТНОГО файла workflow, без суффикса
+/// `@<ref>` — ref варьируется между тегом релиза и веткой при
+/// `workflow_dispatch`, точное совпадение нельзя зашить константой.
+///
+/// По итогам независимого ревью D2 (Major-2): проверка одного только
+/// `GitHubWorkflowName` (значение `name:` из YAML) не отличает этот
+/// workflow-файл от гипотетического ДРУГОГО workflow в том же
+/// репозитории с тем же `name:` и `id-token: write` — практически
+/// маловероятно сегодня (в репозитории такого дубликата нет), но не
+/// структурная гарантия. `ReleaseWorkflowPath` ниже пиннит путь к файлу
+/// напрямую через префиксное сравнение SAN, независимо от `name:` и ref.
+const RELEASE_WORKFLOW_SAN_PREFIX: &str =
+    "https://github.com/devpilgrin/berimor/.github/workflows/release.yml@";
+
+/// Кастомная политика вместо `sigstore::bundle::verify::policy::Identity`:
+/// `Identity` требует ТОЧНОГО совпадения SAN целиком (включая `@<ref>`),
+/// а ref у настоящих релизов (`refs/tags/vX.Y.Z`) и у ручных
+/// `workflow_dispatch`-прогонов (например, `refs/heads/main`) разный —
+/// зашить его константой нельзя. Здесь — то же извлечение SAN, что и в
+/// `Identity::verify` крейта, но сравнение по префиксу.
+struct ReleaseWorkflowPath;
+
+impl VerificationPolicy for ReleaseWorkflowPath {
+    fn verify(&self, cert: &Certificate) -> PolicyResult {
+        let (_, san): (bool, SubjectAltName) = match cert.tbs_certificate.get() {
+            Ok(Some(result)) => result,
+            _ => return Err(PolicyError::ExtensionNotFound),
+        };
+
+        let matched = san.0.iter().any(|name| {
+            let value: Option<&str> = match name {
+                GeneralName::Rfc822Name(name) => Some(name.as_str()),
+                GeneralName::UniformResourceIdentifier(name) => Some(name.as_str()),
+                GeneralName::OtherName(name) if name.type_id == FULCIO_SAN_OTHERNAME_OID => {
+                    std::str::from_utf8(name.value.value()).ok()
+                }
+                _ => None,
+            };
+            value.is_some_and(|v| v.starts_with(RELEASE_WORKFLOW_SAN_PREFIX))
+        });
+
+        if matched {
+            Ok(())
+        } else {
+            Err(PolicyError::ExtensionCheckFailed {
+                extension: "SubjectAltName (путь к workflow-файлу)".to_owned(),
+                expected: format!("{RELEASE_WORKFLOW_SAN_PREFIX}*"),
+                actual: String::new(),
+            })
+        }
+    }
+}
+
+/// Каталог кэша TUF-корня доверия — платформенный кэш-каталог
+/// (`~/.cache` на Linux, `~/Library/Caches` на macOS, `%LOCALAPPDATA%` на
+/// Windows) плюс `berimor/sigstore`. `None`, если платформенный
+/// кэш-каталог не определяется (например, нет `$HOME`) — тогда
+/// верификация просто идёт без кэша, не отказывает.
+fn trust_root_cache_dir() -> Option<PathBuf> {
+    let dir = dirs::cache_dir()?.join("berimor").join("sigstore");
+    fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+fn build_verifier() -> Result<Verifier, VerifyError> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(VerifyError::Runtime)?;
+    let cache_dir = trust_root_cache_dir();
+    let trust_root = rt
+        .block_on(SigstoreTrustRoot::new(cache_dir.as_deref()))
+        .map_err(VerifyError::TrustRoot)?;
+    Verifier::new(RekorConfiguration::default(), trust_root).map_err(VerifyError::TrustRoot)
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum VerifyError {
@@ -66,6 +157,8 @@ pub enum VerifyError {
     },
     #[error("не удалось открыть артефакт `{path}`: {source}")]
     OpenArtifact { path: String, source: io::Error },
+    #[error("не удалось запустить рантайм для построения доверенного корня: {0}")]
+    Runtime(#[source] io::Error),
     #[error("не удалось построить доверенный корень sigstore: {0}")]
     TrustRoot(#[source] SigstoreError),
     #[error("подпись не прошла верификацию: {0}")]
@@ -106,15 +199,15 @@ pub fn verify_artifact(artifact_path: &Path) -> Result<(), VerifyError> {
         source,
     })?;
 
-    let verifier = Verifier::production().map_err(VerifyError::TrustRoot)?;
+    let verifier = build_verifier()?;
 
     let issuer = OIDCIssuer::new(GITHUB_OIDC_ISSUER);
     let repository = GitHubWorkflowRepository::new(RELEASE_REPOSITORY);
-    let workflow_name = GitHubWorkflowName::new(RELEASE_WORKFLOW_NAME);
+    let workflow_path = ReleaseWorkflowPath;
     let policy = AllOf::new([
         &issuer as &dyn VerificationPolicy,
         &repository as &dyn VerificationPolicy,
-        &workflow_name as &dyn VerificationPolicy,
+        &workflow_path as &dyn VerificationPolicy,
     ])
     .expect("список политик статически непуст");
 
