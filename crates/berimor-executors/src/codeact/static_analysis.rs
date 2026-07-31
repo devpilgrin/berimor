@@ -57,7 +57,8 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    BindingIdentifier, Expression, IdentifierReference, Program, TSImportEqualsDeclaration,
+    Argument, BindingIdentifier, Expression, IdentifierReference, Program,
+    TSImportEqualsDeclaration,
 };
 use oxc_ast_visit::{walk::walk_program, Visit};
 use oxc_parser::Parser;
@@ -110,6 +111,8 @@ pub enum StaticAnalysisError {
     DisallowedIdentifier(String),
     #[error("запрещённая конструкция: {0}")]
     ForbiddenConstruct(&'static str),
+    #[error("call_tool('{0}', ...) — имя инструмента не входит в белый список для этого шага")]
+    DisallowedToolName(String),
 }
 
 /// Проверяет `source` против белого списка [`SAFE_GLOBALS`] ∪
@@ -210,6 +213,34 @@ impl<'a> Visit<'a> for ReferenceChecker<'_> {
             ));
             return;
         }
+        // `call_tool('имя', args)` — имя инструмента передаётся строковым
+        // ЛИТЕРАЛОМ, не идентификатором: `visit_identifier_reference`
+        // выше его в принципе не видит (строки не идентификаторы-ссылки
+        // по построению AST). Без этой отдельной проверки белый список
+        // `allowed_names` (имена стабов для ЭТОГО шага) не давал бы
+        // никакого реального ограничения на то, какой инструмент
+        // МОЖЕТ ВЫЗВАТЬ сгенерированная программа через `call_tool` —
+        // единственный способ его вызвать в этом рантайме (найдено при
+        // написании теста на уровне `CodeActExecutor`, не независимым
+        // ревью E8). Ловится только буквальный строковый литерал первым
+        // аргументом — вычисляемое имя (`call_tool(x, ...)`) не может
+        // быть проверено статически по построению, тот же класс
+        // честного пробела, что и `globalThis['eval']` выше.
+        if let Expression::CallExpression(call) = it {
+            if let Expression::Identifier(callee) = &call.callee {
+                if callee.name == "call_tool" {
+                    if let Some(Argument::StringLiteral(literal)) = call.arguments.first() {
+                        let tool_name = literal.value.as_str();
+                        if !self.allowed.contains(tool_name) {
+                            self.violation = Some(StaticAnalysisError::DisallowedToolName(
+                                tool_name.to_string(),
+                            ));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         oxc_ast_visit::walk::walk_expression(self, it);
     }
 
@@ -278,6 +309,29 @@ mod tests {
             err,
             StaticAnalysisError::DisallowedIdentifier(name) if name == "other_tool"
         ));
+    }
+
+    /// `call_tool('имя', args)` — единственный способ вызвать стаб
+    /// инструмента в реальном гостевом рантайме (`codeact-guest`, E8);
+    /// имя передаётся строковым ЛИТЕРАЛОМ, не идентификатором —
+    /// `visit_identifier_reference` его в принципе не видит. Без
+    /// отдельной проверки в `visit_expression` белый список `tools`,
+    /// переданный вызывающим кодом, не давал бы НИКАКОГО реального
+    /// ограничения на то, какой инструмент программа может позвать
+    /// (обнаружено при написании теста уровня `CodeActExecutor`, не
+    /// независимым ревью E8 — задокументировано отдельно в ROADMAP).
+    #[test]
+    fn rejects_call_tool_string_literal_naming_an_undeclared_tool() {
+        let err = analyze("call_tool('undeclared_tool', {})", &["echo_tool"]).unwrap_err();
+        assert!(matches!(
+            err,
+            StaticAnalysisError::DisallowedToolName(name) if name == "undeclared_tool"
+        ));
+    }
+
+    #[test]
+    fn accepts_call_tool_string_literal_naming_a_declared_tool() {
+        assert!(analyze("call_tool('echo_tool', {})", &["echo_tool"]).is_ok());
     }
 
     #[test]

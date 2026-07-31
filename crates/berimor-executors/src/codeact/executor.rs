@@ -311,6 +311,15 @@ mod tests {
         }
     }
 
+    struct DenyAll;
+    impl CapabilityGate for DenyAll {
+        fn check(&self, _action: &ProposedAction, _mode: ConfirmationMode) -> CapabilityDecision {
+            CapabilityDecision::Deny {
+                reason: "заблокировано тестом".to_string(),
+            }
+        }
+    }
+
     struct AutoConfirm;
     impl ConfirmationHandler for AutoConfirm {
         fn confirm(&self, _action: &ProposedAction, _reason: &str) -> bool {
@@ -328,10 +337,33 @@ mod tests {
         }
     }
 
+    /// Диспетч, который обязан НИКОГДА не быть вызван — если тест
+    /// проходит, а этот двойник получил вызов, capability-гейт был
+    /// обойдён где-то на пути `CodeActExecutor` → `WasmHost` →
+    /// `host_call_tool` → `tool_only::dispatch_confirmed` (тот же
+    /// приём, что `wasm_host.rs`/`agent_step.rs` — независимое ревью
+    /// E8 отметило, что на уровне САМОГО `CodeActExecutor` такого
+    /// теста не было, только внутри `WasmHost` в изоляции).
+    struct PanicIfCalledDispatch;
+    impl ToolDispatch for PanicIfCalledDispatch {
+        fn call(&self, _tool: &str, _args: &Value) -> Result<Value, DispatchError> {
+            panic!("capability-гейт обойдён: диспетч вызван после отказа");
+        }
+    }
+
     fn test_wasm_host() -> WasmHost {
         WasmHost::new(
             Arc::new(NoopDispatch),
             Arc::new(AllowAll),
+            ConfirmationMode::Smart,
+            Arc::new(AutoConfirm),
+        )
+    }
+
+    fn test_wasm_host_deny_all() -> WasmHost {
+        WasmHost::new(
+            Arc::new(PanicIfCalledDispatch),
+            Arc::new(DenyAll),
             ConfirmationMode::Smart,
             Arc::new(AutoConfirm),
         )
@@ -360,6 +392,14 @@ mod tests {
     const FORGED_PROGRAM: &str = "finish({card_id: 'forged', reply: 'готово'})";
     const FORBIDDEN_IDENTIFIER_PROGRAM: &str = "eval('1')";
     const THROWING_PROGRAM: &str = "throw new Error('boom')";
+    /// Зовёт стаб инструмента и кладёт ответ на отказ прямо в `reply` —
+    /// позволяет тесту убедиться, что отказ capability-гейта реально
+    /// долетел до ЗАПУЩЕННОЙ программы (не только до `WasmHost` в
+    /// изоляции), не переписывая отдельный протокол проверки для этого
+    /// одного теста.
+    const CALL_TOOL_THEN_FINISH_PROGRAM: &str = "\
+        var r = call_tool('some_tool', {});\
+        finish({card_id: input.user.card_id, reply: r.ok ? 'unexpected-success' : r.error});";
 
     #[test]
     fn happy_path_produces_a_patch() {
@@ -520,6 +560,48 @@ mod tests {
             result,
             Err(CodeActError::AttemptsExhausted { max_attempts: 3 })
         ));
+    }
+
+    /// Найдено независимым ревью E8: `capability_deny_blocks_call_tool_
+    /// before_dispatch_is_ever_called` в `wasm_host.rs` доказывает это
+    /// для `WasmHost` в изоляции, но НЕ для полной цепочки, которую
+    /// реально собирает `CliExecutor` (`CodeActExecutor` →
+    /// `WasmHost`) — этот тест закрывает именно её: отказ гейта обязан
+    /// долететь до ЗАПУЩЕННОЙ программы через `call_tool(...)`, не
+    /// обходя `dispatch_confirmed` (`PanicIfCalledDispatch` паникует,
+    /// если диспетч всё же вызван).
+    #[test]
+    fn capability_deny_reaches_the_running_program_not_bypassed() {
+        let provider: &'static ScriptedProvider = Box::leak(Box::new(ScriptedProvider::new(vec![
+            CALL_TOOL_THEN_FINISH_PROGRAM,
+        ])));
+        let (pool, providers) = pool_and_providers(provider);
+        let host = test_wasm_host_deny_all();
+        let executor = CodeActExecutor {
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            wasm_host: &host,
+        };
+
+        let state = json!({"user": {"card_id": "c-1"}});
+        let patch = executor
+            .execute(
+                "answer",
+                "SupportReply",
+                &["some_tool".to_string()],
+                ModelTierRequirement::Any,
+                &state,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(patch.changes["card_id"], "c-1");
+        assert!(patch.changes["reply"]
+            .as_str()
+            .unwrap()
+            .contains("заблокировано тестом"));
     }
 
     #[test]
