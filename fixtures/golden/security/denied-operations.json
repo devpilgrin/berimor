@@ -54,7 +54,28 @@
     { "name": "экранирование имени программы", "tool": "terminal", "args": { "command": "r\\m -rf /" }, "class": "filesystem_destruction" },
     { "name": "склейка кавычек в имени программы", "tool": "terminal", "args": { "command": "'r''m' -rf /" }, "class": "filesystem_destruction" },
     { "name": "экранирование в аргументе dd", "tool": "terminal", "args": { "command": "dd o\\f=/dev/sda" }, "class": "block_device_write" },
-    { "name": "удаление вне области через файловый инструмент", "tool": "files.delete", "args": { "path": "/etc/passwd" }, "class": "deletion_outside_workspace" }
+    { "name": "удаление вне области через файловый инструмент", "tool": "files.delete", "args": { "path": "/etc/passwd" }, "class": "deletion_outside_workspace" },
+    { "name": "техдолг TD2.1: env -u с отдельным значением опции", "tool": "terminal", "args": { "command": "env -u X rm -rf /" }, "class": "filesystem_destruction" },
+    { "name": "техдолг TD2.2: exec-обёртка", "tool": "terminal", "args": { "command": "exec sudo rm -rf /var" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.2: command-обёртка", "tool": "terminal", "args": { "command": "command sudo rm -rf /var" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.2: builtin-обёртка", "tool": "terminal", "args": { "command": "builtin sudo rm -rf /var" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.3: pkexec", "tool": "terminal", "args": { "command": "pkexec rm -rf /var" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.3: systemd-run", "tool": "terminal", "args": { "command": "systemd-run rm -rf /var" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.3: setsid", "tool": "terminal", "args": { "command": "setsid rm -rf /var" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.3: setpriv --reuid 0", "tool": "terminal", "args": { "command": "setpriv --reuid 0 rm -rf /var" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.3: unshare -r", "tool": "terminal", "args": { "command": "unshare -r rm -rf /var" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.4: setuid+другой бит в той же группе", "tool": "terminal", "args": { "command": "chmod u+sx /usr/bin/vim" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.4: setuid не последним символом", "tool": "terminal", "args": { "command": "chmod a+xs /usr/bin/x" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.4: оператор = вместо +", "tool": "terminal", "args": { "command": "chmod u=s /usr/bin/vim" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.4: голое =s", "tool": "terminal", "args": { "command": "chmod =s /usr/bin/vim" }, "class": "privilege_escalation" },
+    { "name": "техдолг TD2.5: find -execdir", "tool": "terminal", "args": { "command": "find / -execdir rm -rf {} \\;" }, "class": "filesystem_destruction" },
+    { "name": "техдолг TD2.5: find -ok", "tool": "terminal", "args": { "command": "find / -ok rm -rf {} \\;" }, "class": "filesystem_destruction" },
+    { "name": "техдолг TD2.6: cp --target-directory= slice-форма", "tool": "terminal", "args": { "command": "cp payload --target-directory=/etc/cron.d" }, "class": "deletion_outside_workspace" },
+    { "name": "техдолг TD2.6: mv --target-directory отдельным токеном", "tool": "terminal", "args": { "command": "mv payload --target-directory /etc/cron.d" }, "class": "deletion_outside_workspace" },
+    { "name": "техдолг TD2.7: mdadm software RAID", "tool": "terminal", "args": { "command": "dd if=/dev/zero of=/dev/md0" }, "class": "block_device_write" },
+    { "name": "техдолг TD2.7: network block device", "tool": "terminal", "args": { "command": "dd if=/dev/zero of=/dev/nbd0" }, "class": "block_device_write" },
+    { "name": "техдолг TD2.7: ZFS volume", "tool": "terminal", "args": { "command": "dd if=/dev/zero of=/dev/zvol/pool/vol" }, "class": "block_device_write" },
+    { "name": "техдолг TD2.7: физическая память ядра", "tool": "terminal", "args": { "command": "dd if=/dev/zero of=/dev/mem" }, "class": "block_device_write" }
   ],
   "allowed": [
     { "name": "рекурсивное удаление внутри области относительным путём", "tool": "terminal", "args": { "command": "rm -rf ./build" } },
@@ -72,6 +93,9 @@
     { "name": "mkswap на обычном файле внутри области", "tool": "terminal", "args": { "command": "mkswap ./swapfile" } },
     { "name": "обычная команда git", "tool": "terminal", "args": { "command": "git status" } },
     { "name": "удаление внутри области через файловый инструмент", "tool": "files.delete", "args": { "path": "/workspace/tmp/stale" } },
-    { "name": "инструмент без путей и команд", "tool": "crm.get_card_status", "args": { "id": "card_1029" } }
+    { "name": "инструмент без путей и команд", "tool": "crm.get_card_status", "args": { "id": "card_1029" } },
+    { "name": "техдолг TD2.3: unshare без смены пользователя (сетевой namespace)", "tool": "terminal", "args": { "command": "unshare -n echo hi" } },
+    { "name": "техдолг TD2.4: chmod с обычным исполняемым битом", "tool": "terminal", "args": { "command": "chmod u+x ./script" } },
+    { "name": "техдолг TD2.6: cp -t внутри области (короткая форма уже была покрыта, контроль)", "tool": "terminal", "args": { "command": "cp -t ./dest ./a" } }
   ]
 }

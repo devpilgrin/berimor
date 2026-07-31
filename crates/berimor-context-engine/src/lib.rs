@@ -45,7 +45,17 @@ pub enum LayerKind {
 /// добавление им места не требует менять порядок, только список.
 pub fn layers_for_step(step_kind: &str) -> Vec<LayerKind> {
     match step_kind {
-        "llm_structured" => vec![
+        // Техдолг TD4.2 (`docs/audit-2026-07-31.md`): раньше матчилось
+        // только "llm_structured" — "agent_step"/"codeact" (E9/E8, оба
+        // ДЕЙСТВИТЕЛЬНО несут модель, вызывают `context.build(...)` тем
+        // же путём) попадали в `_ => vec![]` и получали пустой контекст:
+        // ни системных правил, ни состояния задачи, ни слоёв памяти —
+        // не осознанный пробел, а следствие того, что роутер не был
+        // расширен при добавлении этих двух исполнителей. Набор слоёв —
+        // тот же, что у `llm_structured`: ничего специфичного, что
+        // отличало бы потребность этих шагов в контексте, ни в одном
+        // документе не описано.
+        "llm_structured" | "agent_step" | "codeact" => vec![
             LayerKind::SystemRules,
             LayerKind::Skills,
             LayerKind::Session,
@@ -175,6 +185,17 @@ mod tests {
     fn router_gives_no_model_context_to_model_less_steps() {
         assert!(layers_for_step("tool").is_empty());
         assert!(layers_for_step("branch").is_empty());
+    }
+
+    /// Техдолг TD4.2: `agent_step`/`codeact` (E9/E8) ДЕЙСТВИТЕЛЬНО несут
+    /// модель и вызывают `context.build(...)` тем же путём, что
+    /// `llm_structured`, — раньше попадали в `_ => vec![]` и получали
+    /// пустой контекст.
+    #[test]
+    fn router_gives_the_same_layers_to_agent_step_and_codeact_as_to_llm_structured() {
+        let expected = layers_for_step("llm_structured");
+        assert_eq!(layers_for_step("agent_step"), expected);
+        assert_eq!(layers_for_step("codeact"), expected);
     }
 
     #[test]

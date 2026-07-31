@@ -190,11 +190,27 @@ impl Dispatcher {
 
     /// Регистрирует неудачу: увеличивает счётчик попыток подряд,
     /// эскалирует при достижении `max_attempts`.
+    ///
+    /// Техдолг TD4.1 (`docs/audit-2026-07-31.md`): раньше
+    /// `match &task.status { TaskStatus::Failed{attempts} => attempts+1,
+    /// _ => 1 }` трактовал уже-`Escalated` задачу так же, как любую
+    /// незнакомую — сбрасывал `attempts` к `1` и молча деэскалировал в
+    /// `Failed{1}`, а `open_escalations` не трогал (вставка — только при
+    /// переходе В `Escalated`, не при выходе из него) — задача оставалась
+    /// в очереди человека (счётчик занят), но её статус уже не отражал
+    /// эскалацию, и её снова можно было бы назначить актору автоматически
+    /// (обход §3.8: «эскалированная задача не назначается акторам снова»).
+    /// Теперь — ранний no-op: провал уже эскалированной задачи не меняет
+    /// статус и не трогает счётчик; эскалация — терминальное для
+    /// диспетчера состояние до явного [`Dispatcher::resolve_escalation`].
     pub fn record_failure(&mut self, id: &TaskId) -> Result<&TaskStatus, DispatcherError> {
         let task = self
             .tasks
             .get_mut(id)
             .ok_or_else(|| DispatcherError::UnknownTask(id.clone()))?;
+        if matches!(task.status, TaskStatus::Escalated { .. }) {
+            return Ok(&self.tasks[id].status);
+        }
         let attempts = match &task.status {
             TaskStatus::Failed { attempts } => attempts + 1,
             _ => 1,
@@ -210,12 +226,24 @@ impl Dispatcher {
         Ok(&self.tasks[id].status)
     }
 
+    /// Техдолг TD4.1: раньше не проверял прежний статус — успех
+    /// эскалированной задачи (например, человек решил её мимо
+    /// `resolve_escalation`, напрямую переиграв в актора) переводил
+    /// статус в `Done`, но НЕ снимал `id` из `open_escalations` (вставка
+    /// туда — только в `record_failure`, удаление — только в
+    /// `resolve_escalation`) — очередь `human_gate` навсегда считала
+    /// место занятым призраком. Теперь `record_success` симметричен
+    /// `resolve_escalation` в этом отношении.
     pub fn record_success(&mut self, id: &TaskId) -> Result<(), DispatcherError> {
         let task = self
             .tasks
             .get_mut(id)
             .ok_or_else(|| DispatcherError::UnknownTask(id.clone()))?;
+        let was_escalated = matches!(task.status, TaskStatus::Escalated { .. });
         task.status = TaskStatus::Done;
+        if was_escalated {
+            self.open_escalations.remove(id);
+        }
         Ok(())
     }
 
@@ -494,6 +522,57 @@ mod tests {
 
         d.record_failure(&TaskId("t-1".into())).unwrap();
 
+        assert_eq!(d.open_escalations_count(), 1);
+    }
+
+    /// Техдолг TD4.1: успех на уже эскалированной задаче (например,
+    /// человек переиграл её мимо `resolve_escalation`) обязан снять
+    /// место в очереди — иначе `open_escalations` навсегда считает его
+    /// занятым, и `human_gate_limit` блокирует новые назначения без
+    /// реальной причины.
+    #[test]
+    fn record_success_on_an_escalated_task_frees_the_queue_slot() {
+        let mut d = Dispatcher::with_human_gate_limit(1, 1);
+        d.submit(TaskId("t-1".into()), "topic-a".into()).unwrap();
+        d.assign(&TaskId("t-1".into()), &FirstAvailable, &["actor-a".into()])
+            .unwrap();
+        d.record_failure(&TaskId("t-1".into())).unwrap();
+        assert_eq!(d.open_escalations_count(), 1);
+
+        d.record_success(&TaskId("t-1".into())).unwrap();
+
+        assert_eq!(d.open_escalations_count(), 0);
+        assert_eq!(
+            d.task(&TaskId("t-1".into())).unwrap().status,
+            TaskStatus::Done
+        );
+    }
+
+    /// Техдолг TD4.1: провал уже эскалированной задачи раньше молча
+    /// сбрасывал `attempts` к 1 и деэскалировал статус в
+    /// `Failed{attempts: 1}`, оставляя счётчик очереди занятым
+    /// призраком (задача больше не выглядит эскалированной, но место в
+    /// `open_escalations` не освобождено). Теперь — no-op: статус и
+    /// счётчик не меняются, пока эскалация не разобрана явно.
+    #[test]
+    fn record_failure_on_an_already_escalated_task_is_a_noop_not_a_silent_deescalation() {
+        let mut d = Dispatcher::with_human_gate_limit(1, 5);
+        d.submit(TaskId("t-1".into()), "topic-a".into()).unwrap();
+        d.assign(&TaskId("t-1".into()), &FirstAvailable, &["actor-a".into()])
+            .unwrap();
+        d.record_failure(&TaskId("t-1".into())).unwrap();
+        assert_eq!(
+            d.task(&TaskId("t-1".into())).unwrap().status,
+            TaskStatus::Escalated { attempts: 1 }
+        );
+
+        d.record_failure(&TaskId("t-1".into())).unwrap();
+
+        assert_eq!(
+            d.task(&TaskId("t-1".into())).unwrap().status,
+            TaskStatus::Escalated { attempts: 1 },
+            "повторный провал уже эскалированной задачи не должен деэскалировать её"
+        );
         assert_eq!(d.open_escalations_count(), 1);
     }
 

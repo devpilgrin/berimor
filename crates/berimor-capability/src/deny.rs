@@ -220,7 +220,18 @@ fn analyze_segment(segment: &str, workspace_root: &Path) -> Option<DenyMatch> {
         "dd" => analyze_dd(&args),
         "rm" => analyze_rm(&args, workspace_root).map(|m| (m.class, m.evidence)),
         "find" => analyze_find(&args, workspace_root).map(|m| (m.class, m.evidence)),
-        "sudo" | "doas" | "su" => Some((ForbiddenClass::PrivilegeEscalation, segment.to_string())),
+        // Техдолг TD2.3: `pkexec`/`systemd-run`/`setsid` — запускальщики
+        // вне текущего процесса/сессии, безусловно эскалация по имени
+        // (тот же класс, что `sudo`/`doas`/`su`). `setpriv`/`unshare` —
+        // многоцелевые: опасны только с флагом смены UID/root-namespace,
+        // не любым вызовом (`unshare -n` — сетевой namespace, не
+        // привилегии) — отдельный предикат `changes_privilege_scope`.
+        "sudo" | "doas" | "su" | "pkexec" | "systemd-run" | "setsid" => {
+            Some((ForbiddenClass::PrivilegeEscalation, segment.to_string()))
+        }
+        "setpriv" | "unshare" if changes_privilege_scope(&args) => {
+            Some((ForbiddenClass::PrivilegeEscalation, segment.to_string()))
+        }
         "chmod" if is_setuid_chmod(&args) => {
             Some((ForbiddenClass::PrivilegeEscalation, segment.to_string()))
         }
@@ -271,10 +282,45 @@ fn unwrap_wrappers(mut tokens: Vec<String>, workspace_root: &Path) -> Option<Unw
                 });
             }
             "env" => {
-                tokens = rest
-                    .into_iter()
-                    .skip_while(|t| t.starts_with('-') || is_assignment(t))
-                    .collect();
+                // Техдолг TD2.1: `env -u X <команда>` — `-u`/`-C`/`-S`/`-a`
+                // /`-P` (GNU coreutils) принимают ОТДЕЛЬНОЕ значение;
+                // прежний `skip_while(starts_with('-') || is_assignment)`
+                // пропускал только сам флаг, а следующий токен (значение)
+                // становился "программой" на следующей итерации —
+                // реальная команда уходила необработанной в args.
+                // Грамматика `env`: `[OPTION]... [NAME=VALUE]... [COMMAND
+                // [ARG]...]` — опции и присваивания могут чередоваться,
+                // поэтому не подходит общий `skip_options` (тот не знает
+                // про присваивания) — свой маленький цикл, различающий
+                // «флаг без значения», «флаг со значением» и
+                // «присваивание».
+                let mut rest = rest;
+                while let Some(first) = rest.first() {
+                    if is_assignment(first) {
+                        rest.remove(0);
+                        continue;
+                    }
+                    if first.starts_with('-') {
+                        let takes_value = ["-u", "-C", "-S", "-a", "-P"].contains(&first.as_str());
+                        rest.remove(0);
+                        if takes_value && !rest.is_empty() {
+                            rest.remove(0);
+                        }
+                        continue;
+                    }
+                    break;
+                }
+                tokens = rest;
+            }
+            // Техдолг TD2.2: bash-билтины, "прозрачно" исполняющие
+            // следующую команду — не внешние программы со своим стилем
+            // опций (в отличие от `env`/`nice`/`timeout` выше), просто
+            // съедают собственное имя и передают остаток как есть на
+            // следующую итерацию цикла (тот же путь, что уже даёт `sh -c`
+            // для `bash script.sh` — без опций, статически не анализуется
+            // глубже одного слоя).
+            "exec" | "command" | "builtin" => {
+                tokens = rest;
             }
             "nice" | "nohup" | "stdbuf" | "ionice" => {
                 tokens = skip_options(rest, &["-n"]);
@@ -489,11 +535,26 @@ fn is_block_device(path: &str) -> bool {
     let Some(name) = normalized.strip_prefix("/dev/") else {
         return false;
     };
+    // Техдолг TD2.7: `md` (mdadm software RAID, `/dev/md0`) и `nbd`
+    // (network block device, `/dev/nbd0`) — блочные устройства того же
+    // класса, что уже покрытые префиксы, отсутствовали в списке.
+    // `zvol/` (ZFS volumes) — та же природа, что `mapper/`/`disk/`
+    // (стабильный путь к блочному устройству через подкаталог, не
+    // префикс имени). `mem`/`kmem` (`/dev/mem`, `/dev/kmem`) — НЕ
+    // блочное устройство по классу (character device), но прямой доступ
+    // к физической памяти ядра — тот же уровень опасности, что запись на
+    // блочное устройство, потому проверяется здесь же, а не среди
+    // `HARMLESS_CHAR_DEVICES`.
     name.starts_with("mapper/")
         || name.starts_with("disk/")
-        || ["sd", "hd", "vd", "xvd", "nvme", "mmcblk", "loop", "dm-"]
-            .iter()
-            .any(|prefix| name.starts_with(prefix))
+        || name.starts_with("zvol/")
+        || name == "mem"
+        || name == "kmem"
+        || [
+            "sd", "hd", "vd", "xvd", "nvme", "mmcblk", "loop", "dm-", "md", "nbd",
+        ]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
 }
 
 fn is_harmless_device(path: &str) -> bool {
@@ -588,10 +649,17 @@ fn analyze_rm(args: &[String], workspace_root: &Path) -> Option<DenyMatch> {
 /// `find` с `-delete` или `-exec rm` (находка C3 XL-ревью): корни поиска —
 /// позиционные аргументы до первой опции — классифицируются как цели `rm`.
 fn analyze_find(args: &[String], workspace_root: &Path) -> Option<DenyMatch> {
+    // Техдолг TD2.5: `-execdir`/`-ok`/`-okdir` действуют так же, как
+    // `-exec` (исполняют команду на найденном; `-ok`/`-okdir` — с
+    // интерактивным подтверждением, что не отменяет опасность самой
+    // возможности — подтверждение здесь не то же самое, что подтверждение
+    // capability-слоя) — раньше проверялось точное совпадение со строкой
+    // `"-exec"`, эти три формы проходили незамеченными.
     let deletes = args.iter().any(|a| a == "-delete")
-        || args
-            .windows(2)
-            .any(|w| w[0] == "-exec" && basename(&w[1]) == "rm");
+        || args.windows(2).any(|w| {
+            matches!(w[0].as_str(), "-exec" | "-execdir" | "-ok" | "-okdir")
+                && basename(&w[1]) == "rm"
+        });
     if !deletes {
         return None;
     }
@@ -626,12 +694,42 @@ fn analyze_write_targets(
 /// позиционный аргумент или значение `-t`): чтение извне области законно,
 /// запись вовне — нет (находка M6 XL-ревью).
 fn analyze_copy(args: &[String], workspace_root: &Path) -> Option<(ForbiddenClass, String)> {
-    let dest = if let Some(pos) = args.iter().position(|a| a == "-t") {
+    // Техдолг TD2.6: только короткая форма `-t DEST` (отдельным токеном)
+    // распознавалась как явный приёмник — длинная форма `--target-directory=DEST`
+    // (значение внутри самого токена, начинается с `-`, поэтому не
+    // попадала и в резервный `rfind` "последний не-`-`-аргумент") и
+    // `--target-directory DEST` (отдельным токеном) проходили
+    // незамеченными.
+    let dest = if let Some(pos) = args
+        .iter()
+        .position(|a| a == "-t" || a == "--target-directory")
+    {
         args.get(pos + 1).cloned()
+    } else if let Some(value) = args
+        .iter()
+        .find_map(|a| a.strip_prefix("--target-directory="))
+    {
+        Some(value.to_string())
     } else {
         args.iter().rfind(|a| !a.starts_with('-')).cloned()
     };
     dest.and_then(|d| classify_write_target(&d, workspace_root).map(|m| (m.class, m.evidence)))
+}
+
+/// Техдолг TD2.3: `setpriv --reuid 0`/`--regid 0`/`--clear-groups` меняют
+/// эффективный uid/gid процесса, `unshare -r`/`--map-root-user` мапят
+/// root ВНУТРИ нового user-namespace — оба пути дают процессу права,
+/// которых у вызывающего кода не было. `unshare -n`/`-m` (сетевой/
+/// mount namespace без смены пользователя) сознательно НЕ считаются
+/// эскалацией привилегий — другой класс изоляции.
+fn changes_privilege_scope(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        matches!(
+            a.as_str(),
+            "-r" | "--map-root-user" | "--reuid" | "--regid" | "--clear-groups"
+        ) || a.starts_with("--reuid=")
+            || a.starts_with("--regid=")
+    })
 }
 
 /// Владелец root: по имени, по числовому uid, по группе (находка M4
@@ -648,11 +746,24 @@ fn is_root_owner(spec: &str) -> bool {
 /// setuid/setgid: символический режим (`u+s`, `g+s`, `a+s`, `+s`) или
 /// числовой со старшим битом — ведущие нули не мешают (`chmod 04755`,
 /// находка M4 XL-ревью).
+///
+/// Техдолг TD2.4: символьная ветка раньше требовала, чтобы `s` был
+/// ПОСЛЕДНИМ символом сразу после `+` (буквально `part.ends_with("+s")`)
+/// — `u+sx`/`a+xs` (setuid вместе с другим битом в той же группе) и
+/// `u=s`/`=s` (оператор `=`, не `+`) не ловились. Теперь находится
+/// оператор (`+` или `=` — `-` означает СНЯТИЕ бита, не установку, не
+/// опасно) и проверяется, что `s` есть СРЕДИ добавляемых битов, а не
+/// обязательно последним.
 fn is_setuid_chmod(args: &[String]) -> bool {
     args.iter().any(|a| {
         let a = a.trim_start_matches('-');
         let symbolic = a.split(',').any(|part| {
-            part.ends_with("+s") && part[..part.len() - 2].chars().all(|c| "ugoa".contains(c))
+            let Some(op_pos) = part.find(['+', '=']) else {
+                return false;
+            };
+            let (who, rest) = part.split_at(op_pos);
+            let perms = &rest[1..];
+            who.chars().all(|c| "ugoa".contains(c)) && perms.contains('s')
         });
         let digits: String = a.trim_start_matches('0').to_string();
         let numeric = !digits.is_empty()
