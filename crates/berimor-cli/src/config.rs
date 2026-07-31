@@ -85,6 +85,21 @@ impl Default for MemoryConfig {
     }
 }
 
+/// Внешний сервер инструментов по MCP (T1) — оператор сам прописывает его
+/// здесь; доверие к серверу — факт присутствия в конфиге, как и у
+/// `tool_stubs`. Установка/доверенный список плагинов (D6) — отдельный,
+/// пока не реализованный процесс, эта секция его не подменяет.
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpServerConfig {
+    /// Имя сервера — только для сообщений об ошибках и разрешения
+    /// конфликтов имён инструментов между серверами, в протоколе не
+    /// участвует.
+    pub name: String,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -96,6 +111,7 @@ pub struct Config {
     pub providers: Vec<ProviderConfig>,
     pub tool_stubs: Vec<ToolStub>,
     pub memory: MemoryConfig,
+    pub mcp_servers: Vec<McpServerConfig>,
 }
 
 impl Default for Config {
@@ -107,6 +123,7 @@ impl Default for Config {
             providers: Vec::new(),
             tool_stubs: Vec::new(),
             memory: MemoryConfig::default(),
+            mcp_servers: Vec::new(),
         }
     }
 }

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 mod config;
+mod mcp_dispatch;
 mod run;
 
 #[derive(Parser)]

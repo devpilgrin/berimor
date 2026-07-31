@@ -9,11 +9,12 @@
 //! поддержано в Milestone 1», не молчаливый пропуск.
 
 use crate::config::Config;
+use crate::mcp_dispatch::{CompositeToolDispatch, McpToolDispatch};
 use berimor_capability::confirm::{StandardCapability, ToolPolicy};
 use berimor_context_engine::memory_builder::MemoryContextBuilder;
 use berimor_executors::{
     structured_llm::StructuredLlm,
-    tool_only::{self, ConfirmationHandler, StaticToolDispatch},
+    tool_only::{self, ConfirmationHandler, StaticToolDispatch, ToolDispatch},
 };
 use berimor_model_pool::{
     http_provider::OpenAiCompatibleProvider, ModelEntry, ModelPool, ProviderKind,
@@ -54,6 +55,8 @@ pub enum RunError {
     MissingApiKey(String),
     #[error("не удалось подключить провайдера: {0}")]
     Provider(String),
+    #[error("MCP-серверы инструментов: {0}")]
+    Mcp(#[from] crate::mcp_dispatch::McpDispatchError),
 }
 
 /// Точка входа подкоманды `run`. Печатает в stdout: идентификатор
@@ -122,7 +125,7 @@ pub fn run(
         })
         .collect();
     let gate = StandardCapability::new(workspace_root, tool_policies);
-    let dispatch = StaticToolDispatch::new(
+    let static_stubs = StaticToolDispatch::new(
         config
             .tool_stubs
             .clone()
@@ -130,6 +133,15 @@ pub fn run(
             .map(|s| (s.tool, s.response, s.mutates))
             .collect(),
     );
+    // MCP-серверы (T1) — только если оператор явно перечислил их в
+    // конфиге; пустой список ведёт себя побитово как раньше (только
+    // static_stubs, ни одного сервера не запускается).
+    let mcp = if config.mcp_servers.is_empty() {
+        None
+    } else {
+        Some(McpToolDispatch::connect(&config.mcp_servers)?)
+    };
+    let dispatch = CompositeToolDispatch { mcp, static_stubs };
     let confirmer = TerminalConfirmer;
 
     let mut pool = ModelPool::new();
@@ -255,7 +267,7 @@ struct CliExecutor<'a> {
     gate: &'a StandardCapability,
     mode: ConfirmationMode,
     confirmer: &'a TerminalConfirmer,
-    dispatch: &'a StaticToolDispatch,
+    dispatch: &'a dyn ToolDispatch,
     llm: &'a StructuredLlm<'a>,
     /// `ProcessLimits.latency_budget_ms` (P6, ADR-0011) — SLA отбора
     /// провайдера на КАЖДОМ `llm_structured`-шаге, не убывающий бюджет

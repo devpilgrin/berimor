@@ -1,0 +1,13 @@
+# Минимальный процесс для CLI-M2: один tool-шаг против настоящего
+# MCP-сервера (не статической заглушки tool_stubs) — используется
+# tests/mcp_dispatch_spawn.rs.
+process: mcp-echo
+version: 1
+steps:
+  - id: greet
+    type: tool
+    tool: cli_echo
+    args: {text: "{{state.user.text}}"}
+limits:
+  max_steps: 10
+  timeout: 1m

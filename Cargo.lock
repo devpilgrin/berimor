@@ -143,11 +143,14 @@ dependencies = [
  "berimor-process-engine",
  "berimor-secrets",
  "berimor-storage",
+ "berimor-tool-runtime",
  "berimor-types",
  "clap",
+ "rmcp",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokio",
  "toml",
 ]
 
