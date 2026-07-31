@@ -1,0 +1,13 @@
+# Минимальный процесс для E8 (CodeAct): один шаг, модель пишет JS-программу,
+# finish(...) с результатом по контракту SupportReply — используется
+# tests/codeact_cli.rs.
+process: codeact-support
+version: 1
+steps:
+  - id: answer
+    type: code_act
+    contract: SupportReply
+    tools: []
+limits:
+  max_steps: 20
+  timeout: 1m

@@ -163,6 +163,8 @@ pub enum WasmHostError {
     InvalidJson(String),
     #[error("гость завершился с кодом {code}: {message}")]
     GuestFailed { code: i32, message: String },
+    #[error("топливо исчерпано: {0}")]
+    FuelExhausted(String),
 }
 
 /// Состояние `Store`. Держит `Arc<dyn Trait + Send + Sync>`, а не
@@ -271,7 +273,7 @@ impl WasmHost {
 
         let instance = linker
             .instantiate(&mut store, &module)
-            .map_err(|err| WasmHostError::Instantiate(err.to_string()))?;
+            .map_err(|err| classify_trap(err, WasmHostError::Instantiate))?;
         let start = instance
             .get_typed_func::<(), ()>(&mut store, "_start")
             .map_err(|err| WasmHostError::MissingExport(format!("_start: {err}")))?;
@@ -284,9 +286,35 @@ impl WasmHost {
                     code: exit.0,
                     message: read_text(&stderr),
                 }),
-                Err(err) => Err(WasmHostError::Trap(err.to_string())),
+                Err(err) => Err(classify_trap(err, WasmHostError::Trap)),
             },
         }
+    }
+}
+
+/// Исчерпание топлива у одного и того же байткода с одним и тем же
+/// бюджетом эмпирически трапит на РАЗНЫХ этапах в зависимости от ОС
+/// (найдено в CI: Linux — при вызове `_start`, Windows/macOS — ещё на
+/// `instantiate`, где, судя по всему, тоже исполняется часть кода
+/// инициализации гостя) и заворачивается в РАЗНЫЕ обёртки (на Linux
+/// `.to_string()` внешней ошибки — это дамп бэктрейса, БЕЗ слова "fuel"
+/// в тексте, сама причина — глубже в цепочке) — надёжно только
+/// down-cast к `wasmtime::Trap` (у anyhow он ищет по всей цепочке
+/// причин, не только в верхнем слое), текстовое сравнение — запасной
+/// путь на случай, если конкретная версия wasmtime вообще не даёт
+/// типизированный `Trap` в цепочке.
+fn classify_trap(
+    err: wasmtime::Error,
+    fallback: impl FnOnce(String) -> WasmHostError,
+) -> WasmHostError {
+    if err.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::OutOfFuel) {
+        return WasmHostError::FuelExhausted(err.to_string());
+    }
+    let message = err.to_string();
+    if message.contains("fuel") {
+        WasmHostError::FuelExhausted(message)
+    } else {
+        fallback(message)
     }
 }
 
@@ -656,7 +684,13 @@ mod tests {
         let err = host
             .run(GUEST_WASM, &program(json!(null), "while (true) {}"), &tiny)
             .unwrap_err();
-        assert!(matches!(err, WasmHostError::Trap(_)), "{err:?}");
+        // На каком этапе (instantiate у гостя ещё до `_start`, или сам
+        // вызов `_start`) исчерпание топлива трапит — эмпирически
+        // зависит от ОС (найдено в CI: Windows/macOS — на instantiate,
+        // Linux — на вызове), классификация по тексту сообщения
+        // (`classify_trap`) даёт единый, не зависящий от платформы
+        // вариант ошибки.
+        assert!(matches!(err, WasmHostError::FuelExhausted(_)), "{err:?}");
     }
 
     #[test]

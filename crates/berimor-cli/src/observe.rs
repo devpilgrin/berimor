@@ -11,7 +11,11 @@
 use crate::config::Config;
 use crate::run::{build_executor_bundle, CliExecutor, RunError};
 use berimor_context_engine::memory_builder::MemoryContextBuilder;
-use berimor_executors::{agent_step::AgentStepExecutor, structured_llm::StructuredLlm};
+use berimor_executors::{
+    agent_step::AgentStepExecutor,
+    codeact::{CodeActExecutor, WasmHost},
+    structured_llm::StructuredLlm,
+};
 use berimor_process_engine::{engine, parser};
 use berimor_storage::{SqliteEventLog, StorageError};
 use berimor_types::event::ProcessInstanceId;
@@ -103,17 +107,31 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         providers: &providers,
         context: &memory_context,
         on_attempt: None,
-        gate: &bundle.gate,
+        gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
-        confirmer: &bundle.confirmer,
-        dispatch: &bundle.dispatch,
+        confirmer: bundle.confirmer.as_ref(),
+        dispatch: bundle.dispatch.as_ref(),
+    };
+    let wasm_host = WasmHost::new(
+        bundle.dispatch.clone(),
+        bundle.gate.clone(),
+        config.confirmation_mode,
+        bundle.confirmer.clone(),
+    );
+    let codeact = CodeActExecutor {
+        pool: &bundle.pool,
+        providers: &providers,
+        context: &memory_context,
+        on_attempt: None,
+        wasm_host: &wasm_host,
     };
     let executor = CliExecutor {
-        gate: &bundle.gate,
+        gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
-        confirmer: &bundle.confirmer,
+        confirmer: bundle.confirmer.as_ref(),
         agent_step: &agent_step,
-        dispatch: &bundle.dispatch,
+        codeact: &codeact,
+        dispatch: bundle.dispatch.as_ref(),
         llm: &llm,
         latency_budget_ms: process.limits.latency_budget_ms,
     };

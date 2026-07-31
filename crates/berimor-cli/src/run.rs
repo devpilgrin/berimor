@@ -14,6 +14,7 @@ use berimor_capability::confirm::{StandardCapability, ToolPolicy};
 use berimor_context_engine::memory_builder::MemoryContextBuilder;
 use berimor_executors::{
     agent_step::AgentStepExecutor,
+    codeact::{CodeActExecutor, WasmHost},
     structured_llm::StructuredLlm,
     tool_only::{self, ConfirmationHandler, StaticToolDispatch, ToolDispatch},
 };
@@ -142,19 +143,34 @@ pub fn run(
         providers: &providers,
         context: &memory_context,
         on_attempt: Some(&on_attempt),
-        gate: &bundle.gate,
+        gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
-        confirmer: &bundle.confirmer,
-        dispatch: &bundle.dispatch,
+        confirmer: bundle.confirmer.as_ref(),
+        dispatch: bundle.dispatch.as_ref(),
+    };
+
+    let wasm_host = WasmHost::new(
+        bundle.dispatch.clone(),
+        bundle.gate.clone(),
+        config.confirmation_mode,
+        bundle.confirmer.clone(),
+    );
+    let codeact = CodeActExecutor {
+        pool: &bundle.pool,
+        providers: &providers,
+        context: &memory_context,
+        on_attempt: Some(&on_attempt),
+        wasm_host: &wasm_host,
     };
 
     let executor = CliExecutor {
-        gate: &bundle.gate,
+        gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
-        confirmer: &bundle.confirmer,
-        dispatch: &bundle.dispatch,
+        confirmer: bundle.confirmer.as_ref(),
+        dispatch: bundle.dispatch.as_ref(),
         llm: &llm,
         agent_step: &agent_step,
+        codeact: &codeact,
         latency_budget_ms: instance.process.limits.latency_budget_ms,
     };
 
@@ -205,13 +221,22 @@ pub fn run(
 /// `latency_budget_ms` — оба привязаны к конкретному `ProcessInstance`
 /// (id инстанса для телеметрии, `process.limits` для бюджета), собираются
 /// вызывающим кодом после того, как инстанс/процесс уже известен.
+///
+/// `gate`/`dispatch`/`confirmer` — `Arc`, не голые значения: нужно
+/// `CodeActExecutor`/`WasmHost` (E8) — `wasmtime::Linker::func_wrap`
+/// требует `'static` на состояние `Store`, заимствование с временем
+/// жизни этой функции не годится (тот же вынужденный выбор, что у
+/// `HostState` в `codeact::wasm_host`, теперь распространяется на
+/// точку сборки). Существующие потребители (`StructuredLlm`/
+/// `AgentStepExecutor`/`CliExecutor`, которым достаточно `&dyn Trait`)
+/// берут его через `Arc::as_ref`/автодеref — поведение не меняется.
 pub(crate) struct ExecutorBundle {
-    pub(crate) gate: StandardCapability,
-    pub(crate) dispatch: CompositeToolDispatch,
+    pub(crate) gate: std::sync::Arc<StandardCapability>,
+    pub(crate) dispatch: std::sync::Arc<CompositeToolDispatch>,
     pub(crate) pool: ModelPool,
     provider_clients: Vec<OpenAiCompatibleProvider>,
     pub(crate) skills: Vec<berimor_memory::procedural::SkillSummary>,
-    pub(crate) confirmer: TerminalConfirmer,
+    pub(crate) confirmer: std::sync::Arc<TerminalConfirmer>,
 }
 
 impl ExecutorBundle {
@@ -300,12 +325,12 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
     let skills = load_skills(config.memory.skills_dir.as_deref());
 
     Ok(ExecutorBundle {
-        gate,
-        dispatch,
+        gate: std::sync::Arc::new(gate),
+        dispatch: std::sync::Arc::new(dispatch),
         pool,
         provider_clients,
         skills,
-        confirmer: TerminalConfirmer,
+        confirmer: std::sync::Arc::new(TerminalConfirmer),
     })
 }
 
@@ -317,10 +342,11 @@ pub(crate) struct CliExecutor<'a> {
     pub(crate) dispatch: &'a dyn ToolDispatch,
     pub(crate) llm: &'a StructuredLlm<'a>,
     pub(crate) agent_step: &'a AgentStepExecutor<'a>,
+    pub(crate) codeact: &'a CodeActExecutor<'a>,
     /// `ProcessLimits.latency_budget_ms` (P6, ADR-0011) — SLA отбора
-    /// провайдера на КАЖДОМ `llm_structured`/`agent_step`-ходе, не
-    /// убывающий бюджет цикла: то же значение передаётся в каждый
-    /// вызов `llm.execute`/`agent_step.execute`.
+    /// провайдера на КАЖДОМ `llm_structured`/`agent_step`/`codeact`-ходе,
+    /// не убывающий бюджет цикла: то же значение передаётся в каждый
+    /// вызов `llm.execute`/`agent_step.execute`/`codeact.execute`.
     pub(crate) latency_budget_ms: Option<u64>,
 }
 
@@ -374,10 +400,28 @@ impl engine::StepExecutor for CliExecutor<'_> {
                     step_id: step.id.clone(),
                     reason: err.to_string(),
                 }),
+            StepKind::CodeAct {
+                contract,
+                tools,
+                model_tier,
+            } => self
+                .codeact
+                .execute(
+                    &step.id,
+                    contract,
+                    tools,
+                    *model_tier,
+                    state,
+                    self.latency_budget_ms,
+                )
+                .map_err(|err| ExecutorError {
+                    step_id: step.id.clone(),
+                    reason: err.to_string(),
+                }),
             other => Err(ExecutorError {
                 step_id: step.id.clone(),
                 reason: format!(
-                    "тип шага не поддержан в Milestone 1 (поддержаны: tool, llm_structured, agent_step): {other:?}"
+                    "тип шага не поддержан в Milestone 1 (поддержаны: tool, llm_structured, agent_step, codeact): {other:?}"
                 ),
             }),
         }
