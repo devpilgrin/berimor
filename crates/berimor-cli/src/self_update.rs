@@ -847,16 +847,21 @@ mod tests {
 
     #[cfg(windows)]
     fn pack_test_archive(dir_to_pack: &Path, archive_path: &Path) {
-        let escaped = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "''"));
+        // Глоб `\*` обязан быть ВНУТРИ кавычек одним токеном — снаружи
+        // PowerShell разбирает `'...'\*` как два позиционных аргумента и
+        // падает на "positional parameter cannot be found" (найдено на
+        // реальном прогоне CI, Rust · windows-latest, не в теории).
+        let escaped = |s: &str| format!("'{}'", s.replace('\'', "''"));
+        let glob = format!("{}\\*", dir_to_pack.display());
         let status = std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
                 &format!(
-                    "Compress-Archive -Path {}\\* -DestinationPath {} -Force",
-                    escaped(dir_to_pack),
-                    escaped(archive_path)
+                    "Compress-Archive -Path {} -DestinationPath {} -Force",
+                    escaped(&glob),
+                    escaped(&archive_path.display().to_string())
                 ),
             ])
             .status()
