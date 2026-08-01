@@ -36,12 +36,12 @@ Berimor устроен наоборот. Задача заранее раскл�
 
 ### Способ 1: готовый бинарник (проще всего)
 
-Актуальные версии — на странице [релизов](https://github.com/devpilgrin/berimor/releases/latest). Ниже — команды для скачивания конкретной версии (замените `v0.7.0` на нужную, если вышла более новая).
+Актуальные версии — на странице [релизов](https://github.com/devpilgrin/berimor/releases/latest). Ниже — команды для скачивания конкретной версии (замените `v0.7.1` на нужную, если вышла более новая).
 
 **Linux** (x64 или arm64):
 
 ```sh
-VERSION=v0.7.0
+VERSION=v0.7.1
 ARCH=x64   # или arm64
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-linux-${ARCH}.tar.gz"
 tar -xzf "berimor-${VERSION}-linux-${ARCH}.tar.gz"
@@ -53,7 +53,7 @@ berimor --version
 **macOS** (только Apple Silicon — M1/M2/M3 и новее; сборки под Intel пока не публикуются, для Intel-Mac — способ 2 ниже):
 
 ```sh
-VERSION=v0.7.0
+VERSION=v0.7.1
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-darwin-arm64.tar.gz"
 tar -xzf "berimor-${VERSION}-darwin-arm64.tar.gz"
 xattr -d com.apple.quarantine berimor   # бинарник пока не подписан Apple — иначе Gatekeeper откажется его запускать
@@ -65,7 +65,7 @@ berimor --version
 **Windows** (x64), PowerShell:
 
 ```powershell
-$Version = "v0.7.0"
+$Version = "v0.7.1"
 Invoke-WebRequest -Uri "https://github.com/devpilgrin/berimor/releases/download/$Version/berimor-$Version-win32-x64.zip" -OutFile berimor.zip
 Expand-Archive -Path berimor.zip -DestinationPath .
 .\berimor.exe --version
