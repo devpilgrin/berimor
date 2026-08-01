@@ -90,6 +90,11 @@ pub struct CodeActExecutor<'a> {
     pub context: &'a dyn ContextBuilder,
     pub on_attempt: Option<&'a dyn Fn(berimor_types::event::EventKind)>,
     pub wasm_host: &'a WasmHost,
+    /// Реестр секретов запуска (S5) — контроль утечек policy-стадии над
+    /// РЕЗУЛЬТАТОМ программы (mediation.md §4.3): `finish(result)` может
+    /// протащить значение из состояния мимо замаскированных наблюдений
+    /// `call_tool` (находка 2 независимого ревью S5).
+    pub secrets: &'a berimor_secrets::Masker,
 }
 
 impl CodeActExecutor<'_> {
@@ -180,7 +185,11 @@ impl CodeActExecutor<'_> {
 
             let raw = serde_json::to_string(&result_value)
                 .expect("Value всегда сериализуем в JSON-текст");
-            let rules = (adapter.policy_rules)();
+            // Контроль утечек (S5): статические правила контракта +
+            // значения из реестра запуска — как у StructuredLlm/AgentStep.
+            let known_secrets = self.secrets.known_values();
+            let mut rules = (adapter.policy_rules)();
+            rules.known_secrets = &known_secrets;
             let outcome =
                 (adapter.mediate)(step_id, &raw, state, Some(model_tier), &rules, attempt);
 
@@ -270,6 +279,9 @@ fn build_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Пустой реестр — прежнее поведение (контроль утечек no-op).
+    static EMPTY_MASKER: berimor_secrets::Masker = berimor_secrets::Masker::new();
     use crate::tool_only::{ConfirmationHandler, DispatchError, ToolDispatch};
     use berimor_capability::CapabilityGate;
     use berimor_context_engine::SimpleContextBuilder;
@@ -367,6 +379,7 @@ mod tests {
             Arc::new(AllowAll),
             ConfirmationMode::Smart,
             Arc::new(AutoConfirm),
+            Arc::new(berimor_secrets::Masker::new()),
         )
     }
 
@@ -376,6 +389,7 @@ mod tests {
             Arc::new(DenyAll),
             ConfirmationMode::Smart,
             Arc::new(AutoConfirm),
+            Arc::new(berimor_secrets::Masker::new()),
         )
     }
 
@@ -423,6 +437,7 @@ mod tests {
             context: &SimpleContextBuilder,
             on_attempt: None,
             wasm_host: &host,
+            secrets: &EMPTY_MASKER,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -456,6 +471,7 @@ mod tests {
             context: &SimpleContextBuilder,
             on_attempt: None,
             wasm_host: &host,
+            secrets: &EMPTY_MASKER,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -487,6 +503,7 @@ mod tests {
             context: &SimpleContextBuilder,
             on_attempt: None,
             wasm_host: &host,
+            secrets: &EMPTY_MASKER,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -521,6 +538,7 @@ mod tests {
             context: &SimpleContextBuilder,
             on_attempt: None,
             wasm_host: &host,
+            secrets: &EMPTY_MASKER,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -554,6 +572,7 @@ mod tests {
             context: &SimpleContextBuilder,
             on_attempt: None,
             wasm_host: &host,
+            secrets: &EMPTY_MASKER,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -593,6 +612,7 @@ mod tests {
             context: &SimpleContextBuilder,
             on_attempt: None,
             wasm_host: &host,
+            secrets: &EMPTY_MASKER,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -626,6 +646,7 @@ mod tests {
             context: &SimpleContextBuilder,
             on_attempt: None,
             wasm_host: &host,
+            secrets: &EMPTY_MASKER,
         };
 
         let result = executor.execute(

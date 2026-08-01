@@ -11,6 +11,7 @@
 //! код»).
 
 use berimor_capability::CapabilityGate;
+use berimor_secrets::Masker;
 use berimor_types::{
     capability::{CapabilityDecision, ConfirmationMode, ProposedAction},
     step::Patch,
@@ -66,9 +67,18 @@ pub fn execute(
     gate: &dyn CapabilityGate,
     mode: ConfirmationMode,
     confirmer: &dyn ConfirmationHandler,
+    masker: &Masker,
 ) -> Result<Patch, ToolOnlyError> {
     let resolved_args = resolve_template(args_template, state)?;
-    let result = dispatch_confirmed(tool, &resolved_args, dispatch, gate, mode, confirmer)?;
+    let result = dispatch_confirmed(
+        tool,
+        &resolved_args,
+        dispatch,
+        gate,
+        mode,
+        confirmer,
+        masker,
+    )?;
     Ok(Patch {
         step_id: step_id.to_string(),
         changes: result,
@@ -94,7 +104,18 @@ pub fn dispatch_confirmed(
     gate: &dyn CapabilityGate,
     mode: ConfirmationMode,
     confirmer: &dyn ConfirmationHandler,
+    masker: &Masker,
 ) -> Result<Value, ToolOnlyError> {
+    // Порядок маскировки — принципиален (S5):
+    // - ГЕЙТ видит РЕАЛЬНЫЕ аргументы: deny-статика анализирует настоящую
+    //   команду; маскировка до проверки прятала бы опасное содержимое от
+    //   защиты — инверсия безопасности;
+    // - ЧЕЛОВЕК (тексты подтверждений) и ЖУРНАЛ-видимые строки ошибок
+    //   видят замаскированные — третья точка маскировки (mediation.md §4.3);
+    // - ДИСПЕТЧ получает реальные аргументы — инструменту нужны значения;
+    // - ВЫВОД инструмента маскируется ДО возврата: через патч/наблюдение
+    //   он попадает в состояние, а из состояния — к модели на следующих
+    //   шагах; модель видит только алиасы (I4, первая точка маскировки).
     let action = ProposedAction {
         tool: tool.to_string(),
         args: resolved_args.clone(),
@@ -104,16 +125,30 @@ pub fn dispatch_confirmed(
     match gate.check(&action, mode) {
         CapabilityDecision::Allow => {}
         CapabilityDecision::Deny { reason } => {
-            return Err(ToolOnlyError::CapabilityDenied(reason));
+            return Err(ToolOnlyError::CapabilityDenied(masker.mask_text(&reason)));
         }
         CapabilityDecision::ConfirmRequired { reason } => {
-            if !confirmer.confirm(&action, &reason) {
-                return Err(ToolOnlyError::ConfirmationRejected(reason));
+            let masked_action = ProposedAction {
+                tool: action.tool.clone(),
+                args: masker.mask_value(resolved_args),
+                mutates: action.mutates,
+            };
+            let masked_reason = masker.mask_text(&reason);
+            if !confirmer.confirm(&masked_action, &masked_reason) {
+                return Err(ToolOnlyError::ConfirmationRejected(masked_reason));
             }
         }
     }
 
-    Ok(dispatch.call(tool, resolved_args)?)
+    // Ошибка диспетча — та же граница данных: текст (HTTP-ответ сервера,
+    // echo аргументов) может нести значение секрета в stderr/журнал.
+    let result = dispatch.call(tool, resolved_args).map_err(|err| {
+        ToolOnlyError::Dispatch(DispatchError {
+            tool: err.tool,
+            reason: masker.mask_text(&err.reason),
+        })
+    })?;
+    Ok(masker.mask_value(&result))
 }
 
 /// Разрешает шаблоны вида `{{state.a.b}}` рекурсивно по объекту/массиву.
@@ -192,6 +227,9 @@ impl ToolDispatch for StaticToolDispatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Пустой реестр — прежнее поведение (маскировка no-op).
+    static EMPTY_MASKER: Masker = Masker::new();
     use berimor_capability::confirm::StandardCapability;
     use berimor_types::step::StepKind;
     use serde_json::json;
@@ -293,6 +331,7 @@ mod tests {
             &AllowAll,
             ConfirmationMode::Off,
             &AutoConfirm,
+            &EMPTY_MASKER,
         )
     }
 
@@ -338,6 +377,7 @@ mod tests {
             // Даже режим off не отменяет deny-статику (I6).
             ConfirmationMode::Off,
             &AutoConfirm,
+            &EMPTY_MASKER,
         );
         assert!(matches!(result, Err(ToolOnlyError::CapabilityDenied(_))));
     }
@@ -356,6 +396,7 @@ mod tests {
             &gate,
             ConfirmationMode::Smart,
             &AutoConfirm,
+            &EMPTY_MASKER,
         )
         .unwrap();
         assert_eq!(patch.changes["status"], "active");
@@ -373,6 +414,7 @@ mod tests {
             &gate,
             ConfirmationMode::Smart,
             &AutoReject,
+            &EMPTY_MASKER,
         );
         assert!(matches!(
             result,
@@ -402,9 +444,99 @@ mod tests {
             &gate,
             ConfirmationMode::Smart,
             &AutoReject,
+            &EMPTY_MASKER,
         )
         .unwrap();
         assert_eq!(patch.changes["status"], "active");
+    }
+
+    /// S5, точка 1: вывод инструмента, содержащий значение секрета из
+    /// реестра, попадает в патч состояния только с алиасом — модель на
+    /// следующих шагах увидит состояние без значения (I4).
+    #[test]
+    fn tool_output_is_masked_before_patch() {
+        const SECRET: &str = "sk-test-FAKESECRET-9f8e7d6c";
+        struct LeakyDispatch;
+        impl ToolDispatch for LeakyDispatch {
+            fn call(&self, tool: &str, _args: &Value) -> Result<Value, DispatchError> {
+                Ok(json!({"status": "active", "token_echo": SECRET, "tool": tool}))
+            }
+        }
+        let mut masker = Masker::new();
+        masker.register(berimor_secrets::Secret::new(SECRET.into()));
+
+        let patch = execute(
+            "fetch_card_status",
+            "crm.get_card_status",
+            &json!({}),
+            &json!({}),
+            &LeakyDispatch,
+            &AllowAll,
+            ConfirmationMode::Off,
+            &AutoConfirm,
+            &masker,
+        )
+        .unwrap();
+
+        assert_eq!(patch.changes["token_echo"], "‹secret›");
+        assert!(!patch.changes.to_string().contains(SECRET));
+    }
+
+    /// S5, точки 1/3 + инвариант I6: гейт получает РЕАЛЬНЫЕ аргументы
+    /// (deny-статика анализирует настоящую команду — маскировка до
+    /// проверки прятала бы деструктив), человек — замаскированные.
+    #[test]
+    fn gate_sees_real_args_confirmer_sees_masked_args() {
+        const SECRET: &str = "sk-test-FAKESECRET-9f8e7d6c";
+        use std::sync::Mutex;
+
+        struct RecordingGate(Mutex<Option<Value>>);
+        impl berimor_capability::CapabilityGate for RecordingGate {
+            fn check(
+                &self,
+                action: &ProposedAction,
+                _mode: ConfirmationMode,
+            ) -> berimor_types::capability::CapabilityDecision {
+                *self.0.lock().unwrap() = Some(action.args.clone());
+                berimor_types::capability::CapabilityDecision::ConfirmRequired {
+                    reason: format!("подтвердите {SECRET}"),
+                }
+            }
+        }
+        struct RecordingConfirmer(Mutex<Option<(Value, String)>>);
+        impl ConfirmationHandler for RecordingConfirmer {
+            fn confirm(&self, action: &ProposedAction, reason: &str) -> bool {
+                *self.0.lock().unwrap() = Some((action.args.clone(), reason.to_string()));
+                true
+            }
+        }
+
+        let mut masker = Masker::new();
+        masker.register(berimor_secrets::Secret::new(SECRET.into()));
+        let gate = RecordingGate(Mutex::new(None));
+        let confirmer = RecordingConfirmer(Mutex::new(None));
+        let args = json!({"command": format!("deploy --key {SECRET}")});
+
+        dispatch_confirmed(
+            "deploy",
+            &args,
+            &FakeCrm,
+            &gate,
+            ConfirmationMode::Smart,
+            &confirmer,
+            &masker,
+        )
+        .ok();
+
+        let gate_saw = gate.0.lock().unwrap().clone().unwrap();
+        assert!(
+            gate_saw.to_string().contains(SECRET),
+            "гейт обязан видеть реальные аргументы: {gate_saw}"
+        );
+        let (confirmer_args, confirmer_reason) = confirmer.0.lock().unwrap().clone().unwrap();
+        assert!(!confirmer_args.to_string().contains(SECRET));
+        assert!(confirmer_args.to_string().contains("‹secret›"));
+        assert!(!confirmer_reason.contains(SECRET));
     }
 
     /// Композиция с P1: аргументы шага `fetch_card_status`, как их реально

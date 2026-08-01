@@ -6,3 +6,8 @@ license.workspace = true
 description = "Тип-обёртка секрета без утечки через Display/Debug + точка маскировки на границе."
 
 [dependencies]
+serde_json.workspace = true
+
+[dev-dependencies]
+berimor-mediation = { path = "../berimor-mediation" }
+serde = { workspace = true, features = ["derive"] }

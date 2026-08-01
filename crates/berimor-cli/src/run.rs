@@ -85,6 +85,11 @@ pub fn run(
         })?;
 
     // Инстанс: восстановление по журналу (CLI3) или новый (CLI1).
+    // Сборка исполнителей — ДО instantiate: реестр секретов (S5) нужен
+    // для маскировки входа на границе CLI (находка 1 независимого ревью).
+    let bundle = build_executor_bundle(config)?;
+    let providers = bundle.providers();
+
     let mut instance = match resume {
         Some(id) => {
             let id = ProcessInstanceId(id.clone());
@@ -101,16 +106,20 @@ pub fn run(
                     .map_err(|err| RunError::BadInput(err.to_string()))?,
                 None => Value::Object(serde_json::Map::new()),
             };
+            // S5: вход маскируется ДО instantiate — иначе значение
+            // зарегистрированного секрета из --input ушло бы открытым
+            // текстом в журнал (payload Instantiated + FTS-индекс), в
+            // task_state-слой контекста модели (нарушение I4) и в stdout
+            // финального состояния. Журнал «наследует» маскировку только
+            // при замаскированном входе; место секретов — реестр
+            // (secret_envs, ключи провайдеров), не состояние процесса.
+            let input_json = bundle.masker.mask_value(&input_json);
             let id = ProcessInstanceId(new_instance_id(&process_text));
             let instance = engine::instantiate(&storage, id, process, input_json)?;
             println!("[berimor] создан инстанс {}", instance.id.0);
             instance
         }
     };
-
-    // --- Сборка исполнителей -------------------------------------------
-    let bundle = build_executor_bundle(config)?;
-    let providers = bundle.providers();
 
     // Телеметрия Mediation (M7) — события в тот же журнал; свёртка их
     // игнорирует, аудит-след их видит (security-model.md §5).
@@ -136,6 +145,7 @@ pub fn run(
         providers: &providers,
         context: &memory_context,
         on_attempt: Some(&on_attempt),
+        secrets: bundle.masker.as_ref(),
     };
 
     let agent_step = AgentStepExecutor {
@@ -147,6 +157,7 @@ pub fn run(
         mode: config.confirmation_mode,
         confirmer: bundle.confirmer.as_ref(),
         dispatch: bundle.dispatch.as_ref(),
+        secrets: bundle.masker.as_ref(),
     };
 
     let wasm_host = WasmHost::new(
@@ -154,6 +165,7 @@ pub fn run(
         bundle.gate.clone(),
         config.confirmation_mode,
         bundle.confirmer.clone(),
+        std::sync::Arc::clone(&bundle.masker),
     );
     let codeact = CodeActExecutor {
         pool: &bundle.pool,
@@ -161,6 +173,7 @@ pub fn run(
         context: &memory_context,
         on_attempt: Some(&on_attempt),
         wasm_host: &wasm_host,
+        secrets: bundle.masker.as_ref(),
     };
 
     let executor = CliExecutor {
@@ -172,6 +185,7 @@ pub fn run(
         agent_step: &agent_step,
         codeact: &codeact,
         latency_budget_ms: instance.process.limits.latency_budget_ms,
+        masker: bundle.masker.as_ref(),
     };
 
     // --- Цикл прогона с обработкой human_gate (CLI2) --------------------
@@ -186,7 +200,9 @@ pub fn run(
                 return Ok(());
             }
             engine::RunOutcome::AwaitingHuman { step_id, reason } => {
-                let resolved_reason = interpolate(&reason, &instance.state);
+                let resolved_reason = bundle
+                    .masker
+                    .mask_text(&interpolate(&reason, &instance.state));
                 let _ = storage.append(Event::new(
                     instance.id.clone(),
                     instance.process.version,
@@ -237,6 +253,11 @@ pub(crate) struct ExecutorBundle {
     provider_clients: Vec<OpenAiCompatibleProvider>,
     pub(crate) skills: Vec<berimor_memory::procedural::SkillSummary>,
     pub(crate) confirmer: std::sync::Arc<TerminalConfirmer>,
+    /// Реестр секретов запуска (S5): ключи API провайдеров +
+    /// `config.secret_envs`. Мост к хранилищу секретов (mediation.md §4.3)
+    /// — значения покидают его только через `Secret::reveal` в заголовке
+    /// HTTP-провайдера.
+    pub(crate) masker: std::sync::Arc<berimor_secrets::Masker>,
 }
 
 impl ExecutorBundle {
@@ -285,6 +306,26 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
     };
     let dispatch = CompositeToolDispatch { mcp, static_stubs };
 
+    // Мост к хранилищу секретов (S5, точка 2 из mediation.md §4.3):
+    // реестр запуска наполняется значениями из окружения — ключами
+    // провайдеров и `secret_envs` — до сборки провайдеров, чтобы
+    // зарегистрировать каждый ключ ровно один раз при чтении.
+    let mut masker = berimor_secrets::Masker::new();
+    // Находка 3 независимого ревью S5: значение короче MIN_SECRET_LEN
+    // молча выпадает из реестра — оператор обязан это видеть, иначе
+    // короткий ключ не защищён ничем, а владелец считает иначе.
+    for name in &config.secret_envs {
+        if let Ok(value) = std::env::var(name) {
+            if !value.is_empty() && value.len() < berimor_secrets::MIN_SECRET_LEN {
+                eprintln!(
+                    "[berimor] предупреждение: значение {name} короче {} символов — не регистрируется в маскировщике (ни маскировки, ни контроля утечек)",
+                    berimor_secrets::MIN_SECRET_LEN
+                );
+            }
+        }
+    }
+    masker.register_from_env(&config.secret_envs);
+
     let mut pool = ModelPool::new();
     let mut provider_clients: Vec<OpenAiCompatibleProvider> = Vec::new();
     for p in &config.providers {
@@ -301,9 +342,19 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
         let api_key = match &p.api_key_env {
             Some(env) => {
                 let value = std::env::var(env).ok().filter(|v| !v.is_empty());
-                Some(Secret::new(
-                    value.ok_or_else(|| RunError::MissingApiKey(p.name.clone()))?,
-                ))
+                let key =
+                    Secret::new(value.ok_or_else(|| RunError::MissingApiKey(p.name.clone()))?);
+                if key.reveal().len() < berimor_secrets::MIN_SECRET_LEN {
+                    eprintln!(
+                        "[berimor] предупреждение: ключ провайдера '{}' короче {} символов — не регистрируется в маскировщике",
+                        p.name,
+                        berimor_secrets::MIN_SECRET_LEN
+                    );
+                }
+                // Тот же ключ — известный секрет запуска: контроль утечек
+                // (точка 4) обязан поймать его в выводе модели.
+                masker.register(Secret::new(key.reveal().to_string()));
+                Some(key)
             }
             None => None,
         };
@@ -323,6 +374,7 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
     }
 
     let skills = load_skills(config.memory.skills_dir.as_deref());
+    let masker = std::sync::Arc::new(masker);
 
     Ok(ExecutorBundle {
         gate: std::sync::Arc::new(gate),
@@ -330,7 +382,10 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
         pool,
         provider_clients,
         skills,
-        confirmer: std::sync::Arc::new(TerminalConfirmer),
+        confirmer: std::sync::Arc::new(TerminalConfirmer {
+            masker: std::sync::Arc::clone(&masker),
+        }),
+        masker,
     })
 }
 
@@ -343,6 +398,8 @@ pub(crate) struct CliExecutor<'a> {
     pub(crate) llm: &'a StructuredLlm<'a>,
     pub(crate) agent_step: &'a AgentStepExecutor<'a>,
     pub(crate) codeact: &'a CodeActExecutor<'a>,
+    /// Реестр секретов запуска (S5) — маскировка вывода tool-шагов.
+    pub(crate) masker: &'a berimor_secrets::Masker,
     /// `ProcessLimits.latency_budget_ms` (P6, ADR-0011) — SLA отбора
     /// провайдера на КАЖДОМ `llm_structured`/`agent_step`/`codeact`-ходе,
     /// не убывающий бюджет цикла: то же значение передаётся в каждый
@@ -362,6 +419,7 @@ impl engine::StepExecutor for CliExecutor<'_> {
                 self.gate,
                 self.mode,
                 self.confirmer,
+                self.masker,
             )
             .map_err(|err| ExecutorError {
                 step_id: step.id.clone(),
@@ -430,11 +488,17 @@ impl engine::StepExecutor for CliExecutor<'_> {
 
 /// Подтверждение в терминале: «да» — opt-in, всё остальное (включая
 /// EOF) — отказ.
-pub(crate) struct TerminalConfirmer;
+pub(crate) struct TerminalConfirmer {
+    /// Третья точка маскировки (S5, mediation.md §4.3): текст
+    /// подтверждения для человека не должен нести значения секретов.
+    /// `action.args` уже замаскирован вызывающим (`tool_only`), `reason`
+    /// (evidence deny-анализатора — фрагмент команды) маскируем здесь.
+    pub(crate) masker: std::sync::Arc<berimor_secrets::Masker>,
+}
 
 impl ConfirmationHandler for TerminalConfirmer {
     fn confirm(&self, action: &ProposedAction, reason: &str) -> bool {
-        eprintln!("[berimor] capability: {reason}");
+        eprintln!("[berimor] capability: {}", self.masker.mask_text(reason));
         eprintln!("[berimor] действие: {} {}", action.tool, action.args);
         ask_line("[berimor] подтвердить? [y/N] ")
     }

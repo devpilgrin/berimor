@@ -154,13 +154,22 @@ pub fn run(
         .and_then(|p| p.canonicalize())
         .unwrap_or_else(|_| PathBuf::from("."));
     let gate = StandardCapability::new(workspace_root, plugin_install_tool_policies());
-    let confirmer = TerminalConfirmer;
+    // Секреты профиля из `secret_envs` действуют и здесь (S5) — моделей в
+    // процессе установки нет, но вывод инструментов маскируется на той же
+    // границе данных.
+    let mut masker = berimor_secrets::Masker::new();
+    masker.register_from_env(&config.secret_envs);
+    let masker = std::sync::Arc::new(masker);
+    let confirmer = TerminalConfirmer {
+        masker: std::sync::Arc::clone(&masker),
+    };
 
     let executor = PluginInstallExecutor {
         gate: &gate,
         mode: config.confirmation_mode,
         confirmer: &confirmer,
         dispatch: &dispatch,
+        masker: masker.as_ref(),
     };
 
     loop {
@@ -249,6 +258,8 @@ pub struct PluginInstallExecutor<'a> {
     pub mode: ConfirmationMode,
     pub confirmer: &'a dyn ConfirmationHandler,
     pub dispatch: &'a dyn ToolDispatch,
+    /// Реестр секретов запуска (S5) — маскировка вывода инструментов.
+    pub masker: &'a berimor_secrets::Masker,
 }
 
 impl engine::StepExecutor for PluginInstallExecutor<'_> {
@@ -263,6 +274,7 @@ impl engine::StepExecutor for PluginInstallExecutor<'_> {
                 self.gate,
                 self.mode,
                 self.confirmer,
+                self.masker,
             )
             .map_err(|err| ExecutorError {
                 step_id: step.id.clone(),
@@ -829,6 +841,9 @@ fn plugin_install_fail(args: &Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Пустой реестр — маскировка no-op для тестов, не про S5.
+    static EMPTY_MASKER: berimor_secrets::Masker = berimor_secrets::Masker::new();
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
@@ -1290,9 +1305,10 @@ mod tests {
         let confirmer = PanicIfAsked;
         let executor = PluginInstallExecutor {
             gate: &gate,
-            mode: ConfirmationMode::Off,
+            mode: ConfirmationMode::Smart,
             confirmer: &confirmer,
             dispatch: &dispatch,
+            masker: &EMPTY_MASKER,
         };
 
         // Реальная verify_artifact_with_identity здесь провалится (нет
@@ -1334,9 +1350,10 @@ mod tests {
         let confirmer = PanicIfAsked;
         let executor = PluginInstallExecutor {
             gate: &gate,
-            mode: ConfirmationMode::Off,
+            mode: ConfirmationMode::Smart,
             confirmer: &confirmer,
             dispatch: &dispatch,
+            masker: &EMPTY_MASKER,
         };
 
         let outcome = engine::run(storage.as_ref(), &executor, &mut instance);

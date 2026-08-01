@@ -104,6 +104,33 @@ CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
     predicate,
     object
 );
+-- Граф сущностей (MEM7, memory-model.md §4, ADR-0016): персистентность
+-- узлов/рёбер, разрешённых entity resolution `berimor_memory::entity_graph`
+-- (эта таблица — сырьё для её чистых функций, работающих над срезами
+-- `&[StoredNode]`/`&[StoredEdge]`, не над хранилищем напрямую — тот же
+-- принцип разделения слоёв, что MEM3/MEM4: логика резолюции не знает про
+-- SQLite, хранилище не знает про типы `berimor-memory`). `properties` —
+-- JSON-объект произвольной формы (как `payload` у событий), не
+-- раскладывается по столбцам: набор полей зависит от `node_type`/
+-- `edge_type` и проверяется схемой типа на уровне `berimor-memory`, не
+-- здесь. Профиль/тенант не хранится отдельным столбцом — граф сущностей
+-- изолируется правилами `MemoryLayer::Semantic` (`profile.rs`), тем же
+-- способом, что `facts` уже сегодня.
+CREATE TABLE IF NOT EXISTS nodes (
+    id         TEXT PRIMARY KEY,
+    node_type  TEXT NOT NULL,
+    properties TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS nodes_node_type ON nodes (node_type);
+CREATE TABLE IF NOT EXISTS edges (
+    id         TEXT PRIMARY KEY,
+    edge_type  TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    target     TEXT NOT NULL,
+    properties TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS edges_source ON edges (source);
+CREATE INDEX IF NOT EXISTS edges_target ON edges (target);
 -- Акторы (A1, stack.md §68): почтовый ящик персистентен — «конверт
 -- считается доставленным только после фиксации в журнале SQLite».
 -- delivered=0 после сбоя между «отправлено» и «обработано» — то же
@@ -602,6 +629,142 @@ impl SemanticStore for SqliteEventLog {
         hits.sort_by(|a, b| b.combined_score.total_cmp(&a.combined_score));
         hits.truncate(limit);
         Ok(hits)
+    }
+}
+
+/// Узел графа сущностей (MEM7, `berimor_memory::entity_graph::StoredNode`)
+/// в форме хранилища — те же поля, без типа `NodeId` `berimor-memory`
+/// (эта крейта не зависит от `berimor-memory`, только наоборот, ADR-0021).
+#[derive(Debug, Clone, PartialEq)]
+pub struct NodeRecord {
+    pub id: String,
+    pub node_type: String,
+    pub properties: serde_json::Value,
+}
+
+/// Ребро графа сущностей (MEM7, `StoredEdge`) в форме хранилища — те же
+/// поля, `source`/`target` как простые `id`-строки.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EdgeRecord {
+    pub id: String,
+    pub edge_type: String,
+    pub source: String,
+    pub target: String,
+    pub properties: serde_json::Value,
+}
+
+/// Персистентность графа сущностей (MEM7). Работает с [`NodeRecord`]/
+/// [`EdgeRecord`] — простыми полями хранилища, не с типами
+/// `berimor-memory`. Резолюцию/конфликты (кто есть кто, какие рёбра
+/// противоречат друг другу) решает `berimor_memory::entity_graph` над
+/// срезом, который эти методы загружают из хранилища — тот же принцип
+/// разделения, что [`SemanticStore::all_facts`] для MEM3/MEM4.
+pub trait EntityGraphStore {
+    /// Пишет узел целиком; тот же id — обновление уже существующего, а
+    /// не дубликат (`ON CONFLICT DO UPDATE`, как у [`SemanticStore::upsert_fact`]).
+    ///
+    /// Граница маскировки (S5): этот слой НЕ маскирует `properties` —
+    /// хранилище не знает реестра секретов запуска и не должно знать.
+    /// Маскировка — обязанность продюсера записи, по образцу
+    /// `berimor_memory::semantic::StoredFact::new` (маскировщик на записи,
+    /// memory-model.md §5). Продюсеров с секретами в properties сейчас
+    /// нет; появление такого продюсера без маскировки на его стороне —
+    /// осознанный риск, зафиксированный здесь (находка 4 независимого
+    /// ревью S5).
+    fn upsert_node(&self, node: &NodeRecord) -> Result<(), StorageError>;
+    /// Все узлы — сырьё для `berimor_memory::entity_graph::resolve_node`,
+    /// которая сама решает точное/близкое совпадение по срезу.
+    fn all_nodes(&self) -> Result<Vec<NodeRecord>, StorageError>;
+    /// Пишет ребро целиком; тот же id — обновление, не дубликат.
+    fn upsert_edge(&self, edge: &EdgeRecord) -> Result<(), StorageError>;
+    /// Все рёбра — сырьё для `detect_edge_conflict`/`resolve_edge`.
+    fn all_edges(&self) -> Result<Vec<EdgeRecord>, StorageError>;
+}
+
+impl EntityGraphStore for SqliteEventLog {
+    fn upsert_node(&self, node: &NodeRecord) -> Result<(), StorageError> {
+        let conn = self.lock()?;
+        let properties_json = serde_json::to_string(&node.properties)?;
+        conn.execute(
+            "INSERT INTO nodes (id, node_type, properties)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(id) DO UPDATE SET
+                node_type = excluded.node_type,
+                properties = excluded.properties",
+            params![node.id, node.node_type, properties_json],
+        )?;
+        Ok(())
+    }
+
+    fn all_nodes(&self) -> Result<Vec<NodeRecord>, StorageError> {
+        let conn = self.lock()?;
+        let mut stmt = conn.prepare("SELECT id, node_type, properties FROM nodes")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut nodes = Vec::new();
+        for row in rows {
+            let (id, node_type, properties_text) = row?;
+            nodes.push(NodeRecord {
+                id,
+                node_type,
+                properties: serde_json::from_str(&properties_text)?,
+            });
+        }
+        Ok(nodes)
+    }
+
+    fn upsert_edge(&self, edge: &EdgeRecord) -> Result<(), StorageError> {
+        let conn = self.lock()?;
+        let properties_json = serde_json::to_string(&edge.properties)?;
+        conn.execute(
+            "INSERT INTO edges (id, edge_type, source, target, properties)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                edge_type = excluded.edge_type,
+                source = excluded.source,
+                target = excluded.target,
+                properties = excluded.properties",
+            params![
+                edge.id,
+                edge.edge_type,
+                edge.source,
+                edge.target,
+                properties_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn all_edges(&self) -> Result<Vec<EdgeRecord>, StorageError> {
+        let conn = self.lock()?;
+        let mut stmt =
+            conn.prepare("SELECT id, edge_type, source, target, properties FROM edges")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        let mut edges = Vec::new();
+        for row in rows {
+            let (id, edge_type, source, target, properties_text) = row?;
+            edges.push(EdgeRecord {
+                id,
+                edge_type,
+                source,
+                target,
+                properties: serde_json::from_str(&properties_text)?,
+            });
+        }
+        Ok(edges)
     }
 }
 
@@ -1438,5 +1601,86 @@ mod tests {
         let second = log.due(1000).unwrap();
 
         assert_eq!(first, second);
+    }
+
+    fn node(id: &str, node_type: &str) -> NodeRecord {
+        NodeRecord {
+            id: id.into(),
+            node_type: node_type.into(),
+            properties: json!({"batch_number": "B-1"}),
+        }
+    }
+
+    fn edge(id: &str, edge_type: &str, source: &str, target: &str) -> EdgeRecord {
+        EdgeRecord {
+            id: id.into(),
+            edge_type: edge_type.into(),
+            source: source.into(),
+            target: target.into(),
+            properties: json!({"since": "2026-01-01"}),
+        }
+    }
+
+    #[test]
+    fn upsert_node_round_trips_through_all_nodes() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_node(&node("n-1", "batch")).unwrap();
+
+        let nodes = log.all_nodes().unwrap();
+
+        assert_eq!(nodes, vec![node("n-1", "batch")]);
+    }
+
+    #[test]
+    fn upsert_node_updates_existing_id_not_duplicates_it() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_node(&node("n-1", "batch")).unwrap();
+        log.upsert_node(&NodeRecord {
+            properties: json!({"batch_number": "B-2"}),
+            ..node("n-1", "batch")
+        })
+        .unwrap();
+
+        let nodes = log.all_nodes().unwrap();
+
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].properties, json!({"batch_number": "B-2"}));
+    }
+
+    #[test]
+    fn all_nodes_of_empty_store_is_empty_not_an_error() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        assert!(log.all_nodes().unwrap().is_empty());
+    }
+
+    #[test]
+    fn upsert_edge_round_trips_through_all_edges() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_edge(&edge("e-1", "supplied_by", "n-1", "n-2"))
+            .unwrap();
+
+        let edges = log.all_edges().unwrap();
+
+        assert_eq!(edges, vec![edge("e-1", "supplied_by", "n-1", "n-2")]);
+    }
+
+    #[test]
+    fn upsert_edge_updates_existing_id_not_duplicates_it() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_edge(&edge("e-1", "supplied_by", "n-1", "n-2"))
+            .unwrap();
+        log.upsert_edge(&edge("e-1", "supplied_by", "n-1", "n-3"))
+            .unwrap();
+
+        let edges = log.all_edges().unwrap();
+
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target, "n-3");
+    }
+
+    #[test]
+    fn all_edges_of_empty_store_is_empty_not_an_error() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        assert!(log.all_edges().unwrap().is_empty());
     }
 }

@@ -10,6 +10,7 @@ berimor-capability = { path = "../berimor-capability" }
 berimor-context-engine = { path = "../berimor-context-engine" }
 berimor-mediation = { path = "../berimor-mediation" }
 berimor-model-pool = { path = "../berimor-model-pool" }
+berimor-secrets = { path = "../berimor-secrets" }
 berimor-types = { path = "../berimor-types" }
 oxc_allocator = "0.142.0"
 oxc_ast = "0.142.0"

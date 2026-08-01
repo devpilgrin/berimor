@@ -317,6 +317,7 @@ dependencies = [
  "berimor-mediation",
  "berimor-model-pool",
  "berimor-process-engine",
+ "berimor-secrets",
  "berimor-types",
  "oxc_allocator",
  "oxc_ast",
@@ -347,6 +348,7 @@ name = "berimor-memory"
 version = "0.6.0"
 dependencies = [
  "berimor-mediation",
+ "berimor-secrets",
  "berimor-storage",
  "berimor-types",
  "serde",
@@ -383,6 +385,11 @@ dependencies = [
 [[package]]
 name = "berimor-secrets"
 version = "0.6.0"
+dependencies = [
+ "berimor-mediation",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "berimor-storage"

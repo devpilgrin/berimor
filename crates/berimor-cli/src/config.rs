@@ -112,6 +112,14 @@ pub struct Config {
     pub tool_stubs: Vec<ToolStub>,
     pub memory: MemoryConfig,
     pub mcp_servers: Vec<McpServerConfig>,
+    /// Имена переменных окружения, чьи ЗНАЧЕНИЯ — секреты этого запуска
+    /// (S5, mediation.md §4.3): регистрируются в маскировщике и заменяются
+    /// алиасом на всех границах данных. Ключи API провайдеров
+    /// (`providers[].api_key_env`) регистрируются автоматически, здесь их
+    /// дублировать не нужно. Сами значения в конфигурации не хранятся
+    /// никогда (security-model.md §6).
+    #[serde(default)]
+    pub secret_envs: Vec<String>,
 }
 
 impl Default for Config {
@@ -124,6 +132,7 @@ impl Default for Config {
             tool_stubs: Vec::new(),
             memory: MemoryConfig::default(),
             mcp_servers: Vec::new(),
+            secret_envs: Vec::new(),
         }
     }
 }

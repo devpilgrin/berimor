@@ -73,16 +73,33 @@ impl StoredFact {
     /// Собирает сохранённый факт из предложения, уже прошедшего
     /// дедупликацию (`DedupOutcome::New`). `id` и `trusted_channel`
     /// решает вызывающий код.
-    pub fn new(id: FactId, proposal: &FactProposal, trusted_channel: bool) -> Self {
+    ///
+    /// Маскировщик стоит НА ЗАПИСИ (memory-model.md §5: «секреты не живут
+    /// в памяти», S5): текстовые поля проходят через `masker` до того, как
+    /// станут хранимым фактом. Факт, содержавший значение секрета,
+    /// сохраняется с алиасом вместо значения — чтение памяти моделью (I4)
+    /// тогда безопасно по построению, без отдельной проверки на чтении.
+    /// Хэш считается по УЖЕ замаскированным полям — дедупликация двух
+    /// фактов с разными секретами на одном месте сольёт их (оба — алиас),
+    /// что безопаснее обратного (размножения секретов по записям).
+    pub fn new(
+        id: FactId,
+        proposal: &FactProposal,
+        trusted_channel: bool,
+        masker: &berimor_secrets::Masker,
+    ) -> Self {
+        let subject = masker.mask_text(&proposal.subject);
+        let predicate = masker.mask_text(&proposal.predicate);
+        let object = masker.mask_text(&proposal.object);
         Self {
             id,
-            subject: proposal.subject.clone(),
-            predicate: proposal.predicate.clone(),
-            object: proposal.object.clone(),
+            hash: fact_hash(&subject, &predicate, &object),
+            subject,
+            predicate,
+            object,
             confidence: proposal.confidence,
-            source: proposal.source.clone(),
+            source: masker.mask_text(&proposal.source),
             trusted_channel,
-            hash: fact_hash(&proposal.subject, &proposal.predicate, &proposal.object),
         }
     }
 }
@@ -327,10 +344,12 @@ mod tests {
         object: &str,
         confidence: f32,
     ) -> StoredFact {
+        // Пустой реестр — маскировка no-op; существующие тесты не про S5.
         StoredFact::new(
             FactId(id.into()),
             &proposal(subject, predicate, object, confidence),
             true,
+            &berimor_secrets::Masker::new(),
         )
     }
 
@@ -454,12 +473,38 @@ mod tests {
         assert_eq!(merge_confidence(0.4, 0.9), 0.9);
     }
 
+    /// S5, memory-model.md §5: маскировщик стоит на записи — значение
+    /// секрета из реестра не попадает в хранимый факт, только алиас.
+    #[test]
+    fn write_masks_registered_secret_values() {
+        let mut masker = berimor_secrets::Masker::new();
+        masker.register(berimor_secrets::Secret::new(
+            "sk-test-FAKESECRET-9f8e7d6c".into(),
+        ));
+        let fact = StoredFact::new(
+            FactId("f-2".into()),
+            &proposal(
+                "сервис billing",
+                "использует ключ",
+                "sk-test-FAKESECRET-9f8e7d6c",
+                0.9,
+            ),
+            true,
+            &masker,
+        );
+
+        assert_eq!(fact.object, "‹secret›");
+        assert!(!fact.subject.contains("sk-test"));
+        assert!(!fact.source.contains("sk-test"));
+    }
+
     #[test]
     fn stored_fact_carries_trusted_channel_flag_set_by_caller() {
         let untrusted = StoredFact::new(
             FactId("f-1".into()),
             &proposal("клиент c-1", "живёт_в", "Москва", 0.5),
             false,
+            &berimor_secrets::Masker::new(),
         );
         assert!(!untrusted.trusted_channel);
     }

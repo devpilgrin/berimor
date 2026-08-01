@@ -103,6 +103,9 @@ pub struct AgentStepExecutor<'a> {
     pub mode: ConfirmationMode,
     pub confirmer: &'a dyn ConfirmationHandler,
     pub dispatch: &'a dyn ToolDispatch,
+    /// Реестр секретов запуска (S5) — контроль утечек policy-стадии
+    /// (mediation.md §4.3) и маскировка наблюдений инструментов.
+    pub secrets: &'a berimor_secrets::Masker,
 }
 
 /// Один завершённый ход истории — то, что видит модель на следующем
@@ -186,6 +189,7 @@ impl AgentStepExecutor<'_> {
                         self.gate,
                         self.mode,
                         self.confirmer,
+                        self.secrets,
                     ) {
                         Ok(value) => value,
                         // Сбой самого инструмента (неизвестное имя,
@@ -227,7 +231,10 @@ impl AgentStepExecutor<'_> {
 
                     history.push(TurnRecord {
                         thought: decision.thought,
-                        action: format!("tool:{tool}({args})"),
+                        // Аргументы в истории — то, что модель увидит на
+                        // следующем ходу: маскируем (I4). Наблюдение уже
+                        // замаскировано в dispatch_confirmed (S5, точка 1).
+                        action: format!("tool:{tool}({})", self.secrets.mask_value(&args)),
                         observation: observation.to_string(),
                     });
                 }
@@ -274,6 +281,12 @@ impl AgentStepExecutor<'_> {
         history: &[TurnRecord],
         initial_feedback: Option<String>,
     ) -> Result<AgentTurnDecision, AgentStepError> {
+        // Контроль утечек (S5): значения из реестра запуска.
+        let known_secrets = self.secrets.known_values();
+        let rules = PolicyRules {
+            known_secrets: &known_secrets,
+            ..Default::default()
+        };
         let mut retry_feedback = initial_feedback;
         for attempt in 0..MAX_ATTEMPTS {
             let prompt =
@@ -290,7 +303,7 @@ impl AgentStepExecutor<'_> {
                 &response.raw_text,
                 &Value::Null,
                 Some(model_tier),
-                &PolicyRules::default(),
+                &rules,
                 attempt,
             );
             if let Some(hook) = self.on_attempt {
@@ -395,12 +408,18 @@ impl AgentStepExecutor<'_> {
             expects_structured_output: true,
         })?;
 
+        // Контроль утечек (S5): значения из реестра запуска.
+        let known_secrets = self.secrets.known_values();
+        let rules = PolicyRules {
+            known_secrets: &known_secrets,
+            ..Default::default()
+        };
         let outcome = pipeline::mediate::<AgentVerdict>(
             step_id,
             &response.raw_text,
             &Value::Null,
             Some(model_tier),
-            &PolicyRules::default(),
+            &rules,
             0,
         );
         if let Some(hook) = self.on_attempt {
@@ -528,6 +547,9 @@ fn build_turn_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Пустой реестр — прежнее поведение (контроль утечек no-op).
+    static EMPTY_MASKER: berimor_secrets::Masker = berimor_secrets::Masker::new();
     use berimor_context_engine::SimpleContextBuilder;
     use berimor_model_pool::{ModelEntry, ProviderKind};
     use berimor_types::capability::{CapabilityDecision, ProposedAction};
@@ -648,6 +670,7 @@ mod tests {
         ])));
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
+            secrets: &EMPTY_MASKER,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -678,6 +701,7 @@ mod tests {
         ])));
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
+            secrets: &EMPTY_MASKER,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -704,6 +728,7 @@ mod tests {
         ])));
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
+            secrets: &EMPTY_MASKER,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -726,6 +751,7 @@ mod tests {
             Box::leak(Box::new(ScriptedProvider::new(vec![TOOL_TURN])));
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
+            secrets: &EMPTY_MASKER,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -751,6 +777,7 @@ mod tests {
             Box::leak(Box::new(ScriptedProvider::new(vec![TOOL_TURN])));
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
+            secrets: &EMPTY_MASKER,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -782,6 +809,7 @@ mod tests {
         ])));
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
+            secrets: &EMPTY_MASKER,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -816,6 +844,7 @@ mod tests {
             Box::leak(Box::new(ScriptedProvider::new(vec![FORGED_FINISH_TURN])));
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
+            secrets: &EMPTY_MASKER,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -843,6 +872,7 @@ mod tests {
             Box::leak(Box::new(ScriptedProvider::new(vec![FINISH_TURN])));
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
+            secrets: &EMPTY_MASKER,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,

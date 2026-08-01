@@ -101,6 +101,7 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         providers: &providers,
         context: &memory_context,
         on_attempt: None,
+        secrets: bundle.masker.as_ref(),
     };
     let agent_step = AgentStepExecutor {
         pool: &bundle.pool,
@@ -111,12 +112,14 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         mode: config.confirmation_mode,
         confirmer: bundle.confirmer.as_ref(),
         dispatch: bundle.dispatch.as_ref(),
+        secrets: bundle.masker.as_ref(),
     };
     let wasm_host = WasmHost::new(
         bundle.dispatch.clone(),
         bundle.gate.clone(),
         config.confirmation_mode,
         bundle.confirmer.clone(),
+        std::sync::Arc::clone(&bundle.masker),
     );
     let codeact = CodeActExecutor {
         pool: &bundle.pool,
@@ -124,6 +127,7 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         context: &memory_context,
         on_attempt: None,
         wasm_host: &wasm_host,
+        secrets: bundle.masker.as_ref(),
     };
     let executor = CliExecutor {
         gate: bundle.gate.as_ref(),
@@ -134,6 +138,7 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         dispatch: bundle.dispatch.as_ref(),
         llm: &llm,
         latency_budget_ms: process.limits.latency_budget_ms,
+        masker: bundle.masker.as_ref(),
     };
 
     let mut scenario_inputs: Vec<(String, Value)> = Vec::new();

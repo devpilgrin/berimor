@@ -157,6 +157,10 @@ pub struct StructuredLlm<'a> {
     /// (`mediation.md` §6); исполнитель сообщает вид события каждой
     /// попытки по таблице `telemetry::outcome_to_event_kind`.
     pub on_attempt: Option<&'a dyn Fn(berimor_types::event::EventKind)>,
+    /// Реестр секретов запуска (S5) — наполняет `known_secrets`
+    /// policy-стадии контроля утечек (mediation.md §4.3, четвёртая точка
+    /// маскировки). Пустой реестр = прежнее поведение (проверка no-op).
+    pub secrets: &'a berimor_secrets::Masker,
 }
 
 impl StructuredLlm<'_> {
@@ -198,6 +202,10 @@ impl StructuredLlm<'_> {
             .collect::<Vec<_>>()
             .join("\n\n");
 
+        // Контроль утечек (S5): статические правила контракта + значения
+        // из реестра запуска. Вектор живёт весь цикл попыток.
+        let known_secrets = self.secrets.known_values();
+
         let mut retry_feedback: Option<String> = None;
         for attempt in 0..MAX_ATTEMPTS {
             let prompt = build_prompt(adapter, step_id, retry_feedback.as_deref());
@@ -208,7 +216,8 @@ impl StructuredLlm<'_> {
                 expects_structured_output: true,
             })?;
 
-            let rules = (adapter.policy_rules)();
+            let mut rules = (adapter.policy_rules)();
+            rules.known_secrets = &known_secrets;
             let outcome = (adapter.mediate)(
                 step_id,
                 &response.raw_text,
@@ -276,6 +285,9 @@ fn build_prompt(adapter: &ContractAdapter, step_id: &str, retry_feedback: Option
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Пустой реестр — прежнее поведение (контроль утечек no-op).
+    static EMPTY_MASKER: berimor_secrets::Masker = berimor_secrets::Masker::new();
     use berimor_context_engine::SimpleContextBuilder;
     use berimor_model_pool::{ModelEntry, ProviderKind};
     use berimor_types::model::{CompletionResponse, ModelIdentity};
@@ -361,6 +373,7 @@ mod tests {
             providers: &f.providers,
             context: &SimpleContextBuilder,
             on_attempt: None,
+            secrets: &EMPTY_MASKER,
         };
 
         let patch = executor
@@ -413,6 +426,7 @@ mod tests {
             providers: &f.providers,
             context: &context,
             on_attempt: None,
+            secrets: &EMPTY_MASKER,
         };
 
         executor
@@ -443,6 +457,7 @@ mod tests {
             providers: &f.providers,
             context: &SimpleContextBuilder,
             on_attempt: None,
+            secrets: &EMPTY_MASKER,
         };
 
         let patch = executor
@@ -477,6 +492,7 @@ mod tests {
             providers: &f.providers,
             context: &SimpleContextBuilder,
             on_attempt: None,
+            secrets: &EMPTY_MASKER,
         };
 
         let result = executor.execute(
@@ -507,6 +523,7 @@ mod tests {
             providers: &f.providers,
             context: &SimpleContextBuilder,
             on_attempt: None,
+            secrets: &EMPTY_MASKER,
         };
 
         let result = executor.execute(
@@ -534,6 +551,7 @@ mod tests {
             providers: &f.providers,
             context: &SimpleContextBuilder,
             on_attempt: None,
+            secrets: &EMPTY_MASKER,
         };
         let result = executor.execute(
             "x",
@@ -556,6 +574,7 @@ mod tests {
             providers: &f.providers,
             context: &SimpleContextBuilder,
             on_attempt: None,
+            secrets: &EMPTY_MASKER,
         };
         let result = executor.execute(
             "classify",
@@ -585,6 +604,7 @@ mod tests {
             providers: &f.providers,
             context: &SimpleContextBuilder,
             on_attempt: None,
+            secrets: &EMPTY_MASKER,
         };
         let state = json!({"user": {"card_id": "card_1029"}});
 
@@ -604,6 +624,43 @@ mod tests {
         }
     }
 
+    /// S5, точка 4: с наполненным реестром вывод модели, содержащий
+    /// значение секрета, — инцидент безопасности (SecurityViolation,
+    /// mediation.md §5: «падение процесса + событие безопасности»), а не
+    /// обычный отказ. С пустым реестром тот же вывод прошёл бы — это и
+    /// был мёртвый код до S5.
+    #[test]
+    fn populated_registry_turns_secret_leak_into_security_violation() {
+        const SECRET: &str = "sk-test-FAKESECRET-9f8e7d6c";
+        let f = fixture(vec![&format!(
+            r#"{{"card_id": "card_1029", "reply": "ваш ключ {SECRET}"}}"#
+        )]);
+        let mut masker = berimor_secrets::Masker::new();
+        masker.register(berimor_secrets::Secret::new(SECRET.into()));
+        let executor = StructuredLlm {
+            pool: &f.pool,
+            providers: &f.providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            secrets: &masker,
+        };
+
+        let result = executor.execute(
+            "answer",
+            "SupportReply",
+            ModelTierRequirement::Any,
+            &json!({"user": {"card_id": "card_1029"}}),
+            None,
+        );
+
+        assert!(
+            matches!(result, Err(StructuredLlmError::SecurityViolation { .. })),
+            "утечка секрета обязана быть инцидентом безопасности: {result:?}"
+        );
+        // SecurityViolation — без повтора (mediation.md §5: 0 повторов).
+        assert_eq!(f.provider.requests.lock().unwrap().len(), 1);
+    }
+
     #[test]
     fn answer_step_rejects_forged_card_id_via_policy() {
         let f = fixture(vec![r#"{"card_id": "card_9999_forged", "reply": "..."}"#]);
@@ -612,6 +669,7 @@ mod tests {
             providers: &f.providers,
             context: &SimpleContextBuilder,
             on_attempt: None,
+            secrets: &EMPTY_MASKER,
         };
 
         let result = executor.execute(

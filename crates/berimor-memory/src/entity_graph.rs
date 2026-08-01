@@ -1291,4 +1291,96 @@ mod tests {
             EdgeResolution::New
         );
     }
+
+    /// Композиция MEM7+персистентности: узлы/рёбра, реально записанные и
+    /// перечитанные через `berimor_storage::EntityGraphStore` (не только
+    /// собранные вручную через `node()`/`edge()`), должны давать резолюции,
+    /// идентичные тем, что даёт срез из чистых значений — та же дисциплина,
+    /// что `semantic.rs::resolve_with_real_sqlite_vec_similarity_merges_close_facts`
+    /// (MEM3+MEM4) для семантической памяти: доказывать реальную интеграцию
+    /// хранилища, не только изолированную логику над сфабрикованными данными.
+    #[test]
+    fn resolve_node_over_data_round_tripped_through_the_real_store_finds_exact_match() {
+        use berimor_storage::{EntityGraphStore, NodeRecord, SqliteEventLog};
+
+        let store = SqliteEventLog::open_in_memory().unwrap();
+        store
+            .upsert_node(&NodeRecord {
+                id: "batch-1".into(),
+                node_type: "batch".into(),
+                properties: json!({"batch_number": "B-1", "product": "widget"}),
+            })
+            .unwrap();
+
+        let existing: Vec<StoredNode> = store
+            .all_nodes()
+            .unwrap()
+            .into_iter()
+            .map(|record| StoredNode {
+                id: NodeId(record.id),
+                node_type: record.node_type,
+                properties: record.properties,
+            })
+            .collect();
+        let candidate = NodeCandidate {
+            node_type: "batch".into(),
+            properties: json!({"batch_number": "B-1", "product": "другое описание"}),
+        };
+
+        let outcome = resolve_node(&candidate, &BATCH, &existing, &[], &NoNodeSimilarity, 0.9);
+
+        assert_eq!(
+            outcome,
+            ResolutionOutcome::ExactMatch(NodeId("batch-1".into()))
+        );
+    }
+
+    /// Та же дисциплина для рёбер: конфликт (functional-тип с другой
+    /// целью) должен обнаруживаться и над данными, реально прошедшими
+    /// через `upsert_edge`/`all_edges`, не только над сфабрикованным срезом.
+    #[test]
+    fn detect_edge_conflict_over_data_round_tripped_through_the_real_store() {
+        use berimor_storage::{EdgeRecord, EntityGraphStore, SqliteEventLog};
+
+        let store = SqliteEventLog::open_in_memory().unwrap();
+        store
+            .upsert_edge(&EdgeRecord {
+                id: "e-1".into(),
+                edge_type: "supplied_by".into(),
+                source: "batch-1".into(),
+                target: "supplier-a".into(),
+                properties: json!({}),
+            })
+            .unwrap();
+
+        let existing: Vec<StoredEdge> = store
+            .all_edges()
+            .unwrap()
+            .into_iter()
+            .map(|record| StoredEdge {
+                id: EdgeId(record.id),
+                edge_type: record.edge_type,
+                source: NodeId(record.source),
+                target: NodeId(record.target),
+                properties: record.properties,
+            })
+            .collect();
+        let candidate = EdgeCandidate {
+            edge_type: "supplied_by".into(),
+            source: NodeId("batch-1".into()),
+            target: NodeId("supplier-b".into()),
+            properties: json!({}),
+        };
+
+        let conflict = detect_edge_conflict(&candidate, &SUPPLIED_BY, &existing);
+
+        assert_eq!(
+            conflict,
+            Some(EdgeConflict {
+                existing: EdgeId("e-1".into()),
+                existing_target: NodeId("supplier-a".into()),
+                candidate_target: NodeId("supplier-b".into()),
+            })
+        );
+    }
 }

@@ -181,6 +181,9 @@ struct HostState {
     gate: Arc<dyn CapabilityGate + Send + Sync>,
     mode: ConfirmationMode,
     confirmer: Arc<dyn ConfirmationHandler + Send + Sync>,
+    /// Реестр секретов запуска (S5) — маскировка наблюдений `call_tool`,
+    /// уходящих в гостевую программу.
+    masker: Arc<berimor_secrets::Masker>,
     tool_calls_made: u32,
     max_tool_calls: u32,
     /// Техдолг TD3.1 (`docs/audit-2026-07-31.md`): раньше `host_call_tool`
@@ -202,6 +205,7 @@ pub struct WasmHost {
     gate: Arc<dyn CapabilityGate + Send + Sync>,
     mode: ConfirmationMode,
     confirmer: Arc<dyn ConfirmationHandler + Send + Sync>,
+    masker: Arc<berimor_secrets::Masker>,
 }
 
 impl WasmHost {
@@ -210,12 +214,14 @@ impl WasmHost {
         gate: Arc<dyn CapabilityGate + Send + Sync>,
         mode: ConfirmationMode,
         confirmer: Arc<dyn ConfirmationHandler + Send + Sync>,
+        masker: Arc<berimor_secrets::Masker>,
     ) -> Self {
         Self {
             dispatch,
             gate,
             mode,
             confirmer,
+            masker,
         }
     }
 
@@ -275,6 +281,7 @@ impl WasmHost {
                 gate: Arc::clone(&self.gate),
                 mode: self.mode,
                 confirmer: Arc::clone(&self.confirmer),
+                masker: Arc::clone(&self.masker),
                 tool_calls_made: 0,
                 max_tool_calls: limits.max_tool_calls,
                 allowed_tools: allowed_tools.to_vec(),
@@ -404,7 +411,7 @@ fn host_call_tool(
         return -1;
     };
 
-    let (budget_ok, tool_allowed, dispatch, gate, mode, confirmer) = {
+    let (budget_ok, tool_allowed, dispatch, gate, mode, confirmer, masker) = {
         let state = caller.data_mut();
         let tool_allowed = state.allowed_tools.iter().any(|t| t == &tool);
         let budget_ok = state.tool_calls_made < state.max_tool_calls;
@@ -418,6 +425,7 @@ fn host_call_tool(
             Arc::clone(&state.gate),
             state.mode,
             Arc::clone(&state.confirmer),
+            Arc::clone(&state.masker),
         )
     };
 
@@ -445,6 +453,7 @@ fn host_call_tool(
             gate.as_ref(),
             mode,
             confirmer.as_ref(),
+            masker.as_ref(),
         ) {
             Ok(value) => serde_json::json!({ "ok": true, "value": value }),
             Err(err) => serde_json::json!({ "ok": false, "error": err.to_string() }),
@@ -551,6 +560,7 @@ mod tests {
             Arc::new(gate),
             ConfirmationMode::Smart,
             Arc::new(AutoConfirm),
+            Arc::new(berimor_secrets::Masker::new()),
         )
     }
 

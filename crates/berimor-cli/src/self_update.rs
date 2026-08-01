@@ -142,13 +142,22 @@ pub fn run(config: &Config, resume: &Option<String>) -> Result<(), SelfUpdateRun
         .and_then(|p| p.canonicalize())
         .unwrap_or_else(|_| PathBuf::from("."));
     let gate = StandardCapability::new(workspace_root, self_update_tool_policies());
-    let confirmer = TerminalConfirmer;
+    // Self-update не регистрирует ключи провайдеров (моделей здесь нет),
+    // но секреты профиля из `secret_envs` действуют и здесь — вывод
+    // инструментов маскируется на той же границе (S5).
+    let mut masker = berimor_secrets::Masker::new();
+    masker.register_from_env(&config.secret_envs);
+    let masker = std::sync::Arc::new(masker);
+    let confirmer = TerminalConfirmer {
+        masker: std::sync::Arc::clone(&masker),
+    };
 
     let executor = SelfUpdateExecutor {
         gate: &gate,
         mode: config.confirmation_mode,
         confirmer: &confirmer,
         dispatch: &dispatch,
+        masker: masker.as_ref(),
     };
 
     loop {
@@ -263,6 +272,10 @@ pub struct SelfUpdateExecutor<'a> {
     pub mode: ConfirmationMode,
     pub confirmer: &'a dyn ConfirmationHandler,
     pub dispatch: &'a dyn ToolDispatch,
+    /// Реестр секретов запуска (S5) — маскировка вывода инструментов.
+    /// Self-update не вызывает моделей, но вывод инструментов печатается
+    /// и журналируется — граница данных та же.
+    pub masker: &'a berimor_secrets::Masker,
 }
 
 impl engine::StepExecutor for SelfUpdateExecutor<'_> {
@@ -277,6 +290,7 @@ impl engine::StepExecutor for SelfUpdateExecutor<'_> {
                 self.gate,
                 self.mode,
                 self.confirmer,
+                self.masker,
             )
             .map_err(|err| ExecutorError {
                 step_id: step.id.clone(),
@@ -756,6 +770,9 @@ fn restore_from_checkpoint(current_exe: &Path, backup_path: &Path) -> Result<Val
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Пустой реестр — маскировка no-op для тестов, не про S5.
+    static EMPTY_MASKER: berimor_secrets::Masker = berimor_secrets::Masker::new();
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
@@ -1202,9 +1219,10 @@ mod tests {
         let confirmer = PanicIfAsked;
         let executor = SelfUpdateExecutor {
             gate: &gate,
-            mode: ConfirmationMode::Off,
+            mode: ConfirmationMode::Smart,
             confirmer: &confirmer,
             dispatch: &dispatch,
+            masker: &EMPTY_MASKER,
         };
 
         let outcome = engine::run(&storage, &executor, &mut instance).unwrap();
@@ -1247,9 +1265,10 @@ mod tests {
         let confirmer = PanicIfAsked;
         let executor = SelfUpdateExecutor {
             gate: &gate,
-            mode: ConfirmationMode::Off,
+            mode: ConfirmationMode::Smart,
             confirmer: &confirmer,
             dispatch: &dispatch,
+            masker: &EMPTY_MASKER,
         };
 
         let outcome = engine::run(&storage, &executor, &mut instance);
@@ -1296,9 +1315,10 @@ mod tests {
         let confirmer = PanicIfAsked;
         let executor = SelfUpdateExecutor {
             gate: &gate,
-            mode: ConfirmationMode::Off,
+            mode: ConfirmationMode::Smart,
             confirmer: &confirmer,
             dispatch: &dispatch,
+            masker: &EMPTY_MASKER,
         };
 
         let outcome = engine::run(&storage, &executor, &mut instance).unwrap();
