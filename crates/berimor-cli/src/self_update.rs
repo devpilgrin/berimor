@@ -809,9 +809,20 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// Уникальный суффикс для временных путей тестов, идущих параллельно в
+    /// разных потоках одного процесса. Только `SystemTime::now()` не
+    /// гарантирует уникальности — на macOS-раннере CI два вызова из разных
+    /// потоков, попавшие в одно и то же деление часов (более грубое
+    /// разрешение, чем на Linux), получали ОДИНАКОВЫЙ путь, и один тест
+    /// удалял каталог, пока другой ещё писал в него ("No such file or
+    /// directory" на `fs::write` — найдено на реальном прогоне CI, Rust ·
+    /// macos-latest, не в теории). Атомарный счётчик даёт уникальность
+    /// независимо от разрешения часов.
     fn uuid_like_suffix() -> String {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         format!(
-            "{}-{}",
+            "{}-{}-{n}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
