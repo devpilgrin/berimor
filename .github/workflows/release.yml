@@ -183,13 +183,15 @@ jobs:
     if: github.event_name == 'push' || inputs.tag != ''
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+
       - name: resolve tag
         shell: bash
         run: echo "TAG=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v8
         with:
-          path: dist
+          path: release-assets
           merge-multiple: true
 
       - name: create release with all assets attached atomically
@@ -198,11 +200,57 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$TAG" dist/* \
+          gh release create "$TAG" release-assets/* \
             --repo "${{ github.repository }}" \
             --title "$TAG" \
             --notes "Платформенные артефакты для $TAG. Полное описание релиза — отредактировано отдельно после публикации, если требуется." \
             --verify-tag
+
+      # D3: SHA-256 платформенных архивов пиннится В САМ npm-пакет bootstrap,
+      # НЕ в GitHub Release рядом с тем, что эти хэши описывают — иначе
+      # первая установка (bootstrap/src/checksums-manifest.ts) сверяла бы
+      # скачанный артефакт с хэшем из того же самого источника, который она
+      # проверяет, что не даёт защиты (компрометация аккаунта публикации
+      # GitHub Release скомпрометирует оба файла разом). Доверие первой
+      # установки должно приходить из независимого канала — npm, куда
+      # публикация идёт отдельным шагом ниже.
+      - name: compute checksums for bootstrap pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          out="bootstrap/checksums.json"
+          printf '{\n' > "$out"
+          sep=""
+          for f in release-assets/berimor-*.tar.gz release-assets/berimor-*.zip; do
+            name="$(basename "$f")"
+            hex="$(sha256sum "$f" | cut -d' ' -f1)"
+            printf '%s  "%s": "%s"' "$sep" "$name" "$hex" >> "$out"
+            sep=$',\n'
+          done
+          printf '\n}\n' >> "$out"
+          cat "$out"
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      # Требует секрета NPM_TOKEN (Settings → Secrets → Actions) — его в
+      # репозитории пока нет (сознательный остаточный пункт D3, см.
+      # ROADMAP §14): без него этот шаг упадёт на публикации, сам релиз
+      # GitHub (шаг выше) при этом уже успешно создан и не откатывается.
+      - name: publish bootstrap to npm
+        working-directory: bootstrap
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm pkg set version="${TAG#v}"
+          npm ci
+          npm run build
+          npm publish --access public
 
 # Не входит в этот пайплайн — отдельные задачи ROADMAP:
 # D7 — провенанс и SBOM;

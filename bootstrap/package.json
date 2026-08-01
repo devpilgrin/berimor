@@ -7,12 +7,17 @@
   "bin": {
     "berimor": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "checksums.json"
+  ],
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "postinstall": "node dist/postinstall.js"
+    "postinstall": "node dist/postinstall.js",
+    "test": "node --test dist/*.test.js"
   },
   "devDependencies": {
     "typescript": "^5.6.0",

@@ -5,3 +5,7 @@
 # CI-прогоне (Rust · windows-latest, verify::tests::valid_fixture_verifies
 # упал с PublicKeyVerificationError — дайджест не совпал).
 fixtures/golden/signing/** -text
+
+# Те же основания (D3): tar.gz/zip — двоичные форматы, CRLF-конвертация
+# ломает распаковку в extract.test.ts на Windows-чекауте.
+fixtures/golden/bootstrap/** -text

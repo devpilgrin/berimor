@@ -49,6 +49,9 @@ jobs:
       - name: build
         working-directory: bootstrap
         run: npm run build
+      - name: test
+        working-directory: bootstrap
+        run: npm test
 
 # Этот workflow — только проверка кода на push/PR (fmt/clippy/test).
 # Сборка платформенных артефактов (D1) — release.yml, запускается публикацией
