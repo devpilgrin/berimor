@@ -13,6 +13,7 @@ mod config;
 mod mcp_dispatch;
 mod observe;
 mod run;
+mod self_update;
 mod verify;
 
 #[derive(Parser)]
@@ -48,7 +49,13 @@ enum Command {
     /// Проверить подпись артефакта — вызывается bootstrap-слоем (ADR-0025).
     Verify { artifact: String },
     /// Прогнать процесс `agent-self-update` (ADR-0019).
-    SelfUpdate,
+    SelfUpdate {
+        /// Продолжить существующий инстанс self-update по его
+        /// идентификатору (восстановление из журнала, тот же смысл, что
+        /// у `Command::Run`'s `--resume`).
+        #[arg(long)]
+        resume: Option<String>,
+    },
     /// Установить плагин из доверенного репозитория.
     Plugin {
         #[command(subcommand)]
@@ -115,11 +122,11 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Command::SelfUpdate => {
-            eprintln!(
-                "todo(ROADMAP D4): agent-self-update (канал: {:?})",
-                resolved_config.update_channel
-            );
+        Command::SelfUpdate { resume } => {
+            if let Err(err) = self_update::run(&resolved_config, &resume) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
         }
         Command::Plugin { action } => match action {
             PluginAction::Install { repo } => {

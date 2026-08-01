@@ -440,7 +440,7 @@ impl ConfirmationHandler for TerminalConfirmer {
     }
 }
 
-fn ask_human(step_id: &str, reason: &str) -> bool {
+pub(crate) fn ask_human(step_id: &str, reason: &str) -> bool {
     eprintln!("[berimor] human_gate '{step_id}': {reason}");
     ask_line("[berimor] продолжить выполнение? [y/N] ")
 }
@@ -462,7 +462,7 @@ fn ask_line(prompt: &str) -> bool {
 /// шаблон с вкраплениями, в отличие от целостных плейсхолдеров аргументов
 /// ToolOnly). Неразрешимый путь остаётся как есть — текст причины не
 /// должен падать из-за шаблона.
-fn interpolate(template: &str, state: &Value) -> String {
+pub(crate) fn interpolate(template: &str, state: &Value) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(start) = rest.find("{{") {

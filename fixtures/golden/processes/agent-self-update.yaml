@@ -1,0 +1,85 @@
+# Источник: docs/arch/deployment.md §5, ROADMAP D4. Граф перестроен под
+# реальные примитивы движка — иллюстративный YAML документа не исполним
+# буквально: Branch сравнивает ОДИН путь состояния с литералом в cases, не
+# два пути между собой (сравнение версий вычисляет сам tool
+# registry.get_latest, кладёт готовые is_newer/is_major_bump); "done" не
+# специальный сентинел — Finished наступает только когда для текущего шага
+# нет следующего элемента в этом списке steps, поэтому оба успешных пути
+# (обновление не нужно / обновление закоммичено) ведут к общему последнему
+# шагу `done`. Разбор — docs/ROADMAP.md §14 (D4).
+process: agent-self-update
+version: 1
+steps:
+  - id: check_version
+    type: tool
+    tool: registry.get_latest
+    args: {channel: "{{state.local.channel}}", current_version: "{{state.local.version}}"}
+  - id: needs_update
+    type: branch
+    on: state.check_version.is_newer
+    cases:
+      "true": major_gate
+      "false": done
+  - id: major_gate
+    type: branch
+    on: state.check_version.is_major_bump
+    cases:
+      "true": human_review
+      "false": resolve_artifact
+  - id: human_review
+    type: human_gate
+    reason: "обновление меняет мажорную версию: {{state.local.version}} → {{state.check_version.version}}"
+  - id: resolve_artifact
+    type: tool
+    tool: platform.resolve_asset
+    args: {version: "{{state.check_version.version}}"}
+  - id: download
+    type: tool
+    tool: github.download_release_asset
+    args:
+      version: "{{state.check_version.version}}"
+      asset_name: "{{state.resolve_artifact.asset_name}}"
+  - id: verify
+    type: tool
+    tool: crypto.verify_signature
+    args: {archive_path: "{{state.download.archive_path}}"}
+  - id: verify_gate
+    type: branch
+    on: state.verify.ok
+    cases:
+      "true": checkpoint_current
+      "false": fail_update
+  - id: checkpoint_current
+    type: checkpoint
+  - id: swap
+    type: tool
+    tool: fs.atomic_replace_binary
+    args: {archive_path: "{{state.download.archive_path}}"}
+  - id: smoke_test
+    type: tool
+    tool: agent.self_check
+    args: {expected_version: "{{state.check_version.version}}"}
+  - id: smoke_gate
+    type: branch
+    on: state.smoke_test.ok
+    cases:
+      "true": commit_update
+      "false": rollback
+  - id: rollback
+    type: tool
+    tool: fs.restore_from_checkpoint
+    args: {backup_path: "{{state.swap.backup_path}}"}
+  - id: fail_update
+    type: tool
+    tool: self_update.fail
+    args: {reason: "самообновление остановлено: подпись не прошла верификацию, либо выполнен откат после неудачного smoke test"}
+  - id: commit_update
+    type: tool
+    tool: registry.record_version
+    args: {version: "{{state.check_version.version}}"}
+  - id: done
+    type: tool
+    tool: self_update.noop
+limits:
+  max_steps: 16
+  timeout: 5m

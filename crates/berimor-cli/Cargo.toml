@@ -27,6 +27,8 @@ berimor-tool-runtime = { path = "../berimor-tool-runtime" }
 berimor-types = { path = "../berimor-types" }
 clap = { version = "4", features = ["derive"] }
 rmcp = { version = "3.0.1", features = ["client", "server", "transport-child-process", "transport-io"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+semver = "1"
 serde = { workspace = true, features = ["derive"] }
 sigstore = { version = "0.14", default-features = false, features = ["bundle", "sigstore-trust-root", "rustls-tls"] }
 const-oid = "0.9"
