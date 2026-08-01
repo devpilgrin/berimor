@@ -445,7 +445,7 @@ pub(crate) fn ask_human(step_id: &str, reason: &str) -> bool {
     ask_line("[berimor] продолжить выполнение? [y/N] ")
 }
 
-fn ask_line(prompt: &str) -> bool {
+pub(crate) fn ask_line(prompt: &str) -> bool {
     eprint!("{prompt}");
     let _ = std::io::stderr().flush();
     let mut answer = String::new();

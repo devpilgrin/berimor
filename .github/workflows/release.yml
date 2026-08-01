@@ -81,6 +81,26 @@ jobs:
       - name: build
         run: cargo build --release -p berimor-cli
 
+      # SBOM (D7, deployment.md §7 стадия 4): cargo-cyclonedx ставится
+      # через `cargo install` (компиляция в CI, не готовый бинарник) —
+      # сознательно: в репозитории нет прецедента pinned-binary-install
+      # экшена, а сборка и так не самая быстрая (кросс-платформенная
+      # матрица), лишние секунды не меняют картину. `cargo cyclonedx` без
+      # `-p` пишет `bom.json` РЯДОМ С КАЖДЫМ `Cargo.toml` в workspace (нет
+      # флага ограничить одним пакетом в задокументированном CLI) — берём
+      # только тот, что соответствует реально публикуемому бинарнику
+      # (`crates/berimor-cli`), остальные (для внутренних библиотечных
+      # крейтов) не публикуются. Имя итогового файла включает
+      # `matrix.target` — иначе `upload-artifact`/`gh release create`
+      # получили бы четыре одинаково названных файла от четырёх платформ.
+      - name: generate SBOM (cargo-cyclonedx)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install cargo-cyclonedx --locked
+          cargo cyclonedx --format json
+          mv crates/berimor-cli/bom.json "berimor-${VERSION}-${{ matrix.target }}.cdx.json"
+
       # Имя архива — соглашение из bootstrap/src/platform.ts:
       # berimor-<version>-<platform>-<arch>.<tar.gz|zip>, platform/arch —
       # буквально os.platform()/os.arch() в Node.js (win32, не windows).
@@ -129,6 +149,7 @@ jobs:
             berimor-*.tar.gz.sigstore.json
             berimor-*.zip
             berimor-*.zip.sigstore.json
+            berimor-*.cdx.json
           if-no-files-found: error
 
   # Маленький подписанный "канарейка"-артефакт — независим от матрицы
@@ -174,8 +195,12 @@ jobs:
   publish:
     name: Publish release
     needs: build
+    # id-token: write — то же основание, что у job build (D2): npm
+    # provenance (`npm publish --provenance`, D7) берёт OIDC-токен этого
+    # workflow-запуска тем же механизмом, что cosign — не отдельный секрет.
     permissions:
       contents: write
+      id-token: write
     # Публикуем только когда есть тег, за который отвечаем: реальный push
     # тега, либо явно указанный tag во ручном запуске. Обычный
     # workflow_dispatch без tag — сборка ради проверки пайплайна, без
@@ -193,6 +218,29 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      # D7 SBOM для bootstrap: встроенная команда npm ≥9, ноль новых
+      # зависимостей. Генерируется ДО `gh release create` и кладётся в
+      # `release-assets/`, чтобы попасть в тот же атомарный шаг публикации
+      # релиза — GitHub Immutable Releases не даёт дозалить ассет ПОСЛЕ
+      # `gh release create` (см. комментарий D1 выше, HTTP 422), поэтому
+      # нельзя сгенерировать SBOM позже, вместе с npm publish.
+      - name: generate SBOM for bootstrap (npm sbom)
+        working-directory: bootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --ignore-scripts: dist/ ещё не собран на свежем чекауте —
+          # postinstall (`node dist/postinstall.js`) упал бы на
+          # отсутствующем файле (тот же порядок, что ci.yml's bootstrap
+          # job и bootstrap/README.md уже требуют для локальной разработки).
+          npm ci --ignore-scripts
+          npm sbom --sbom-format cyclonedx > "../release-assets/bootstrap-${TAG#v}.cdx.json"
 
       - name: create release with all assets attached atomically
         env:
@@ -231,15 +279,17 @@ jobs:
           printf '\n}\n' >> "$out"
           cat "$out"
 
-      - uses: actions/setup-node@v5
-        with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-
       # Требует секрета NPM_TOKEN (Settings → Secrets → Actions) — его в
       # репозитории пока нет (сознательный остаточный пункт D3, см.
       # ROADMAP §14): без него этот шаг упадёт на публикации, сам релиз
       # GitHub (шаг выше) при этом уже успешно создан и не откатывается.
+      # `--provenance` (D7): npm подписывает атрибут провенанса тем же
+      # OIDC-токеном workflow-запуска, что уже дают `id-token: write` этой
+      # job — «проверяемо связывающие артефакт с конкретным коммитом и
+      # workflow-запуском» (`deployment.md` §7, стадия 6), тот же принцип,
+      # что keyless cosign для платформенных архивов (D2), другим
+      # механизмом (npm registry сам проверяет и показывает провенанс, не
+      # отдельный `.sigstore.json`-бандл).
       - name: publish bootstrap to npm
         working-directory: bootstrap
         env:
@@ -248,10 +298,12 @@ jobs:
         run: |
           set -euo pipefail
           npm pkg set version="${TAG#v}"
-          npm ci
+          # --ignore-scripts: тот же порядок, что и у шага SBOM выше —
+          # dist/ ещё не собран здесь, postinstall упал бы (pre-existing
+          # пробел D3, найден и исправлен по ходу D7, не новый регресс).
+          npm ci --ignore-scripts
           npm run build
-          npm publish --access public
+          npm publish --access public --provenance
 
 # Не входит в этот пайплайн — отдельные задачи ROADMAP:
-# D7 — провенанс и SBOM;
 # D4-D6 — agent-self-update и установка плагина читают собранное здесь.

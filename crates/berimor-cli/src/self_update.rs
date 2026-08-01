@@ -77,6 +77,10 @@ pub enum SelfUpdateRunError {
     Dispatch(String),
     #[error("выполнение остановлено на шаге human_gate: человек отклонил продолжение")]
     HumanDeclined,
+    #[error(
+        "'{0}' — зарезервированный идентификатор журнала доверенного списка, не process instance"
+    )]
+    ReservedInstanceId(String),
 }
 
 /// Точка входа `berimor self-update` (`Command::SelfUpdate`, main.rs).
@@ -86,6 +90,18 @@ pub enum SelfUpdateRunError {
 /// `SelfUpdateDispatch` вместо `CliExecutor`/`ExecutorBundle` — у процесса
 /// нет llm_structured/agent_step/codeact шагов, ModelPool не нужен.
 pub fn run(config: &Config, resume: &Option<String>) -> Result<(), SelfUpdateRunError> {
+    // Независимое ревью (MINOR-4): `--resume` принимает от оператора
+    // произвольную строку — без этой проверки `--resume trust-list`
+    // дописывал бы self-update-события (`StepApplied`/`Instantiated`) в
+    // журнал, зарезервированный под доверенный список (D5), пока тот
+    // журнал пуст (эшелонированная оборона: `fold_trust_list` эти события
+    // и так молча игнорирует — реального обхода ACL нет, но аудит-журнал
+    // доверенного списка перестаёт быть чистым).
+    if resume.as_deref() == Some(berimor_capability::trust_list::TRUST_LIST_INSTANCE_ID) {
+        return Err(SelfUpdateRunError::ReservedInstanceId(
+            berimor_capability::trust_list::TRUST_LIST_INSTANCE_ID.to_string(),
+        ));
+    }
     let process = parser::parse(PROCESS_YAML)
         .map_err(|err| SelfUpdateRunError::ParseProcess(err.to_string()))?;
 
@@ -1243,5 +1259,183 @@ mod tests {
         );
 
         handle.join().unwrap();
+    }
+
+    // --- ROADMAP D8: fault injection / непокрытые пути self-update. ------
+    //
+    // Честная граница: полный happy path через engine::run
+    // (`swap`→`smoke_test`→`commit_update`→`done`) недостижим без
+    // настоящего sigstore-подписанного архива (та же причина, что у
+    // golden-тестов выше — `verify` делает реальную криптопроверку против
+    // захардкоженной identity berimor, подделать нечем). Ниже —
+    // тестируется то, что реально достижимо: (а) `major_gate` через
+    // `engine::run` (не требует verify — human_gate раньше по графу),
+    // (б) механика swap→self_check→rollback СЦЕПЛЕНА напрямую на уровне
+    // функций (минуя граф) — это НОВОЕ покрытие поверх уже существующих
+    // изолированных тестов каждой функции по отдельности: доказывает, что
+    // после реальной подстановки бинарника `self_check` реально видит
+    // ИМЕННО его, а не старый.
+
+    /// D8: `major_gate` — переход на другую MAJOR-версию обязан
+    /// остановиться на `human_review`, не доходя до скачивания/верификации
+    /// (единственный сетевой вызов — `registry.get_latest`).
+    #[test]
+    fn d8_major_version_bump_stops_at_human_review_before_any_download() {
+        let (base, handle) =
+            spawn_sequenced_server(vec![("200 OK", br#"{"tag_name": "v2.0.0"}"#.to_vec())]);
+
+        let process = parser::parse(PROCESS_YAML).unwrap();
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let input = json!({"local": {"version": "1.0.0", "channel": "stable"}});
+        let id = ProcessInstanceId("d8-major-gate".to_string());
+        let mut instance = engine::instantiate(&storage, id, process, input).unwrap();
+
+        let current_exe = std::env::temp_dir().join("berimor-d8-major-gate-fake-exe");
+        let dispatch = SelfUpdateDispatch::with_bases(current_exe, base.clone(), base);
+        let gate = StandardCapability::new(std::env::temp_dir(), self_update_tool_policies());
+        let confirmer = PanicIfAsked;
+        let executor = SelfUpdateExecutor {
+            gate: &gate,
+            mode: ConfirmationMode::Off,
+            confirmer: &confirmer,
+            dispatch: &dispatch,
+        };
+
+        let outcome = engine::run(&storage, &executor, &mut instance).unwrap();
+        match outcome {
+            engine::RunOutcome::AwaitingHuman { step_id, reason } => {
+                assert_eq!(step_id, "human_review");
+                assert!(reason.contains("мажорную"));
+            }
+            other => panic!("ожидался AwaitingHuman на human_review, получено {other:?}"),
+        }
+
+        handle.join().unwrap();
+    }
+
+    /// D8: строгий downgrade (latest СТРОГО ниже текущей, не равна) —
+    /// `is_newer` обязан быть `false`, не ошибкой и не `true` (граница
+    /// оператора сравнения в `compute_version_flags`).
+    #[test]
+    fn d8_strictly_older_latest_is_not_newer_not_an_error() {
+        let (base, handle) =
+            spawn_sequenced_server(vec![("200 OK", br#"{"tag_name": "v1.0.0"}"#.to_vec())]);
+        let client = Client::builder().timeout(REQUEST_TIMEOUT).build().unwrap();
+        let result = registry_get_latest(&client, &base, "stable", "2.0.0").unwrap();
+        assert_eq!(result["is_newer"], false);
+        assert_eq!(result["is_major_bump"], false);
+        handle.join().unwrap();
+    }
+
+    /// D8: цепочка swap→self_check напрямую (минуя граф/verify) —
+    /// подставленный бинарник реально исполняется `self_check`, и именно
+    /// ЕГО вывод определяет `ok`, не старого. Использует настоящий shell-
+    /// скрипт как «новый бинарник» (не фикстурный текстовый файл, как в
+    /// уже существующих тестах `atomic_replace_binary` — там подмена
+    /// содержимого не проверяется исполнением).
+    #[cfg(unix)]
+    #[test]
+    fn d8_after_real_swap_self_check_inspects_the_newly_installed_binary() {
+        let work = temp_work_dir("d8-swap-self-check");
+        let pack_dir = work.join("pack");
+        std::fs::create_dir_all(&pack_dir).unwrap();
+        let script = pack_dir.join("berimor");
+        std::fs::write(&script, "#!/bin/sh\necho 'berimor 9.9.9'\nexit 0\n").unwrap();
+        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+
+        let archive_path = work.join("update.tar.gz");
+        let status = std::process::Command::new("tar")
+            .arg("-czf")
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&pack_dir)
+            .arg(".")
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let current_exe = work.join("berimor");
+        std::fs::write(&current_exe, "#!/bin/sh\necho 'berimor 1.0.0'\nexit 0\n").unwrap();
+        std::fs::set_permissions(
+            &current_exe,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+
+        let swap_result = atomic_replace_binary(&current_exe, &archive_path).unwrap();
+        let backup_path = PathBuf::from(swap_result["backup_path"].as_str().unwrap());
+
+        let check = self_check(&current_exe, "9.9.9").unwrap();
+        assert_eq!(
+            check["ok"], true,
+            "self_check обязан увидеть НОВЫЙ бинарник: {check:?}"
+        );
+        let old_check = self_check(&backup_path, "1.0.0").unwrap();
+        assert_eq!(
+            old_check["ok"], true,
+            "бэкап обязан остаться старым рабочим бинарником"
+        );
+
+        std::fs::remove_dir_all(&work).ok();
+    }
+
+    /// D8: полная цепочка отката — подставленный бинарник СЛОМАН (не
+    /// проходит self_check), `fs.restore_from_checkpoint` возвращает
+    /// систему на старую версию, которая снова проходит self_check.
+    /// Тот же сценарий, что `smoke_gate:false`→`rollback` в графе, но
+    /// сцеплено на уровне функций — `verify_gate` до этого места в
+    /// реальном прогоне не тестируется без настоящей подписи (см. шапку
+    /// секции D8).
+    #[cfg(unix)]
+    #[test]
+    fn d8_broken_new_binary_fails_self_check_and_rollback_restores_the_working_old_one() {
+        let work = temp_work_dir("d8-rollback-chain");
+        let pack_dir = work.join("pack");
+        std::fs::create_dir_all(&pack_dir).unwrap();
+        // "Новый" бинарник — сломан (ненулевой код выхода), как реальная
+        // неудачная сборка/битый архив.
+        let script = pack_dir.join("berimor");
+        std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
+        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+
+        let archive_path = work.join("update.tar.gz");
+        let status = std::process::Command::new("tar")
+            .arg("-czf")
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&pack_dir)
+            .arg(".")
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let current_exe = work.join("berimor");
+        std::fs::write(&current_exe, "#!/bin/sh\necho 'berimor 1.0.0'\nexit 0\n").unwrap();
+        std::fs::set_permissions(
+            &current_exe,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+
+        let swap_result = atomic_replace_binary(&current_exe, &archive_path).unwrap();
+        let backup_path = PathBuf::from(swap_result["backup_path"].as_str().unwrap());
+
+        let broken_check = self_check(&current_exe, "9.9.9").unwrap();
+        assert_eq!(
+            broken_check["ok"], false,
+            "сломанный новый бинарник обязан провалить self_check"
+        );
+
+        restore_from_checkpoint(&current_exe, &backup_path).unwrap();
+
+        let restored_check = self_check(&current_exe, "1.0.0").unwrap();
+        assert_eq!(
+            restored_check["ok"], true,
+            "после отката current_exe обязан снова быть рабочим старым бинарником"
+        );
+
+        std::fs::remove_dir_all(&work).ok();
     }
 }

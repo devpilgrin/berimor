@@ -74,6 +74,10 @@ fn describe(event: &Event) -> TraceEntry {
             "version_migrated",
             format!("инстанс переведён с версии {from_version} на {to_version}"),
         ),
+        EventKind::TrustListChanged { action, repo, .. } => (
+            "trust_list_changed",
+            format!("доверенный список: {action:?} '{repo}'"),
+        ),
     };
     TraceEntry {
         seq: event.seq,

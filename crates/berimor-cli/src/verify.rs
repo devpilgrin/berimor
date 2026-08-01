@@ -90,7 +90,16 @@ const RELEASE_WORKFLOW_SAN_PREFIX: &str =
 /// `workflow_dispatch`-прогонов (например, `refs/heads/main`) разный —
 /// зашить его константой нельзя. Здесь — то же извлечение SAN, что и в
 /// `Identity::verify` крейта, но сравнение по префиксу.
-struct ReleaseWorkflowPath;
+///
+/// Поле `prefix`, не константа (D6, ROADMAP): для верификации СВОИХ
+/// релизов (`verify_artifact`) используется захардкоженный
+/// `RELEASE_WORKFLOW_SAN_PREFIX`; для установки плагина
+/// (`plugin_install.rs`) — префикс из `signer_identity` записи
+/// доверенного списка (D5), репозиторий плагина не известен на этапе
+/// компиляции.
+struct ReleaseWorkflowPath {
+    prefix: String,
+}
 
 impl VerificationPolicy for ReleaseWorkflowPath {
     fn verify(&self, cert: &Certificate) -> PolicyResult {
@@ -108,7 +117,7 @@ impl VerificationPolicy for ReleaseWorkflowPath {
                 }
                 _ => None,
             };
-            value.is_some_and(|v| v.starts_with(RELEASE_WORKFLOW_SAN_PREFIX))
+            value.is_some_and(|v| v.starts_with(&self.prefix))
         });
 
         if matched {
@@ -116,7 +125,7 @@ impl VerificationPolicy for ReleaseWorkflowPath {
         } else {
             Err(PolicyError::ExtensionCheckFailed {
                 extension: "SubjectAltName (путь к workflow-файлу)".to_owned(),
-                expected: format!("{RELEASE_WORKFLOW_SAN_PREFIX}*"),
+                expected: format!("{}*", self.prefix),
                 actual: String::new(),
             })
         }
@@ -179,8 +188,29 @@ pub fn bundle_path_for(artifact_path: &Path) -> std::path::PathBuf {
 /// либо подпись/сертификат/идентичность подписанта не проходят
 /// верификацию — молчаливого успеха при отсутствии бандла нет: I6
 /// («ошибка верификации не преодолевается подтверждением») распространяется
-/// и на «нечего проверять».
+/// и на «нечего проверять». Тонкая обёртка над
+/// [`verify_artifact_with_identity`] с якорем доверия СВОЕГО репозитория
+/// (см. doc-комментарий модуля) — поведение не изменилось ни на бит по
+/// сравнению с версией до D6.
 pub fn verify_artifact(artifact_path: &Path) -> Result<(), VerifyError> {
+    verify_artifact_with_identity(
+        artifact_path,
+        RELEASE_REPOSITORY,
+        RELEASE_WORKFLOW_SAN_PREFIX,
+    )
+}
+
+/// То же самое, что [`verify_artifact`], но с параметризованной
+/// идентичностью подписанта — ROADMAP D6: установка плагина проверяет
+/// артефакт ЧУЖОГО репозитория против `signer_identity` из записи
+/// доверенного списка (D5), не против константы этого файла.
+/// `workflow_san_prefix` — тот же формат, что `RELEASE_WORKFLOW_SAN_PREFIX`
+/// (префикс SAN-идентичности сертификата Fulcio, без суффикса `@<ref>`).
+pub fn verify_artifact_with_identity(
+    artifact_path: &Path,
+    repository: &str,
+    workflow_san_prefix: &str,
+) -> Result<(), VerifyError> {
     let bundle_path = bundle_path_for(artifact_path);
 
     let bundle_json =
@@ -202,8 +232,10 @@ pub fn verify_artifact(artifact_path: &Path) -> Result<(), VerifyError> {
     let verifier = build_verifier()?;
 
     let issuer = OIDCIssuer::new(GITHUB_OIDC_ISSUER);
-    let repository = GitHubWorkflowRepository::new(RELEASE_REPOSITORY);
-    let workflow_path = ReleaseWorkflowPath;
+    let repository = GitHubWorkflowRepository::new(repository);
+    let workflow_path = ReleaseWorkflowPath {
+        prefix: workflow_san_prefix.to_string(),
+    };
     let policy = AllOf::new([
         &issuer as &dyn VerificationPolicy,
         &repository as &dyn VerificationPolicy,

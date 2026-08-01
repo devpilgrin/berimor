@@ -11,6 +11,8 @@
 //!   композитный гейт `StandardCapability` (deny-статика → режим).
 //! - `plugin` (S6) — ACL-манифест плагина: допустимые события/секреты/
 //!   потолок capability, статическая проверка предложенного действия.
+//! - `trust_list` (D5) — свёртка журнала изменений доверенного списка
+//!   репозиториев в текущее состояние.
 
 use berimor_types::capability::{CapabilityDecision, ConfirmationMode, ProposedAction};
 
@@ -19,6 +21,7 @@ pub mod deny;
 pub mod jail;
 pub mod net_gate;
 pub mod plugin;
+pub mod trust_list;
 
 /// Единая точка проверки перед любым мутирующим вызовом инструмента
 /// (`process-engine.md` §4). `Deny` безусловен — обходить этот трейт

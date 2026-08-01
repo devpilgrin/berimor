@@ -12,8 +12,10 @@ use std::process::ExitCode;
 mod config;
 mod mcp_dispatch;
 mod observe;
+mod plugin_install;
 mod run;
 mod self_update;
+mod trust;
 mod verify;
 
 #[derive(Parser)]
@@ -61,6 +63,12 @@ enum Command {
         #[command(subcommand)]
         action: PluginAction,
     },
+    /// Доверенный список репозиториев (ROADMAP D5) — источник обновлений
+    /// (`self-update`) и плагинов (`plugin install`).
+    Trust {
+        #[command(subcommand)]
+        action: TrustAction,
+    },
     /// Разобранная конфигурация — без этого нельзя проверить загрузку
     /// снаружи юнит-тестов.
     Config {
@@ -81,7 +89,51 @@ enum Command {
 
 #[derive(Subcommand)]
 enum PluginAction {
-    Install { repo: String },
+    Install {
+        repo: String,
+        /// Продолжить существующий инстанс установки по его
+        /// идентификатору (восстановление из журнала).
+        #[arg(long)]
+        resume: Option<String>,
+        /// Ожидаемая идентичность подписанта (SAN-префикс пути к
+        /// workflow-файлу) — обязательна, если репозиторий ещё не в
+        /// доверенном списке (TOFU, первая установка).
+        #[arg(long)]
+        signer_workflow: Option<String>,
+        /// Паттерн разрешённых тегов, по умолчанию "v*.*.*" — учитывается
+        /// только при первой установке из нового репозитория.
+        #[arg(long)]
+        allowed_ref: Option<String>,
+        /// Потолок ACL через запятую, например `net.http,fs.read` —
+        /// учитывается только при первой установке из нового репозитория.
+        #[arg(long)]
+        capability_ceiling: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum TrustAction {
+    /// Добавить репозиторий в доверенный список — показывает предлагаемую
+    /// запись и требует подтверждения (I2), прежде чем что-либо
+    /// записывается в журнал.
+    Add {
+        repo: String,
+        #[arg(long, default_value = "v*.*.*")]
+        allowed_ref: String,
+        /// SAN-префикс идентичности подписанта — привязка к CI-workflow
+        /// репозитория (тот же формат, что `verify.rs::ReleaseWorkflowPath`
+        /// использует для собственного релиза berimor).
+        #[arg(long)]
+        signer_workflow: String,
+        /// Через запятую, например `net.http,fs.read`.
+        #[arg(long, default_value = "")]
+        capability_ceiling: String,
+    },
+    /// Удалить репозиторий из доверенного списка — тоже требует
+    /// подтверждения.
+    Remove { repo: String },
+    /// Напечатать текущий доверенный список.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -129,10 +181,56 @@ fn main() -> ExitCode {
             }
         }
         Command::Plugin { action } => match action {
-            PluginAction::Install { repo } => {
-                eprintln!("todo(ROADMAP D6): установить плагин из `{repo}`");
+            PluginAction::Install {
+                repo,
+                resume,
+                signer_workflow,
+                allowed_ref,
+                capability_ceiling,
+            } => {
+                if let Err(err) = plugin_install::run(
+                    &resolved_config,
+                    &repo,
+                    &resume,
+                    signer_workflow.as_deref(),
+                    allowed_ref.as_deref(),
+                    capability_ceiling.as_deref(),
+                ) {
+                    eprintln!("[berimor] {err}");
+                    return ExitCode::FAILURE;
+                }
             }
         },
+        Command::Trust { action } => {
+            let result = match action {
+                TrustAction::Add {
+                    repo,
+                    allowed_ref,
+                    signer_workflow,
+                    capability_ceiling,
+                } => {
+                    let ceiling: Vec<String> = capability_ceiling
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                    trust::add(
+                        &resolved_config,
+                        &repo,
+                        &allowed_ref,
+                        &signer_workflow,
+                        &ceiling,
+                    )
+                }
+                TrustAction::Remove { repo } => trust::remove(&resolved_config, &repo),
+                TrustAction::List => trust::list(&resolved_config),
+            };
+            if let Err(err) = result {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
         Command::Config { action } => match action {
             ConfigAction::Show => {
                 println!("{resolved_config:#?}");

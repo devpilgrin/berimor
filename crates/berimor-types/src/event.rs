@@ -104,6 +104,32 @@ pub enum EventKind {
         from_version: u32,
         to_version: u32,
     },
+    /// D5 (`deployment.md` §4): изменение доверенного списка репозиториев —
+    /// событие, не сетевой эффект (I2), всегда после подтверждения
+    /// человеком (`berimor trust add/remove`) или как побочный эффект
+    /// успешной установки плагина из нового репозитория (D6). Журналуется
+    /// под синтетическим `ProcessInstanceId("trust-list")`, отдельным от
+    /// process instance любого реального процесса — доверенный список не
+    /// принадлежит ни одному запуску. `state::fold` (Process Engine) это
+    /// событие игнорирует, как и все остальные не-`StepApplied`/
+    /// `Instantiated` — своя свёртка в `berimor_capability::trust_list`.
+    /// `event.seq`/`event.ts_ms` уже дают `event_id`/`added_at` из
+    /// формата записи `deployment.md` §4 — не дублируются здесь.
+    TrustListChanged {
+        action: TrustListAction,
+        repo: String,
+        allowed_ref: String,
+        signer_identity: String,
+        capability_ceiling: Vec<String>,
+    },
+}
+
+/// Действие над записью доверенного списка — см. [`EventKind::TrustListChanged`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustListAction {
+    Added,
+    Removed,
 }
 
 /// Материализованный кэш свёртки на момент `seq`. Ускоряет восстановление,

@@ -1,0 +1,94 @@
+# Источник: docs/arch/deployment.md §6, ROADMAP D6. Тот же принцип
+# перестройки графа под реальные примитивы движка, что
+# agent-self-update.yaml (D4) — "done" не спецсентинел, Finished
+# наступает только когда для текущего шага нет следующего элемента в
+# этом списке steps, поэтому единственный успешный путь (install) ведёт
+# к общему последнему шагу `done`. Разбор — docs/ROADMAP.md §14 (D6).
+process: plugin-install
+version: 1
+steps:
+  - id: check_trust
+    type: tool
+    tool: trust.check_repo
+    args:
+      repo: "{{state.local.repo}}"
+      proposed_signer_identity: "{{state.local.proposed_signer_identity}}"
+      proposed_allowed_ref: "{{state.local.proposed_allowed_ref}}"
+      proposed_capability_ceiling: "{{state.local.proposed_capability_ceiling}}"
+  - id: trust_gate
+    type: branch
+    on: state.check_trust.trusted
+    cases:
+      "true": resolve_release
+      "false": new_repo_review
+  - id: new_repo_review
+    type: human_gate
+    reason: "репозиторий '{{state.local.repo}}' не в доверенном списке — установка добавит его в доверенный список после успешной проверки подписи (signer_identity: {{state.check_trust.signer_identity}}); продолжить?"
+  - id: resolve_release
+    type: tool
+    tool: github.get_latest_release
+    args:
+      repo: "{{state.local.repo}}"
+      allowed_ref: "{{state.check_trust.allowed_ref}}"
+  - id: resolve_asset
+    type: tool
+    tool: platform.resolve_plugin_asset
+    args:
+      repo: "{{state.local.repo}}"
+      version: "{{state.resolve_release.version}}"
+  - id: download
+    type: tool
+    tool: github.download_release_asset
+    args:
+      repo: "{{state.local.repo}}"
+      version: "{{state.resolve_release.version}}"
+      asset_name: "{{state.resolve_asset.asset_name}}"
+  - id: verify
+    type: tool
+    tool: crypto.verify_plugin_signature
+    args:
+      archive_path: "{{state.download.archive_path}}"
+      repo: "{{state.local.repo}}"
+      signer_identity: "{{state.check_trust.signer_identity}}"
+  - id: verify_gate
+    type: branch
+    on: state.verify.ok
+    cases:
+      "true": read_manifest
+      "false": fail_install
+  - id: fail_install
+    type: tool
+    tool: plugin_install.fail
+    args: {reason: "установка остановлена: подпись плагина не прошла верификацию"}
+  - id: read_manifest
+    type: tool
+    tool: plugin.extract_and_read_manifest
+    args:
+      archive_path: "{{state.download.archive_path}}"
+      allowed_capability_ceiling: "{{state.check_trust.capability_ceiling}}"
+  - id: ceiling_gate
+    type: branch
+    on: state.read_manifest.within_ceiling
+    cases:
+      "true": install
+      "false": ceiling_review
+  - id: ceiling_review
+    type: human_gate
+    reason: "манифест плагина '{{state.read_manifest.name}}' запрашивает права за пределами разрешённых записью доверенного списка (сверх нормы: {{state.read_manifest.exceeding_capability_ceiling}}); продолжить?"
+  - id: install
+    type: tool
+    tool: plugin.install
+    args:
+      extract_dir: "{{state.read_manifest.extract_dir}}"
+      name: "{{state.read_manifest.name}}"
+      trusted: "{{state.check_trust.trusted}}"
+      repo: "{{state.local.repo}}"
+      signer_identity: "{{state.check_trust.signer_identity}}"
+      allowed_ref: "{{state.check_trust.allowed_ref}}"
+      capability_ceiling: "{{state.check_trust.capability_ceiling}}"
+  - id: done
+    type: tool
+    tool: plugin_install.noop
+limits:
+  max_steps: 14
+  timeout: 5m
