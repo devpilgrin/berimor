@@ -448,13 +448,20 @@ fn fetch_latest_release(
         .map_err(|err| err.to_string())
 }
 
+/// Независимое ревью (MAJOR): пока проект в `0.x` (сегодня `0.6.0`,
+/// `Cargo.toml`), `latest.major > current.major` не сработает НИКОГДА —
+/// `major` равен `0` для любого перехода `0.x → 0.y`, `major_gate` в графе
+/// молчал бы до `1.0.0` независимо от размера скачка. SemVer §4 (initial
+/// development): в `0.x` именно minor-бамп — сигнал несовместимых
+/// изменений, аналог major в `≥1.0`.
 fn compute_version_flags(current: &str, latest: &str) -> Result<(bool, bool), String> {
     let current = semver::Version::parse(current.trim_start_matches('v'))
         .map_err(|err| format!("текущая версия '{current}' не semver: {err}"))?;
     let latest = semver::Version::parse(latest.trim_start_matches('v'))
         .map_err(|err| format!("версия релиза '{latest}' не semver: {err}"))?;
     let is_newer = latest > current;
-    let is_major_bump = is_newer && latest.major > current.major;
+    let is_major_bump = is_newer
+        && (latest.major > current.major || (current.major == 0 && latest.minor > current.minor));
     Ok((is_newer, is_major_bump))
 }
 
@@ -603,6 +610,24 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Ищет осиротевший бэкап рядом с `current_exe` по префиксу имени
+/// (`<имя>.backup-*`) — см. doc-комментарий `atomic_replace_binary`
+/// (независимое ревью, CRITICAL-1) про окно между двумя `rename`.
+fn find_orphaned_backup(current_exe: &Path) -> Option<PathBuf> {
+    let parent = current_exe.parent()?;
+    let file_name = current_exe.file_name()?.to_str()?;
+    let prefix = format!("{file_name}.backup-");
+    std::fs::read_dir(parent)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .find_map(|entry| {
+            let name = entry.file_name();
+            name.to_str()
+                .filter(|n| n.starts_with(&prefix))
+                .map(|_| entry.path())
+        })
+}
+
 /// Распаковывает `archive_path` и подставляет новый бинарник на место
 /// `current_exe`. Бэкап и подготовка отката — одним действием:
 /// переименование ТЕКУЩЕГО файла в сторону (работает даже для сейчас
@@ -611,7 +636,34 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
 /// rename-стратегия, не copy-over). Если вторая перестановка не удалась —
 /// откатывает бэкап обратно, не оставляя систему без исполняемого файла
 /// на месте вообще.
+///
+/// **Независимое ревью (CRITICAL-1), честно принятый остаточный пробел:**
+/// с точки зрения Process Engine шаг `swap` — один неделимый Tool-вызов
+/// (журнал узнаёт о нём только ПОСЛЕ успешного возврата `dispatch.call()`,
+/// `engine.rs::execute_single_step`). Если процесс/машина падает МЕЖДУ
+/// двумя `rename` ниже (после первого, до второго) — журнал не содержит
+/// об этом вообще ничего, `--resume` не может использовать `backup_path`
+/// (он не был записан в состояние). Полностью резюмируемым это окно не
+/// сделать без персистентного журнала вне Process Engine — вне рамок этой
+/// задачи. Минимальный фикс здесь — не оставлять оператора с непонятной
+/// ошибкой ОС: если `current_exe` уже отсутствует к началу вызова (типичный
+/// след прерванной попытки), явно ищем осиротевший бэкап и называем его.
 fn atomic_replace_binary(current_exe: &Path, archive_path: &Path) -> Result<Value, String> {
+    if !current_exe.exists() {
+        return Err(match find_orphaned_backup(current_exe) {
+            Some(backup) => format!(
+                "{} отсутствует — похоже, предыдущая попытка обновления прервалась между переименованиями; вероятный бэкап: {} (восстановите вручную: переименуйте его обратно в {})",
+                current_exe.display(),
+                backup.display(),
+                current_exe.display()
+            ),
+            None => format!(
+                "{} отсутствует, и резервная копия рядом не найдена — автоматическое восстановление невозможно",
+                current_exe.display()
+            ),
+        });
+    }
+
     let extract_dir = {
         let mut dir = archive_path.as_os_str().to_owned();
         dir.push(".extracted");
@@ -657,12 +709,26 @@ fn evaluate_self_check(output: &std::process::Output, expected_version: &str) ->
     json!({"ok": ok, "stdout": stdout.trim()})
 }
 
+/// Независимое ревью (CRITICAL-2): если новый бинарник настолько сломан,
+/// что вообще не запускается (битый архив, потерянные права на exec,
+/// неверная архитектура — самый вероятный в реальности класс поломки),
+/// `Command::output()` возвращает `Err`, а не `Ok` с ненулевым кодом. Если
+/// эту `Err` пробрасывать наружу как раньше, весь self-update ПРОЦЕСС
+/// обрывается на шаге `smoke_test`, граф никогда не доходит до
+/// `smoke_gate`/`rollback` — откат не срабатывает именно тогда, когда
+/// нужнее всего. Поэтому неудача самого запуска — тоже `{"ok": false}`,
+/// не `Err`: пусть граф решает через `smoke_gate`, как и было задумано.
 fn self_check(current_exe: &Path, expected_version: &str) -> Result<Value, String> {
-    let output = std::process::Command::new(current_exe)
+    match std::process::Command::new(current_exe)
         .arg("--version")
         .output()
-        .map_err(|err| format!("не удалось запустить {}: {err}", current_exe.display()))?;
-    Ok(evaluate_self_check(&output, expected_version))
+    {
+        Ok(output) => Ok(evaluate_self_check(&output, expected_version)),
+        Err(err) => Ok(json!({
+            "ok": false,
+            "error": format!("не удалось запустить {}: {err}", current_exe.display()),
+        })),
+    }
 }
 
 fn restore_from_checkpoint(current_exe: &Path, backup_path: &Path) -> Result<Value, String> {
@@ -733,6 +799,29 @@ mod tests {
         let (base, handle) = spawn_test_server("200 OK", br#"{"tag_name": "v1.6.0"}"#.to_vec(), 1);
         let client = Client::builder().timeout(REQUEST_TIMEOUT).build().unwrap();
         let result = registry_get_latest(&client, &base, "stable", "1.5.0").unwrap();
+        assert_eq!(result["is_newer"], true);
+        assert_eq!(result["is_major_bump"], false);
+        handle.join().unwrap();
+    }
+
+    /// Независимое ревью (MAJOR): в `0.x` (проект сегодня на `0.6.0`)
+    /// minor-бамп обязан считаться major-подобным — иначе `major_gate`
+    /// не сработает вообще ни разу до `1.0.0`.
+    #[test]
+    fn registry_get_latest_minor_bump_in_0x_counts_as_major() {
+        let (base, handle) = spawn_test_server("200 OK", br#"{"tag_name": "v0.7.0"}"#.to_vec(), 1);
+        let client = Client::builder().timeout(REQUEST_TIMEOUT).build().unwrap();
+        let result = registry_get_latest(&client, &base, "stable", "0.6.0").unwrap();
+        assert_eq!(result["is_newer"], true);
+        assert_eq!(result["is_major_bump"], true);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn registry_get_latest_patch_bump_in_0x_is_not_major() {
+        let (base, handle) = spawn_test_server("200 OK", br#"{"tag_name": "v0.6.1"}"#.to_vec(), 1);
+        let client = Client::builder().timeout(REQUEST_TIMEOUT).build().unwrap();
+        let result = registry_get_latest(&client, &base, "stable", "0.6.0").unwrap();
         assert_eq!(result["is_newer"], true);
         assert_eq!(result["is_major_bump"], false);
         handle.join().unwrap();
@@ -995,6 +1084,45 @@ mod tests {
         assert_eq!(result["ok"], false);
     }
 
+    /// Независимое ревью (CRITICAL-2): бинарник, который вообще не
+    /// запускается (не найден/не исполняемый), обязан давать `Ok({"ok":
+    /// false})`, а не `Err` — иначе `smoke_gate`/`rollback` никогда не
+    /// сработают для самого вероятного в реальности сценария поломки.
+    #[test]
+    fn self_check_returns_ok_false_not_err_when_binary_does_not_exist() {
+        let missing =
+            std::env::temp_dir().join(format!("berimor-self-check-missing-{}", uuid_like_suffix()));
+        let result = self_check(&missing, "1.2.3").unwrap();
+        assert_eq!(result["ok"], false);
+        assert!(result["error"]
+            .as_str()
+            .unwrap()
+            .contains(&missing.display().to_string()));
+    }
+
+    /// Независимое ревью (CRITICAL-1): повторная попытка `swap` после
+    /// того, как предыдущая упала между двумя `rename` (`current_exe`
+    /// уже отсутствует, бэкап рядом остался) — сообщение обязано называть
+    /// найденный бэкап, не быть непонятной ошибкой ОС.
+    #[test]
+    fn atomic_replace_binary_names_orphaned_backup_on_retry() {
+        let work = temp_work_dir("orphaned-backup");
+        let current_exe = work.join(binary_name());
+        let backup_path = work.join(format!("{}.backup-12345", binary_name()));
+        std::fs::write(&backup_path, b"old-good-binary").unwrap();
+        // current_exe намеренно НЕ создаём — имитирует прерванную попытку.
+
+        let fake_archive = work.join(format!("update.{}", test_archive_extension()));
+        let result = atomic_replace_binary(&current_exe, &fake_archive);
+        let err = result.unwrap_err();
+        assert!(
+            err.contains(&backup_path.display().to_string()),
+            "сообщение обязано называть найденный бэкап: {err}"
+        );
+
+        std::fs::remove_dir_all(&work).ok();
+    }
+
     /// Сервер, отвечающий N подключениям по очереди разными телами — для
     /// сценариев, где один прогон делает несколько разных HTTP-запросов
     /// подряд (get_latest → download архива → download sidecar).
@@ -1080,8 +1208,13 @@ mod tests {
     /// вообще).
     #[test]
     fn golden_process_verify_failure_routes_to_fail_update_not_finished() {
+        // v0.6.1, не v0.7.0: с 0.x-осознанной семантикой is_major_bump
+        // (независимое ревью, MAJOR) минорный бамп внутри 0.x сам по себе
+        // считается major-подобным и увёл бы этот тест на human_review —
+        // здесь проверяется путь verify_gate, не major_gate, поэтому нужен
+        // именно patch-бамп.
         let (base, handle) = spawn_sequenced_server(vec![
-            ("200 OK", br#"{"tag_name": "v0.7.0"}"#.to_vec()),
+            ("200 OK", br#"{"tag_name": "v0.6.1"}"#.to_vec()),
             ("200 OK", b"fake-archive-bytes".to_vec()),
             ("200 OK", b"not a real sigstore bundle".to_vec()),
         ]);
