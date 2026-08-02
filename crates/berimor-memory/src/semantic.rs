@@ -30,7 +30,15 @@ pub struct FactId(pub String);
 /// совпадение по смыслу текста, не по байтам оригинального
 /// регистра/пробелов вывода модели.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FactHash([u8; 32]);
+pub struct FactHash([u8; 32]);
+
+impl FactHash {
+    /// Стабильная текстовая форма хэша — для идентификатора факта на
+    /// записи (`f-<hex>` в записном пути `berimor run`).
+    pub fn to_hex(&self) -> String {
+        self.0.iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
 
 /// Нормализация текстового поля факта для сравнения по смыслу, не по
 /// байтам: обрезка пробелов по краям + нижний регистр. Общая для точного
@@ -41,7 +49,10 @@ fn normalize(text: &str) -> String {
     text.trim().to_lowercase()
 }
 
-fn fact_hash(subject: &str, predicate: &str, object: &str) -> FactHash {
+/// Детерминированный хэш содержимого факта — основа и дедупликации
+/// (точное совпадение), и стабильного идентификатора на записи
+/// (записной путь `berimor run` строит id как `f-<hash>`).
+pub fn fact_hash(subject: &str, predicate: &str, object: &str) -> FactHash {
     let normalized = format!(
         "{}\u{1}{}\u{1}{}",
         normalize(subject),
@@ -100,6 +111,32 @@ impl StoredFact {
             confidence: proposal.confidence,
             source: masker.mask_text(&proposal.source),
             trusted_channel,
+        }
+    }
+
+    /// Восстанавливает StoredFact из записи хранилища (записной путь
+    /// `berimor run`): hash пересобирается из полей — те же значения,
+    /// что писались (замаскированные на записи), поэтому хэш совпадёт с
+    /// сохранённым и дедупликация по точному совпадению работает.
+    pub fn rehydrate(
+        id: FactId,
+        subject: String,
+        predicate: String,
+        object: String,
+        confidence: f32,
+        source: String,
+        trusted_channel: bool,
+    ) -> Self {
+        let hash = fact_hash(&subject, &predicate, &object);
+        Self {
+            id,
+            subject,
+            predicate,
+            object,
+            confidence,
+            source,
+            trusted_channel,
+            hash,
         }
     }
 }

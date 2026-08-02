@@ -63,6 +63,10 @@ fn describe(event: &Event) -> TraceEntry {
             "human_gate_timed_out",
             format!("таймаут ожидания подтверждения, политика '{policy}'"),
         ),
+        EventKind::MemoryConflict { detail } => (
+            "memory_conflict",
+            format!("конфликт фактов памяти: {detail}"),
+        ),
         EventKind::Snapshot => ("snapshot", "снапшот состояния записан".to_string()),
         EventKind::SecurityEvent { detail } => {
             ("security_event", format!("событие безопасности: {detail}"))

@@ -31,7 +31,7 @@ use berimor_types::{
     capability::{ConfirmationMode, ProposedAction},
     event::{Event, EventKind, ProcessInstanceId},
     executor::ModelProvider,
-    model::ModelIdentity,
+    model::{ModelIdentity, ModelTierRequirement},
     step::{Patch, Step, StepKind},
 };
 use serde_json::Value;
@@ -217,6 +217,11 @@ pub fn run(
                     "{}",
                     serde_json::to_string_pretty(&instance.state).expect("состояние сериализуемо")
                 );
+                // Записной путь памяти (memory-model.md §2/§4, opt-in):
+                // извлечение фактов из финального состояния.
+                if config.memory.fact_extraction {
+                    extract_and_store_facts(&llm, &storage, &instance, bundle.masker.as_ref());
+                }
                 return Ok(());
             }
             engine::RunOutcome::AwaitingHuman { step_id, reason } => {
@@ -595,6 +600,159 @@ impl ConfirmationHandler for TerminalConfirmer {
         eprintln!("[berimor] capability: {}", self.masker.mask_text(reason));
         eprintln!("[berimor] действие: {} {}", action.tool, action.args);
         ask_line("[berimor] подтвердить? [y/N] ")
+    }
+}
+
+/// Записной путь памяти (memory-model.md §2/§4): конвейер «модель
+/// предлагает факты → Mediation → дедупликация/конфликт → запись» для
+/// финального состояния завершённого процесса. Один вызов модели на
+/// процесс (не на шаг) — стоимость предсказуема; точка — после
+/// Finished: извлечение из ФИНАЛЬНОГО состояния, а не из промежуточного
+/// шума попыток.
+///
+/// Извлечение — фоновая операция: её сбой (модель недоступна, журнал
+/// занят) НЕ хоронит уже завершённый процесс — предупреждение, не
+/// отказ. Доверенная граница: кандидат проходит Mediation (тот же
+/// контрактный путь, что у шагов — retry, policy, маскировка журнала),
+/// конфликт с существующим фактом — событием человеку, не молчаливой
+/// перезаписью (§2, I2).
+fn extract_and_store_facts(
+    llm: &StructuredLlm,
+    storage: &SqliteEventLog,
+    instance: &berimor_process_engine::ProcessInstance,
+    masker: &berimor_secrets::Masker,
+) {
+    use berimor_mediation::contracts::FactProposalBatch;
+    use berimor_memory::semantic::{
+        self, fact_hash, FactId, NoSimilarity, Resolution, StoredFact, DEFAULT_SIMILARITY_THRESHOLD,
+    };
+    use berimor_storage::{FactRecord, SemanticStore};
+    use berimor_types::contract::Contract;
+
+    let patch = match llm.execute(
+        "extract_facts",
+        FactProposalBatch::NAME,
+        ModelTierRequirement::Weak,
+        &instance.state,
+        None,
+    ) {
+        Ok(patch) => patch,
+        Err(err) => {
+            eprintln!("[berimor] память: извлечение фактов пропущено ({err})");
+            return;
+        }
+    };
+    let batch: FactProposalBatch = match serde_json::from_value(patch.changes) {
+        Ok(batch) => batch,
+        Err(err) => {
+            eprintln!("[berimor] память: не удалось разобрать пакет фактов ({err})");
+            return;
+        }
+    };
+    if batch.facts.is_empty() {
+        return;
+    }
+
+    let existing_records = match storage.all_facts() {
+        Ok(records) => records,
+        Err(err) => {
+            eprintln!("[berimor] память: не удалось прочитать факты ({err})");
+            return;
+        }
+    };
+    // StoredFact из записи хранилища: hash пересобирается из полей (те же
+    // маскированные значения, что писались — хэш совпадёт с записанным).
+    let to_stored = |record: &FactRecord| {
+        StoredFact::rehydrate(
+            FactId(record.id.clone()),
+            record.subject.clone(),
+            record.predicate.clone(),
+            record.object.clone(),
+            record.confidence,
+            record.source.clone(),
+            record.trusted_channel,
+        )
+    };
+    let existing: Vec<StoredFact> = existing_records.iter().map(to_stored).collect();
+
+    let mut written = 0usize;
+    let mut merged = 0usize;
+    let mut conflicts = 0usize;
+    for proposal in &batch.facts {
+        match semantic::resolve(
+            proposal,
+            &existing,
+            &NoSimilarity,
+            DEFAULT_SIMILARITY_THRESHOLD,
+        ) {
+            Resolution::Duplicate { .. } => {}
+            Resolution::New => {
+                // Id — от маскированных полей (как hash внутри
+                // StoredFact::new): детерминирован, повторное извлечение
+                // того же факта упирается в Duplicate.
+                let masked_subject = masker.mask_text(&proposal.subject);
+                let masked_predicate = masker.mask_text(&proposal.predicate);
+                let masked_object = masker.mask_text(&proposal.object);
+                let id = FactId(format!(
+                    "f-{}",
+                    fact_hash(&masked_subject, &masked_predicate, &masked_object).to_hex()
+                ));
+                let fact = StoredFact::new(id, proposal, false, masker);
+                let record = FactRecord {
+                    id: fact.id.0.clone(),
+                    subject: fact.subject.clone(),
+                    predicate: fact.predicate.clone(),
+                    object: fact.object.clone(),
+                    confidence: fact.confidence,
+                    source: fact.source.clone(),
+                    trusted_channel: fact.trusted_channel,
+                };
+                if let Err(err) = storage.upsert_fact(&record, None) {
+                    eprintln!("[berimor] память: не удалось записать факт ({err})");
+                    continue;
+                }
+                written += 1;
+            }
+            Resolution::Merge { existing, .. } => {
+                // Слияние — усиление уверенности СУЩЕСТВУЮЩЕГО факта, не
+                // новая запись (§2: «слияние с существующим»).
+                if let Some(mut record) = existing_records
+                    .iter()
+                    .find(|r| r.id == existing.0)
+                    .cloned()
+                {
+                    record.confidence =
+                        semantic::merge_confidence(record.confidence, proposal.confidence);
+                    if let Err(err) = storage.upsert_fact(&record, None) {
+                        eprintln!("[berimor] память: не удалось слить факт ({err})");
+                        continue;
+                    }
+                    merged += 1;
+                }
+            }
+            Resolution::Conflict(conflict) => {
+                // «Не молчаливая перезапись»: конфликт — событием в
+                // журнал + человеку в stderr. Извлечение идёт после
+                // Finished — интерактивно спрашивать уже некогда.
+                let detail = masker.mask_text(&format!(
+                    "сохранённый факт {} («{}») против предложенного («{}»)",
+                    conflict.existing.0, conflict.existing_object, conflict.candidate_object
+                ));
+                let _ = storage.append(Event::new(
+                    instance.id.clone(),
+                    instance.process.version,
+                    EventKind::MemoryConflict {
+                        detail: detail.clone(),
+                    },
+                    Value::Null,
+                ));
+                eprintln!("[berimor] память: конфликт фактов (запись отклонена): {detail}");
+                conflicts += 1;
+            }
+        }
+    }
+    if written + merged + conflicts > 0 {
+        eprintln!("[berimor] память: записано {written}, слито {merged}, конфликтов {conflicts}");
     }
 }
 

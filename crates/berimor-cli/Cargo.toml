@@ -18,6 +18,7 @@ berimor-capability = { path = "../berimor-capability" }
 berimor-context-engine = { path = "../berimor-context-engine" }
 berimor-eval = { path = "../berimor-eval" }
 berimor-executors = { path = "../berimor-executors" }
+berimor-mediation = { path = "../berimor-mediation" }
 berimor-memory = { path = "../berimor-memory" }
 berimor-model-pool = { path = "../berimor-model-pool" }
 berimor-process-engine = { path = "../berimor-process-engine" }

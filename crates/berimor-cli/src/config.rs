@@ -88,6 +88,13 @@ pub struct MemoryConfig {
     /// из того же журнала SQLite (`EntityGraphStore`), наполняется
     /// внешними процессами — ядро в `berimor run` его только читает.
     pub entity_graph: bool,
+    /// Записной путь памяти (memory-model.md §2/§4): после завершения
+    /// процесса модель извлекает факты из финального состояния
+    /// (контракт FactProposalBatch) и они проходят конвейер «Mediation →
+    /// дедупликация/конфликт → запись». Default `false` — запись в
+    /// память это доверенная граница, включается осознанно.
+    #[serde(default)]
+    pub fact_extraction: bool,
 }
 
 impl Default for MemoryConfig {
@@ -96,6 +103,7 @@ impl Default for MemoryConfig {
             skills_dir: None,
             session_search_limit: 5,
             entity_graph: false,
+            fact_extraction: false,
         }
     }
 }

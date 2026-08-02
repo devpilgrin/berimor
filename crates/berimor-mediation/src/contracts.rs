@@ -129,6 +129,21 @@ pub struct FactProposal {
     pub source: String,
 }
 
+/// Пакет предложений фактов за одно извлечение (записной путь памяти,
+/// memory-model.md §2/§4). Пустой пакет — законный ответ «запоминать
+/// нечего» — модель не обязана выдумывать факт, чтобы заполнить форму.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct FactProposalBatch {
+    #[validate(nested, length(max = 8))]
+    pub facts: Vec<FactProposal>,
+}
+
+impl Contract for FactProposalBatch {
+    const SCHEMA_VERSION: u32 = 1;
+    const NAME: &'static str = "FactProposalBatch";
+}
+
 impl Contract for FactProposal {
     const SCHEMA_VERSION: u32 = 1;
     const NAME: &'static str = "FactProposal";

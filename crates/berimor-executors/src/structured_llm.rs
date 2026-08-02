@@ -13,7 +13,7 @@
 use berimor_context_engine::ContextBuilder;
 use berimor_mediation::{
     commit::CommitOutcome,
-    contracts::{ClassificationOut, SupportReply},
+    contracts::{ClassificationOut, FactProposalBatch, SupportReply},
     pipeline::{self, PolicyRules},
     policy,
 };
@@ -119,6 +119,37 @@ pub fn contract_registry() -> &'static [ContractAdapter] {
             },
             mediate: |step_id, raw, state, tier, rules, attempt, trace| {
                 pipeline::mediate_traced::<SupportReply>(
+                    step_id, raw, state, tier, rules, attempt, trace,
+                )
+            },
+        },
+        // Записной путь памяти (memory-model.md §2/§4): извлечение
+        // фактов после Finished. Пакетный контракт — пустой пакет
+        // легален («запоминать нечего»), до восьми фактов за вызов.
+        ContractAdapter {
+            name: FactProposalBatch::NAME,
+            schema_version: FactProposalBatch::SCHEMA_VERSION,
+            json_schema: || {
+                serde_json::to_value(schemars::schema_for!(FactProposalBatch))
+                    .expect("схема derive-типа всегда сериализуема")
+            },
+            example: || {
+                serde_json::json!({
+                    "facts": [{
+                        "subject": "card_1029",
+                        "predicate": "delivery_status",
+                        "object": "in_transit",
+                        "confidence": 0.9,
+                        "source": "crm.get_card_status"
+                    }]
+                })
+            },
+            // Ссылки на состояние НЕ объявлены: факты предлагаются о
+            // мире, не привязаны к конкретным полям state; policy-стадия
+            // всё равно проверяет утечки по реестру секретов.
+            policy_rules: PolicyRules::default,
+            mediate: |step_id, raw, state, tier, rules, attempt, trace| {
+                pipeline::mediate_traced::<FactProposalBatch>(
                     step_id, raw, state, tier, rules, attempt, trace,
                 )
             },

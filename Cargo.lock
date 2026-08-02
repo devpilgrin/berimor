@@ -263,6 +263,7 @@ dependencies = [
  "berimor-context-engine",
  "berimor-eval",
  "berimor-executors",
+ "berimor-mediation",
  "berimor-memory",
  "berimor-model-pool",
  "berimor-process-engine",
