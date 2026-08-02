@@ -26,7 +26,7 @@
 //!   тогда, когда цель текстуально вне; полное закрытие — та же
 //!   платформо-специфичная задача, что и TOCTOU.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum JailError {
@@ -85,16 +85,28 @@ impl FsJail {
     /// Несуществующий хвост (цель записи, которую ещё предстоит создать)
     /// не ошибка: канонизируется глубочайший существующий предок, хвост
     /// дописывается к нему — создать файл внутри области законно.
+    ///
+    /// ВАЖНО (находка C1 независимого ревью S2): путь НЕ нормализуется
+    /// лексически до обращения к ФС. Лексическое схлопывание `..` раньше
+    /// канонизации эксплуатируемо: ядро резолвит симлинк РАНЬШЕ следующего
+    /// компонента, поэтому `outlink/../x` физически — `<вне области>/x`,
+    /// лексически — `root/x`. Обход предков идёт по СЫРОМУ пути через
+    /// `exists()`, которое следует семантике ядра (симлинк, затем `..`);
+    /// предок, заканчивающийся на `..` у несуществующего пути, не
+    /// разрешим статически (что появится вместо несуществующего
+    /// компонента — неизвестно) — консервативный `EscapesJail`.
     pub fn resolve(&self, path: &Path) -> Result<PathBuf, JailError> {
         let candidate = if path.is_absolute() {
             path.to_path_buf()
         } else {
             self.root.join(path)
         };
-        let normalized = normalize_lexically(&candidate);
 
-        // Глубочайший существующий предок + оставшийся хвост.
-        let mut ancestor = normalized.clone();
+        // Глубочайший существующий предок СЫРОГО пути + оставшийся хвост.
+        // `file_name()` у пути, заканчивающегося на `..`, — `None`
+        // (ParentDir не компонент-имя): такой путь отклоняется здесь же,
+        // консервативно (`nonexistent/../file.txt` — Deny).
+        let mut ancestor = candidate.clone();
         let mut tail: Vec<PathBuf> = Vec::new();
         while !ancestor.exists() {
             match ancestor.file_name() {
@@ -103,7 +115,7 @@ impl FsJail {
                     ancestor.pop();
                 }
                 None => {
-                    return Err(JailError::EscapesJail(normalized));
+                    return Err(JailError::EscapesJail(candidate));
                 }
             }
         }
@@ -114,7 +126,7 @@ impl FsJail {
                 reason: err.to_string(),
             })?;
         if !canonical_ancestor.starts_with(&self.root) {
-            return Err(JailError::EscapesJail(normalized));
+            return Err(JailError::EscapesJail(candidate));
         }
 
         let mut resolved = canonical_ancestor;
@@ -123,23 +135,6 @@ impl FsJail {
         }
         Ok(resolved)
     }
-}
-
-/// Лексическая нормализация до обращения к ФС: `.` убираются, `..`
-/// схлопываются. Попытка подняться выше корня ФС зажимается в корень —
-/// окончательный вердикт всё равно за каноническим сравнением выше.
-fn normalize_lexically(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -264,6 +259,50 @@ mod tests {
         let (jail, root, _) = setup();
         let resolved = jail.resolve(Path::new(".")).unwrap();
         assert_eq!(resolved, root);
+        teardown(&root);
+    }
+
+    /// Регрессионный тест C1 независимого ревью S2: `симлинк + ..` —
+    /// ядро резолвит симлинк раньше следующего компонента, лексическая
+    /// нормализация делала этот путь «внутренним».
+    #[test]
+    fn symlink_then_parent_escape_is_rejected() {
+        let (jail, root, _) = setup();
+        let result = jail.resolve(Path::new("outlink/../outside/secret.txt"));
+        assert!(
+            matches!(result, Err(JailError::EscapesJail(_))),
+            "outlink/../outside/secret.txt обязан отклоняться: {result:?}"
+        );
+        teardown(&root);
+    }
+
+    /// Контроль без ложного срабатывания: `..` после симлинка,
+    /// указывающего ВНУТРЬ области, физически остаётся внутри.
+    #[test]
+    fn parent_after_inside_symlink_is_accepted() {
+        let (jail, root, _) = setup();
+        let resolved = jail.resolve(Path::new("sublink/../sub/file.txt")).unwrap();
+        assert_eq!(resolved, root.join("sub/file.txt"));
+        teardown(&root);
+    }
+
+    /// Консервативный deny: физический смысл `..` после несуществующего
+    /// компонента предсказать статически нельзя (на его месте может
+    /// появиться симлинк наружу).
+    #[test]
+    fn parent_after_nonexistent_component_is_rejected_conservatively() {
+        let (jail, root, _) = setup();
+        let result = jail.resolve(Path::new("nonexistent/../file.txt"));
+        assert!(matches!(result, Err(JailError::EscapesJail(_))));
+        teardown(&root);
+    }
+
+    /// `..` после существующего реального каталога внутри — легально.
+    #[test]
+    fn parent_after_existing_dir_inside_is_accepted() {
+        let (jail, root, _) = setup();
+        let resolved = jail.resolve(Path::new("sub/../sub/file.txt")).unwrap();
+        assert_eq!(resolved, root.join("sub/file.txt"));
         teardown(&root);
     }
 
