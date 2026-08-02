@@ -89,6 +89,11 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         episodic: &storage,
         skills: &bundle.skills,
         session_search_limit: config.memory.session_search_limit,
+        entity_graph: config
+            .memory
+            .entity_graph
+            .then_some(&storage as &dyn berimor_storage::EntityGraphStore),
+        masker: Some(bundle.masker.as_ref()),
     };
     // Без телеметрии Mediation (on_attempt: None): у неё нет
     // фиксированного instance_id до вызова engine::instantiate ВНУТРИ

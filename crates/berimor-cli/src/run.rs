@@ -57,7 +57,11 @@ pub enum RunError {
     MissingApiKey(String),
     #[error("не удалось подключить провайдера: {0}")]
     Provider(String),
-    #[error("MCP-серверы инструментов: {0}")]
+    #[error("не удалось создать jail рабочей области: {0}")]
+    Jail(String),
+    #[error("лиз инстанса: {0}")]
+    InstanceLease(String),
+    #[error(transparent)]
     Mcp(#[from] crate::mcp_dispatch::McpDispatchError),
 }
 
@@ -121,6 +125,15 @@ pub fn run(
         }
     };
 
+    // Межпроцессный лиз «один писатель на инстанс» (аудит 1.11, P5):
+    // два CLI-процесса, восстановивших один инстанс из общего журнала,
+    // больше не продвигают его параллельно — второму отказ. Лок-файлы
+    // рядом с журналом; flock снимается ядром при смерти процесса.
+    let locks_dir = std::path::PathBuf::from(format!("{}.locks", config.storage_path.display()));
+    let _instance_lease =
+        berimor_process_engine::instance_lock::try_acquire_file_lease(&locks_dir, &instance.id)
+            .map_err(|err| RunError::InstanceLease(err.to_string()))?;
+
     // Телеметрия Mediation (M7) — события в тот же журнал; свёртка их
     // игнорирует, аудит-след их видит (security-model.md §5).
     let instance_id = instance.id.clone();
@@ -138,6 +151,13 @@ pub fn run(
         episodic: &storage,
         skills: &bundle.skills,
         session_search_limit: config.memory.session_search_limit,
+        entity_graph: config
+            .memory
+            .entity_graph
+            .then_some(&storage as &dyn berimor_storage::EntityGraphStore),
+        // HIGH ревью §20.5: контент слоя маскируется тем же реестром,
+        // что вывод инструментов и подтверждения.
+        masker: Some(bundle.masker.as_ref()),
     };
 
     let llm = StructuredLlm {
@@ -250,7 +270,7 @@ pub(crate) struct ExecutorBundle {
     pub(crate) gate: std::sync::Arc<StandardCapability>,
     pub(crate) dispatch: std::sync::Arc<CompositeToolDispatch>,
     pub(crate) pool: ModelPool,
-    provider_clients: Vec<OpenAiCompatibleProvider>,
+    provider_clients: Vec<(String, Box<dyn ModelProvider>)>,
     pub(crate) skills: Vec<berimor_memory::procedural::SkillSummary>,
     pub(crate) confirmer: std::sync::Arc<TerminalConfirmer>,
     /// Реестр секретов запуска (S5): ключи API провайдеров +
@@ -264,7 +284,7 @@ impl ExecutorBundle {
     pub(crate) fn providers(&self) -> HashMap<String, &dyn ModelProvider> {
         self.provider_clients
             .iter()
-            .map(|c| (c.identity().provider.clone(), c as &dyn ModelProvider))
+            .map(|(name, client)| (name.clone(), client.as_ref() as &dyn ModelProvider))
             .collect()
     }
 }
@@ -287,7 +307,13 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
             )
         })
         .collect();
-    let gate = StandardCapability::new(workspace_root, tool_policies);
+    // S2 (§20.3): основной путь `berimor run` — с jail-слоем. Домен
+    // инструментов этого процесса — рабочая область пользователя (cwd);
+    // first-party процессы с доменом шире cwd (self-update,
+    // plugin-install) осознанно остаются на StandardCapability::new.
+    let jail = berimor_capability::jail::FsJail::new(&workspace_root)
+        .map_err(|err| RunError::Jail(err.to_string()))?;
+    let gate = StandardCapability::with_jail(jail, tool_policies);
     let static_stubs = StaticToolDispatch::new(
         config
             .tool_stubs
@@ -327,14 +353,49 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
     masker.register_from_env(&config.secret_envs);
 
     let mut pool = ModelPool::new();
-    let mut provider_clients: Vec<OpenAiCompatibleProvider> = Vec::new();
+    let mut provider_clients: Vec<(String, Box<dyn ModelProvider>)> = Vec::new();
+    // llama.cpp-бэкенд инициализируется один раз на процесс и только если
+    // в конфигурации есть локальные провайдеры (E4, ADR-0024).
+    #[cfg(feature = "local-inference")]
+    let llama_backend: Option<
+        std::sync::Arc<berimor_model_pool::local_provider::LlamaBackend>,
+    > = if config.providers.iter().any(|p| p.model_path.is_some()) {
+        Some(std::sync::Arc::new(
+            berimor_model_pool::local_provider::LlamaBackend::init()
+                .map_err(|err| RunError::Provider(format!("llama.cpp init: {err}")))?,
+        ))
+    } else {
+        None
+    };
+    // Без feature-флага — заглушка того же формата для cfg-агностичного
+    // вызова `build_local_provider` ниже; реальный бэкенд недоступен, и
+    // `build_local_provider` в этой сборке всегда возвращает ошибку.
+    #[cfg(not(feature = "local-inference"))]
+    let llama_backend: Option<()> = None;
     for p in &config.providers {
+        let identity = ModelIdentity {
+            provider: p.name.clone(),
+            model_id: p.model_id.clone(),
+            tier: p.tier,
+        };
+        if let Some(model_path) = &p.model_path {
+            // Локальный инференс (E4): kind=Local, нулевая предельная
+            // стоимость — селектор ADR-0011 предпочтёт его при равном
+            // классе; данные не покидают периметр (I5).
+            pool.register(ModelEntry {
+                identity: identity.clone(),
+                kind: ProviderKind::Local,
+                cost_per_1k_tokens: None,
+                measured_latency_ms: None,
+            });
+            provider_clients.push((
+                p.name.clone(),
+                build_local_provider(&identity, model_path, llama_backend.as_ref())?,
+            ));
+            continue;
+        }
         pool.register(ModelEntry {
-            identity: ModelIdentity {
-                provider: p.name.clone(),
-                model_id: p.model_id.clone(),
-                tier: p.tier,
-            },
+            identity: identity.clone(),
             kind: ProviderKind::Remote,
             cost_per_1k_tokens: p.cost_per_1k_tokens,
             measured_latency_ms: None,
@@ -358,19 +419,18 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
             }
             None => None,
         };
-        provider_clients.push(
-            OpenAiCompatibleProvider::new(
-                ModelIdentity {
-                    provider: p.name.clone(),
-                    model_id: p.model_id.clone(),
-                    tier: p.tier,
-                },
-                p.base_url.clone(),
-                api_key,
-                p.allow_private_endpoint,
-            )
-            .map_err(|err| RunError::Provider(err.to_string()))?,
-        );
+        provider_clients.push((
+            p.name.clone(),
+            Box::new(
+                OpenAiCompatibleProvider::new(
+                    identity,
+                    p.base_url.clone(),
+                    api_key,
+                    p.allow_private_endpoint,
+                )
+                .map_err(|err| RunError::Provider(err.to_string()))?,
+            ),
+        ));
     }
 
     let skills = load_skills(config.memory.skills_dir.as_deref());
@@ -387,6 +447,40 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
         }),
         masker,
     })
+}
+
+/// Конструктор локального провайдера — выделен, чтобы cfg-ветки feature
+/// `local-inference` не расползались по циклу сборки. Бэкенд llama.cpp
+/// общий на процесс — передаётся из `build_executor_bundle`.
+#[cfg(feature = "local-inference")]
+fn build_local_provider(
+    identity: &ModelIdentity,
+    model_path: &std::path::Path,
+    backend: Option<&std::sync::Arc<berimor_model_pool::local_provider::LlamaBackend>>,
+) -> Result<Box<dyn ModelProvider>, RunError> {
+    let backend = backend.cloned().ok_or_else(|| {
+        RunError::Provider("внутренняя ошибка: llama.cpp backend не инициализирован".to_string())
+    })?;
+    let engine = berimor_model_pool::local_provider::LlamaCppEngine::load(backend, model_path)
+        .map_err(|err| RunError::Provider(err.to_string()))?;
+    Ok(Box::new(
+        berimor_model_pool::local_provider::LlamaLocalProvider::new(identity.clone(), engine),
+    ))
+}
+
+/// Без feature-флага локальный провайдер в конфигурации — жёсткая ошибка
+/// с указанием способа включения, не молчаливый пропуск (fail-closed).
+#[cfg(not(feature = "local-inference"))]
+fn build_local_provider(
+    identity: &ModelIdentity,
+    model_path: &std::path::Path,
+    _backend: Option<&()>,
+) -> Result<Box<dyn ModelProvider>, RunError> {
+    Err(RunError::Provider(format!(
+        "провайдер '{}': задан model_path ({}), но бинарник собран без локального инференса — пересоберите с `--features local-inference`",
+        identity.provider,
+        model_path.display()
+    )))
 }
 
 /// Реальный `StepExecutor` (CLI1): маршрутизация по типу шага.

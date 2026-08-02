@@ -696,9 +696,12 @@ impl EntityGraphStore for SqliteEventLog {
         Ok(())
     }
 
+    /// `ORDER BY id` — детерминированный набор при обрезках вызывающего
+    /// кода (LOW независимого ревью §20.5: без порядка выжившие при
+    /// cap-обрезке зависели от внутренностей SQLite).
     fn all_nodes(&self) -> Result<Vec<NodeRecord>, StorageError> {
         let conn = self.lock()?;
-        let mut stmt = conn.prepare("SELECT id, node_type, properties FROM nodes")?;
+        let mut stmt = conn.prepare("SELECT id, node_type, properties FROM nodes ORDER BY id")?;
         let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -740,10 +743,11 @@ impl EntityGraphStore for SqliteEventLog {
         Ok(())
     }
 
+    /// `ORDER BY id` — как у `all_nodes`, детерминизм для вызывающих.
     fn all_edges(&self) -> Result<Vec<EdgeRecord>, StorageError> {
         let conn = self.lock()?;
-        let mut stmt =
-            conn.prepare("SELECT id, edge_type, source, target, properties FROM edges")?;
+        let mut stmt = conn
+            .prepare("SELECT id, edge_type, source, target, properties FROM edges ORDER BY id")?;
         let rows = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
