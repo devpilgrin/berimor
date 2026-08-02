@@ -107,12 +107,19 @@ impl FsJail {
             self.root.join(path)
         };
 
-        let mut current = if path.is_absolute() {
-            PathBuf::new()
+        // Источник компонентов — сам ВХОДНОЙ путь, а `current` — root
+        // для относительного входа. Итерировать компоненты
+        // `candidate` (= root.join(path)) при стартовом `current = root`
+        // — ошибка: компоненты root проходят второй раз (на Linux это
+        // маскировалось тем, что push RootDir заменяет `current`
+        // целиком; на Windows push префикса не заменяет — путь
+        // разрушался и is_symlink молчал — красный CI-windows №2).
+        let (mut current, source) = if path.is_absolute() {
+            (PathBuf::new(), path)
         } else {
-            self.root.clone()
+            (self.root.clone(), path)
         };
-        for component in candidate.components() {
+        for component in source.components() {
             match component {
                 Component::Prefix(prefix) => current.push(prefix.as_os_str()),
                 Component::RootDir => current.push(component.as_os_str()),
