@@ -26,7 +26,7 @@
 //!   тогда, когда цель текстуально вне; полное закрытие — та же
 //!   платформо-специфичная задача, что и TOCTOU.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, thiserror::Error)]
 pub enum JailError {
@@ -78,23 +78,28 @@ impl FsJail {
     }
 
     /// Разрешает пользовательский путь в физический путь внутри области.
-    /// Относительные пути отсчитываются от корня. Симлинки в существующей
-    /// части пути разрешаются ФС — путь, уходящий через симлинк наружу,
-    /// отклоняется независимо от того, как он выглядел текстуально.
+    /// Относительные пути отсчитываются от корня. Симлинки разрешаются
+    /// ФС — путь, уходящий через симлинк наружу, отклоняется независимо
+    /// от того, как он выглядел текстуально.
     ///
     /// Несуществующий хвост (цель записи, которую ещё предстоит создать)
-    /// не ошибка: канонизируется глубочайший существующий предок, хвост
-    /// дописывается к нему — создать файл внутри области законно.
+    /// не ошибка: создать файл внутри области законно.
     ///
-    /// ВАЖНО (находка C1 независимого ревью S2): путь НЕ нормализуется
-    /// лексически до обращения к ФС. Лексическое схлопывание `..` раньше
-    /// канонизации эксплуатируемо: ядро резолвит симлинк РАНЬШЕ следующего
-    /// компонента, поэтому `outlink/../x` физически — `<вне области>/x`,
-    /// лексически — `root/x`. Обход предков идёт по СЫРОМУ пути через
-    /// `exists()`, которое следует семантике ядра (симлинк, затем `..`);
-    /// предок, заканчивающийся на `..` у несуществующего пути, не
-    /// разрешим статически (что появится вместо несуществующего
-    /// компонента — неизвестно) — консервативный `EscapesJail`.
+    /// Алгоритм — покомпонентный обход (находка C1 независимого ревью S2
+    /// + красный CI-windows после первого фикса):
+    /// - каждый встреченный симлинк НЕМЕДЛЕННО канонизируется с проверкой
+    ///   containment: после этой точки мы идём по физическому пути, и
+    ///   ускользнуть позже уже нельзя;
+    /// - `..` после СИМЛИНКА — консервативный `EscapesJail`: семантика
+    ///   различается по платформам (POSIX: `..` применяется к ЦЕЛИ
+    ///   симлинка — `outlink/../x` это `<вне области>/x`; Windows:
+    ///   `outlink\..\x` схлопывается лексически в `root\x`). Именно эта
+    ///   разница и эксплуатировалась C1 на Linux, а на Windows ломала
+    ///   противоположный консервативный кейс. Статически безопасного
+    ///   ответа для обеих платформ нет — отказ;
+    /// - `..` после реального каталога или несуществующего компонента —
+    ///   лексический подъём, одинаковый на обеих платформах (второй
+    ///   случай при обращении просто даст ENOENT — выхода наружу нет).
     pub fn resolve(&self, path: &Path) -> Result<PathBuf, JailError> {
         let candidate = if path.is_absolute() {
             path.to_path_buf()
@@ -102,38 +107,45 @@ impl FsJail {
             self.root.join(path)
         };
 
-        // Глубочайший существующий предок СЫРОГО пути + оставшийся хвост.
-        // `file_name()` у пути, заканчивающегося на `..`, — `None`
-        // (ParentDir не компонент-имя): такой путь отклоняется здесь же,
-        // консервативно (`nonexistent/../file.txt` — Deny).
-        let mut ancestor = candidate.clone();
-        let mut tail: Vec<PathBuf> = Vec::new();
-        while !ancestor.exists() {
-            match ancestor.file_name() {
-                Some(name) => {
-                    tail.push(PathBuf::from(name));
-                    ancestor.pop();
+        let mut current = if path.is_absolute() {
+            PathBuf::new()
+        } else {
+            self.root.clone()
+        };
+        for component in candidate.components() {
+            match component {
+                Component::Prefix(prefix) => current.push(prefix.as_os_str()),
+                Component::RootDir => current.push(component.as_os_str()),
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    // См. шапку: `..` после симлинка платформо-зависим.
+                    if current.is_symlink() {
+                        return Err(JailError::EscapesJail(candidate));
+                    }
+                    // Выше корня ФС или выше корня jail — вне области.
+                    if !current.pop() || !current.starts_with(&self.root) {
+                        return Err(JailError::EscapesJail(candidate));
+                    }
                 }
-                None => {
+                Component::Normal(name) => current.push(name),
+            }
+            // Каждый симлинк — точка принуждения к физическому пути.
+            if current.is_symlink() {
+                let canonical =
+                    std::fs::canonicalize(&current).map_err(|err| JailError::Canonicalize {
+                        path: current.clone(),
+                        reason: err.to_string(),
+                    })?;
+                if !canonical.starts_with(&self.root) {
                     return Err(JailError::EscapesJail(candidate));
                 }
+                current = canonical;
             }
         }
-
-        let canonical_ancestor =
-            std::fs::canonicalize(&ancestor).map_err(|err| JailError::Canonicalize {
-                path: ancestor.clone(),
-                reason: err.to_string(),
-            })?;
-        if !canonical_ancestor.starts_with(&self.root) {
+        if !current.starts_with(&self.root) {
             return Err(JailError::EscapesJail(candidate));
         }
-
-        let mut resolved = canonical_ancestor;
-        for component in tail.iter().rev() {
-            resolved.push(component);
-        }
-        Ok(resolved)
+        Ok(current)
     }
 }
 
@@ -286,14 +298,19 @@ mod tests {
         teardown(&root);
     }
 
-    /// Консервативный deny: физический смысл `..` после несуществующего
-    /// компонента предсказать статически нельзя (на его месте может
-    /// появиться симлинк наружу).
+    /// `..` после несуществующего компонента — статически разрешимо на
+    /// обеих платформах: лексический подъём не ведёт наружу (при реальном
+    /// обращении POSIX даст ENOENT на несуществующем компоненте, Windows
+    /// схлопнет лексически — в обоих случаях внутри области). Консервативный
+    /// отказ первого фикса оказался избыточен И платформо-несовместим
+    /// (красный CI-windows) — уточнено покомпонентным алгоритмом.
     #[test]
-    fn parent_after_nonexistent_component_is_rejected_conservatively() {
+    fn parent_after_nonexistent_component_resolves_statically() {
         let (jail, root, _) = setup();
-        let result = jail.resolve(Path::new("nonexistent/../file.txt"));
-        assert!(matches!(result, Err(JailError::EscapesJail(_))));
+        let resolved = jail
+            .resolve(Path::new("nonexistent/../sub/file.txt"))
+            .unwrap();
+        assert_eq!(resolved, root.join("sub/file.txt"));
         teardown(&root);
     }
 
