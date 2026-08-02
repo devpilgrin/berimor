@@ -38,3 +38,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { version = "1.53.1", features = ["process", "io-util", "rt"] }
 toml = "1.1.4"
+
+[features]
+# Локальный инференс GGUF через llama.cpp (ROADMAP E4, ADR-0024) —
+# opt-in: сборка C++ ядра занимает минуты.
+local-inference = ["berimor-model-pool/local-inference"]

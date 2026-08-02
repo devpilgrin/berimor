@@ -18,6 +18,7 @@
 use berimor_types::model::{ModelIdentity, ModelTier, ModelTierRequirement};
 
 pub mod http_provider;
+pub mod local_provider;
 
 /// Природа провайдера: локальный инференс (llama.cpp, E4) или удалённый
 /// (HTTP, E5). Локальный предпочтителен при равном классе — нулевая

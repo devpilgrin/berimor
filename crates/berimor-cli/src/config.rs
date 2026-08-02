@@ -34,7 +34,16 @@ pub struct ProviderConfig {
     pub model_id: String,
     pub tier: ModelTier,
     /// Базовый URL OpenAI-совместимого API (без `/chat/completions`).
+    /// Пуст для локального провайдера (задан `model_path`).
+    #[serde(default)]
     pub base_url: String,
+    /// Путь к GGUF-весам — признак ЛОКАЛЬНОГО провайдера (ROADMAP E4,
+    /// ADR-0024: llama.cpp встроен в процесс, без сервера). `Some` —
+    /// локальный инференс (`base_url`/`api_key_env` игнорируются),
+    /// `None` — удалённый HTTP. Требует сборки с
+    /// `--features local-inference`.
+    #[serde(default)]
+    pub model_path: Option<PathBuf>,
     /// ИМЯ переменной окружения с API-ключом — сам ключ в файле
     /// конфигурации не хранится (security-model.md §6: «нет секретов вне
     /// хранилища секретов»).
@@ -74,6 +83,11 @@ pub struct MemoryConfig {
     pub skills_dir: Option<PathBuf>,
     /// Верхняя граница числа сессий в слое Session за один запрос.
     pub session_search_limit: usize,
+    /// Слой графа сущностей в контексте (ROADMAP §20.5, memory-model.md
+    /// §4: «включается профилем процесса, не глобально»). Граф читается
+    /// из того же журнала SQLite (`EntityGraphStore`), наполняется
+    /// внешними процессами — ядро в `berimor run` его только читает.
+    pub entity_graph: bool,
 }
 
 impl Default for MemoryConfig {
@@ -81,6 +95,7 @@ impl Default for MemoryConfig {
         Self {
             skills_dir: None,
             session_search_limit: 5,
+            entity_graph: false,
         }
     }
 }
@@ -186,6 +201,43 @@ pub fn load(explicit_path: Option<&Path>) -> Result<Config, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// E4: локальный провайдер объявляется `model_path` без `base_url` —
+    /// поле URL обязано иметь дефолт, иначе конфигурация локального
+    /// инференса потребовала бы бессмысленный URL.
+    #[test]
+    fn local_provider_needs_no_base_url() {
+        let text = r#"
+[[providers]]
+name = "llama-local"
+model_id = "qwen3-4b-q4"
+tier = "weak"
+model_path = "/models/qwen3-4b-q4_k_m.gguf"
+"#;
+        let config: Config = toml::from_str(text).unwrap();
+        let provider = &config.providers[0];
+        assert_eq!(
+            provider.model_path.as_deref(),
+            Some(std::path::Path::new("/models/qwen3-4b-q4_k_m.gguf"))
+        );
+        assert!(provider.base_url.is_empty());
+        assert!(provider.api_key_env.is_none());
+    }
+
+    /// Удалённый провайдер без `model_path` — прежняя форма, локальный
+    /// признак не должен включаться случайно.
+    #[test]
+    fn remote_provider_has_no_model_path() {
+        let text = r#"
+[[providers]]
+name = "openai"
+model_id = "gpt-4o-mini"
+tier = "medium"
+base_url = "https://api.openai.com/v1"
+"#;
+        let config: Config = toml::from_str(text).unwrap();
+        assert!(config.providers[0].model_path.is_none());
+    }
 
     #[test]
     fn default_config_has_documented_values() {
