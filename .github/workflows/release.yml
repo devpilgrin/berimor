@@ -250,6 +250,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Идемпотентность: релиз уже существует (повторный прогон после
+          # падения npm publish — например, смена токена) — пропускаем
+          # создание, артефакты приложены первым прогоном; пайплайн идёт
+          # дальше к checksums и npm publish. Без этого повторный запуск
+          # умирал на «release already exists» и единственным лекарством
+          # было жечь следующую версию.
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "релиз $TAG уже существует — пропуск создания (идемпотентный повтор)"
+            exit 0
+          fi
           gh release create "$TAG" release-assets/* \
             --repo "${{ github.repository }}" \
             --title "$TAG" \
