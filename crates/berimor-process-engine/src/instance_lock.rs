@@ -23,6 +23,57 @@ use std::sync::{Arc, Mutex};
 #[error("инстанс {0:?} уже продвигается другим вызывающим")]
 pub struct InstanceLockedError(pub ProcessInstanceId);
 
+/// Межпроцессный лиз (аудит 1.11): адвизорная `flock`-блокировка файла на
+/// инстанс — два ОТДЕЛЬНЫХ процесса CLI, восстановивших один инстанс,
+/// больше не продвигают его параллельно. Снимается ядром при закрытии
+/// дескриптора (смерть процесса включительно) — залоченный навсегда
+/// инстанс после падения невозможен, уборки протухших файлов не нужно.
+pub struct FileInstanceLease {
+    _file: std::fs::File,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum FileLeaseError {
+    #[error("инстанс {0:?} уже продвигается другим процессом")]
+    Locked(ProcessInstanceId),
+    #[error("лок-файл инстанса: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Берёт межпроцессный лиз: `<locks_dir>/<sanitized-id>.lock` +
+/// `try_lock_exclusive` — отказ второму процессу немедленно (та же
+/// семантика «не очередь, а отказ», что у in-memory лиза выше).
+pub fn try_acquire_file_lease(
+    locks_dir: &std::path::Path,
+    id: &ProcessInstanceId,
+) -> Result<FileInstanceLease, FileLeaseError> {
+    use fs2::FileExt;
+    std::fs::create_dir_all(locks_dir)?;
+    let path = locks_dir.join(format!("{}.lock", sanitize_id(id)));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)?;
+    file.try_lock_exclusive()
+        .map_err(|_| FileLeaseError::Locked(id.clone()))?;
+    Ok(FileInstanceLease { _file: file })
+}
+
+/// Id инстанса — произвольная строка; для имени файла оставляем только
+/// безопасный алфавит.
+fn sanitize_id(id: &ProcessInstanceId) -> String {
+    id.0.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 /// Реестр открытых лизов — дешёвый `Clone` (общее состояние за `Arc`), так
 /// что несколько независимых вызывающих (акторов) держат ссылки на ОДИН
 /// и тот же реестр и видят лизы друг друга.
@@ -124,5 +175,35 @@ mod tests {
         let result = locks_clone.try_acquire(ProcessInstanceId("a".into()));
 
         assert!(result.is_err(), "клон реестра обязан видеть лиз оригинала");
+    }
+
+    /// Аудит 1.11: файловый лиз конфликтует даже внутри одного процесса
+    /// (flock — на открытое описание файла; два open() — две блокировки)
+    /// — тем более между двумя процессами CLI.
+    #[test]
+    fn file_lease_refuses_second_holder() {
+        let dir = std::env::temp_dir().join(format!("berimor-lease-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let id = ProcessInstanceId("inst-1".into());
+
+        let first = try_acquire_file_lease(&dir, &id).unwrap();
+        let second = try_acquire_file_lease(&dir, &id);
+        assert!(matches!(second, Err(FileLeaseError::Locked(_))));
+
+        drop(first);
+        let third = try_acquire_file_lease(&dir, &id);
+        assert!(third.is_ok(), "после Drop лиз обязан освобождаться");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Другой инстанс — другой лок-файл, конфликта нет.
+    #[test]
+    fn file_leases_of_different_instances_do_not_conflict() {
+        let dir = std::env::temp_dir().join(format!("berimor-lease2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let _a = try_acquire_file_lease(&dir, &ProcessInstanceId("a".into())).unwrap();
+        let b = try_acquire_file_lease(&dir, &ProcessInstanceId("b".into()));
+        assert!(b.is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -40,6 +40,7 @@ type MediateFn = fn(
     model_tier: Option<ModelTier>,
     rules: &PolicyRules,
     attempt: u8,
+    trace: &mut Vec<berimor_types::event::EventKind>,
 ) -> MediationOutcome<CommitOutcome>;
 
 /// Адаптер контракта: всё, что E2 нужно знать о типе, через который
@@ -93,8 +94,10 @@ pub fn contract_registry() -> &'static [ContractAdapter] {
                 cross_field: RULES_CLASSIFY,
                 ..Default::default()
             },
-            mediate: |step_id, raw, state, tier, rules, attempt| {
-                pipeline::mediate::<ClassificationOut>(step_id, raw, state, tier, rules, attempt)
+            mediate: |step_id, raw, state, tier, rules, attempt, trace| {
+                pipeline::mediate_traced::<ClassificationOut>(
+                    step_id, raw, state, tier, rules, attempt, trace,
+                )
             },
         },
         ContractAdapter {
@@ -114,8 +117,10 @@ pub fn contract_registry() -> &'static [ContractAdapter] {
                 state_references: RULES_ANSWER_REFS,
                 ..Default::default()
             },
-            mediate: |step_id, raw, state, tier, rules, attempt| {
-                pipeline::mediate::<SupportReply>(step_id, raw, state, tier, rules, attempt)
+            mediate: |step_id, raw, state, tier, rules, attempt, trace| {
+                pipeline::mediate_traced::<SupportReply>(
+                    step_id, raw, state, tier, rules, attempt, trace,
+                )
             },
         },
     ]
@@ -218,6 +223,10 @@ impl StructuredLlm<'_> {
 
             let mut rules = (adapter.policy_rules)();
             rules.known_secrets = &known_secrets;
+            // Трасса стадий (аудит 1.10): parsed/validated идут тем же
+            // хуком до события исхода — «каждая стадия пишет событие»
+            // (mediation.md §2) теперь достижимо в журнале.
+            let mut trace = Vec::new();
             let outcome = (adapter.mediate)(
                 step_id,
                 &response.raw_text,
@@ -225,9 +234,13 @@ impl StructuredLlm<'_> {
                 Some(model_tier),
                 &rules,
                 attempt,
+                &mut trace,
             );
 
             if let Some(hook) = self.on_attempt {
+                for event in trace {
+                    hook(event);
+                }
                 hook(berimor_mediation::telemetry::outcome_to_event_kind(
                     &outcome,
                 ));

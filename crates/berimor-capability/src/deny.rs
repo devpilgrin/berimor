@@ -110,12 +110,22 @@ pub struct DenyMatch {
 /// следующий слой, S4). `workspace_root` — канонический корень рабочей
 /// области; относительные цели отсчитываются от него.
 pub fn analyze(action: &ProposedAction, workspace_root: &Path) -> Option<DenyMatch> {
-    for (key, text) in collect_strings(&action.args) {
-        if COMMAND_KEYS.contains(&key.as_str()) {
-            if let Some(m) = analyze_command(&text, workspace_root) {
-                return Some(m);
-            }
+    // Команды — формо-зависимо (аудит 2.9): текст разбирается по
+    // shell-семантике (цепочки, подоболочки), argv-массив — по
+    // execve-семантике (элемент = токен, без цепочек); раньше массив
+    // распадался на безобидные поодиночке элементы.
+    let mut commands = Vec::new();
+    collect_commands(&action.args, &mut commands);
+    for form in &commands {
+        let found = match form {
+            CommandForm::Text(text) => analyze_command(text, workspace_root),
+            CommandForm::Argv(items) => analyze_argv(items, workspace_root),
+        };
+        if let Some(m) = found {
+            return Some(m);
         }
+    }
+    for (key, text) in collect_strings(&action.args) {
         // Текстовая проверка выхода за рабочую область — для мутирующих
         // действий: чтение вне области не входит в перечень запрещённых
         // классов §3.7. Флаг `mutates` вызывающего кода дополняется
@@ -143,7 +153,8 @@ fn looks_mutating(tool: &str) -> bool {
 
 /// Рекурсивно собирает (путь-ключа, строка) из аргументов: вложенные
 /// объекты/массивы не должны быть способом спрятать команду от анализа.
-fn collect_strings(value: &Value) -> Vec<(String, String)> {
+/// `pub(crate)` — тот же обход нужен jail-слою в `confirm.rs` (S2).
+pub(crate) fn collect_strings(value: &Value) -> Vec<(String, String)> {
     let mut out = Vec::new();
     fn walk(key: &str, value: &Value, out: &mut Vec<(String, String)>) {
         match value {
@@ -187,6 +198,61 @@ fn analyze_command(text: &str, workspace_root: &Path) -> Option<DenyMatch> {
     None
 }
 
+/// Форма команды в аргументах действия (аудит 2.9).
+enum CommandForm {
+    /// Текст для shell-интерпретации: цепочки и подоболочки значимы.
+    Text(String),
+    /// argv для прямого execve: элемент — токен, shell-разбора нет, но
+    /// обёртки-интерпретаторы значимы и разворачиваются как обычно.
+    Argv(Vec<String>),
+}
+
+/// Собирает команды из аргументов с сохранением формы (текст/argv).
+/// Ключи — `COMMAND_KEYS`; массив под таким ключом — argv, не набор
+/// независимых строк.
+fn collect_commands(value: &Value, out: &mut Vec<CommandForm>) {
+    fn walk(key: &str, value: &Value, out: &mut Vec<CommandForm>) {
+        match value {
+            Value::String(s) if COMMAND_KEYS.contains(&key) => {
+                out.push(CommandForm::Text(s.clone()));
+            }
+            Value::Array(items) if COMMAND_KEYS.contains(&key) => {
+                let argv: Vec<String> = items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(String::from))
+                    .collect();
+                if !argv.is_empty() {
+                    out.push(CommandForm::Argv(argv));
+                }
+            }
+            Value::Object(map) => {
+                for (k, v) in map {
+                    walk(k, v, out);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    walk(key, item, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    walk("", value, out);
+}
+
+/// Анализ argv-формы: те же обёртки и правила классов, что у текстовой
+/// формы, но без shell-цепочек и fork-бомб-текста (в execve-семантике
+/// это литеральные аргументы; `:(){:|:&};:` как argv — несуществующее
+/// имя программы, не бомба). `bash -c` внутри argv разворачивается
+/// общим путём и анализируется как текст рекурсивно.
+fn analyze_argv(items: &[String], workspace_root: &Path) -> Option<DenyMatch> {
+    if items.is_empty() {
+        return None;
+    }
+    analyze_tokens(items.to_vec(), &items.join(" "), workspace_root)
+}
+
 /// Анализ одного сегмента цепочки: разворачивание обёрток → программа →
 /// правила классов.
 fn analyze_segment(segment: &str, workspace_root: &Path) -> Option<DenyMatch> {
@@ -194,6 +260,12 @@ fn analyze_segment(segment: &str, workspace_root: &Path) -> Option<DenyMatch> {
     if tokens.is_empty() {
         return None;
     }
+    analyze_tokens(tokens, segment, workspace_root)
+}
+
+/// Общая часть разбора (текстовой и argv-формы): обёртки, редиректы,
+/// правила классов. `evidence` — фрагмент для журнала/текста отказа.
+fn analyze_tokens(tokens: Vec<String>, evidence: &str, workspace_root: &Path) -> Option<DenyMatch> {
     let (program, args) = match unwrap_wrappers(tokens, workspace_root) {
         Some(Unwrapped::Command { program, args }) => (program, args),
         Some(Unwrapped::Denied(m)) => return Some(m),
@@ -206,7 +278,7 @@ fn analyze_segment(segment: &str, workspace_root: &Path) -> Option<DenyMatch> {
 
     let m = match program.as_str() {
         p if is_filesystem_tool(p, &args) => {
-            Some((ForbiddenClass::FilesystemDestruction, segment.to_string()))
+            Some((ForbiddenClass::FilesystemDestruction, evidence.to_string()))
         }
         "shred" => args.iter().find_map(|a| {
             if is_block_device(a) {
@@ -227,19 +299,26 @@ fn analyze_segment(segment: &str, workspace_root: &Path) -> Option<DenyMatch> {
         // не любым вызовом (`unshare -n` — сетевой namespace, не
         // привилегии) — отдельный предикат `changes_privilege_scope`.
         "sudo" | "doas" | "su" | "pkexec" | "systemd-run" | "setsid" => {
-            Some((ForbiddenClass::PrivilegeEscalation, segment.to_string()))
+            Some((ForbiddenClass::PrivilegeEscalation, evidence.to_string()))
         }
         "setpriv" | "unshare" if changes_privilege_scope(&args) => {
-            Some((ForbiddenClass::PrivilegeEscalation, segment.to_string()))
+            Some((ForbiddenClass::PrivilegeEscalation, evidence.to_string()))
         }
         "chmod" if is_setuid_chmod(&args) => {
-            Some((ForbiddenClass::PrivilegeEscalation, segment.to_string()))
+            Some((ForbiddenClass::PrivilegeEscalation, evidence.to_string()))
         }
         "chown" | "chgrp" if args.iter().any(|a| is_root_owner(a)) => {
-            Some((ForbiddenClass::PrivilegeEscalation, segment.to_string()))
+            Some((ForbiddenClass::PrivilegeEscalation, evidence.to_string()))
         }
         "tee" => analyze_write_targets(&args, workspace_root),
         "cp" | "mv" | "install" => analyze_copy(&args, workspace_root),
+        // Аудит 2.12: альтернативные программы записи вне области.
+        // rsync/scp — перенос: запись по цели всегда, read-only формы нет.
+        "rsync" | "scp" => analyze_transfer(&args, workspace_root),
+        // sed пишет в файлы-аргументы только в in-place форме.
+        "sed" if is_in_place_sed(&args) => analyze_sed_in_place(&args, workspace_root),
+        // tar пишет относительно -C (извлечение) и в -f (создание).
+        "tar" => analyze_tar(&args, workspace_root),
         _ => None,
     };
     m.map(|(class, evidence)| DenyMatch { class, evidence })
@@ -323,18 +402,48 @@ fn unwrap_wrappers(mut tokens: Vec<String>, workspace_root: &Path) -> Option<Unw
                 tokens = rest;
             }
             "nice" | "nohup" | "stdbuf" | "ionice" => {
-                tokens = skip_options(rest, &["-n"]);
+                // Аудит 2.11: длинная форма `--adjustment` тоже со
+                // значением — пропуск только `-n` сдвигал разбор.
+                tokens = skip_options(rest, &["-n", "--adjustment"]);
             }
             "timeout" => {
                 // Опции, затем первый позиционный аргумент — длительность.
-                let mut after_opts = skip_options(rest, &["-k", "-s"]);
+                // Аудит 2.11: длинные формы `--kill-after`/`--signal`.
+                let mut after_opts = skip_options(rest, &["-k", "-s", "--kill-after", "--signal"]);
                 if !after_opts.is_empty() {
                     after_opts.remove(0);
                 }
                 tokens = after_opts;
             }
             "xargs" => {
-                tokens = skip_options(rest, &["-I", "-n", "-P", "-s", "-L", "-d"]);
+                // Аудит 2.11: `-a/--arg-file` и длинные формы опций со
+                // значением — иначе значение опции становилось
+                // "программой", а настоящая команда уходила в args.
+                tokens = skip_options(
+                    rest,
+                    &[
+                        "-I",
+                        "-n",
+                        "-P",
+                        "-s",
+                        "-L",
+                        "-d",
+                        "-a",
+                        "--arg-file",
+                        "--replace",
+                        "--max-args",
+                        "--max-procs",
+                        "--max-chars",
+                        "--max-lines",
+                        "--delimiter",
+                    ],
+                );
+            }
+            // Аудит 2.13: busybox — мультиплексор, первый аргумент сам
+            // является программой (`busybox rm -rf /`, `busybox sh -c`);
+            // апплет разбирается на следующей итерации общим путём.
+            "busybox" => {
+                tokens = rest;
             }
             _ => {
                 return Some(Unwrapped::Command {
@@ -344,10 +453,18 @@ fn unwrap_wrappers(mut tokens: Vec<String>, workspace_root: &Path) -> Option<Unw
             }
         }
     }
-    Some(Unwrapped::Command {
-        program: basename(tokens.first()?),
-        args: tokens[1..].to_vec(),
-    })
+    // Аудит 2.10: исчерпание глубины разворачивания — консервативный
+    // запрет, не разрешение: обёртки глубже MAX_DEPTH — вырожденная
+    // конструкция, единственная практическая цель которой — выйти за
+    // пределы анализа. Класс — DeletionOutsideWorkspace: та же строка
+    // «недоказуемые цели» (§3.7 п.1).
+    Some(Unwrapped::Denied(DenyMatch {
+        class: ForbiddenClass::DeletionOutsideWorkspace,
+        evidence: format!(
+            "глубина обёрток превышает {MAX_DEPTH}: {}",
+            tokens.join(" ")
+        ),
+    }))
 }
 
 /// Пропускает опции; опции из `takes_value` проглатывают и следующий токен.
@@ -365,6 +482,75 @@ fn skip_options(tokens: Vec<String>, takes_value: &[&str]) -> Vec<String> {
         }
     }
     out
+}
+
+/// Аудит 2.12: rsync/scp — программы переноса; любой позиционный
+/// локальный путь вне области — запись/чтение-перенос вне области.
+/// Remote-спецификация `host:path` локальным путём не является (её
+/// безопасность — домен сетевого гейта S3, не файловой статики).
+fn analyze_transfer(args: &[String], workspace_root: &Path) -> Option<(ForbiddenClass, String)> {
+    args.iter()
+        .filter(|a| !a.starts_with('-'))
+        .filter(|a| !is_remote_spec(a))
+        .find(|a| !path_within(a, workspace_root))
+        .map(|a| (ForbiddenClass::DeletionOutsideWorkspace, a.clone()))
+}
+
+/// `user@host:/path` или `host:/path` — двоеточие до первого слэша.
+fn is_remote_spec(arg: &str) -> bool {
+    match (arg.find(':'), arg.find('/')) {
+        (Some(colon), Some(slash)) => colon < slash,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
+/// In-place форма sed: `-i` (включая склейки `-ni`, `-i.bak`) или
+/// `--in-place[=...]`.
+fn is_in_place_sed(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        a == "--in-place"
+            || a.starts_with("--in-place=")
+            || (a.starts_with('-') && !a.starts_with("--") && a[1..].contains('i'))
+    })
+}
+
+/// sed -i: первый позиционный аргумент — скрипт, далее — файлы целей;
+/// файл вне области — модификация вне области.
+fn analyze_sed_in_place(
+    args: &[String],
+    workspace_root: &Path,
+) -> Option<(ForbiddenClass, String)> {
+    let mut positional = args.iter().filter(|a| !a.starts_with('-'));
+    let _script = positional.next();
+    positional
+        .find(|a| !path_within(a, workspace_root))
+        .map(|a| (ForbiddenClass::DeletionOutsideWorkspace, a.clone()))
+}
+
+/// tar: запись идёт относительно `-C`/`--directory` (извлечение) и в путь
+/// `-f`/`--file` при создании (`c` в флагах или `--create`). Оба канала
+/// вне области — модификация вне области.
+fn analyze_tar(args: &[String], workspace_root: &Path) -> Option<(ForbiddenClass, String)> {
+    let creating = args.iter().any(|a| {
+        a == "--create" || (a.starts_with('-') && !a.starts_with("--") && a[1..].contains('c'))
+    });
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        let value = match arg.as_str() {
+            "-C" | "--directory" => iter.next().map(String::as_str),
+            _ if arg.starts_with("--directory=") => Some(&arg["--directory=".len()..]),
+            "-f" | "--file" if creating => iter.next().map(String::as_str),
+            _ if creating && arg.starts_with("--file=") => Some(&arg["--file=".len()..]),
+            _ => None,
+        };
+        if let Some(path) = value {
+            if !path_within(path, workspace_root) {
+                return Some((ForbiddenClass::DeletionOutsideWorkspace, path.to_string()));
+            }
+        }
+    }
+    None
 }
 
 fn is_assignment(token: &str) -> bool {

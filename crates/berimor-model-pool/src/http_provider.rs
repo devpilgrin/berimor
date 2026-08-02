@@ -33,6 +33,11 @@ use std::time::Duration;
 /// блокировал бы весь процесс навсегда.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Верхний лимит тела HTTP-ответа провайдера (аудит 3.9). Реальный
+/// ответ chat/completions — килобайты; лимит с большим запасом, но
+/// конечный.
+pub const MAX_RESPONSE_BODY_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Провайдер с OpenAI-совместимым HTTP API (`POST {base_url}/chat/completions`).
 /// Такой формат де-факто поддерживает большинство удалённых провайдеров и
 /// локальных серверов инференса — один клиент покрывает весь класс.
@@ -170,8 +175,21 @@ impl ModelProvider for OpenAiCompatibleProvider {
             .send()
             .map_err(|err| ModelError::Unavailable(format!("HTTP-вызов провайдера: {err}")))?;
         let status = response.status();
-        let body: serde_json::Value = response
-            .json()
+        // Size-cap на тело ответа (аудит 3.9): читается не более
+        // MAX+1 байт — сломанный/злонамеренный endpoint не может
+        // исчерпать память клиента бесконечным телом.
+        use std::io::Read as _;
+        let mut body_bytes = Vec::new();
+        response
+            .take(MAX_RESPONSE_BODY_BYTES + 1)
+            .read_to_end(&mut body_bytes)
+            .map_err(|err| ModelError::Unavailable(format!("чтение ответа провайдера: {err}")))?;
+        if body_bytes.len() as u64 > MAX_RESPONSE_BODY_BYTES {
+            return Err(ModelError::Unavailable(format!(
+                "ответ провайдера превышает лимит тела ({MAX_RESPONSE_BODY_BYTES} байт)"
+            )));
+        }
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes)
             .map_err(|err| ModelError::Unavailable(format!("ответ провайдера не JSON: {err}")))?;
         if !status.is_success() {
             return Err(ModelError::Unavailable(format!(
@@ -307,6 +325,37 @@ mod tests {
             !captured.to_lowercase().contains("response_format"),
             "CodeAct не должен получать response_format: {captured}"
         );
+    }
+
+    /// Регрессионный тест аудита 3.9: тело ответа сверх лимита —
+    /// детерминированная ошибка, не исчерпание памяти.
+    #[test]
+    fn oversized_response_body_is_rejected_with_limit_error() {
+        let huge = format!("{{\"pad\": \"{}\"}}", "x".repeat(9 * 1024 * 1024));
+        let (url, server) = serve_once("200 OK", huge);
+        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true).unwrap();
+
+        let result = provider.complete(request());
+
+        match result {
+            Err(ModelError::Unavailable(reason)) => {
+                assert!(
+                    reason.contains("лимит тела"),
+                    "ожидалась ошибка лимита тела, получено: {reason}"
+                );
+            }
+            other => panic!("тело сверх лимита обязано отклоняться: {other:?}"),
+        }
+        server.join().unwrap();
+    }
+
+    /// Контроль границы: ответ ровно в пределах лимита проходит.
+    #[test]
+    fn response_within_limit_is_accepted() {
+        let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
+        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true).unwrap();
+        assert!(provider.complete(request()).is_ok());
+        server.join().unwrap();
     }
 
     #[test]

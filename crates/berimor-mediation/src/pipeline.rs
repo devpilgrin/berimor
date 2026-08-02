@@ -53,15 +53,37 @@ pub fn mediate<C: Contract>(
     rules: &PolicyRules,
     attempt: u8,
 ) -> MediationOutcome<commit::CommitOutcome> {
+    let mut trace = Vec::new();
+    mediate_traced::<C>(step_id, raw, state, model_tier, rules, attempt, &mut trace)
+}
+
+/// Тот же проход, но с трассой стадий (аудит 1.10, `mediation.md` §2:
+/// «каждая стадия пишет событие»): успешный parse кладёт в `trace`
+/// `MediationParsed`, успешная schema — `MediationValidated`; исход
+/// (committed/rejected/security) — как прежде, мапится из
+/// [`MediationOutcome`] (`telemetry::outcome_to_event_kind`). Запись в
+/// журнал — дело вызывающего кода (те же `on_attempt`-хуки
+/// исполнителей), конвейер лишь сообщает факты стадий.
+pub fn mediate_traced<C: Contract>(
+    step_id: &str,
+    raw: &str,
+    state: &Value,
+    model_tier: Option<ModelTier>,
+    rules: &PolicyRules,
+    attempt: u8,
+    trace: &mut Vec<berimor_types::event::EventKind>,
+) -> MediationOutcome<commit::CommitOutcome> {
     let parsed = match parse::parse(raw) {
         Ok(value) => value,
         Err(err) => return retry_or_escalate(MediationStage::Parse, err.to_string(), attempt),
     };
+    trace.push(berimor_types::event::EventKind::MediationParsed);
 
     let contract: C = match schema::validate(parsed.clone()) {
         Ok(contract) => contract,
         Err(err) => return retry_or_escalate(MediationStage::Schema, err.to_string(), attempt),
     };
+    trace.push(berimor_types::event::EventKind::MediationValidated);
 
     // Утечка секрета — не просто отказ политики, а немедленная эскалация
     // без повтора и с отдельной причиной (mediation.md §5: «попытка
@@ -249,5 +271,59 @@ mod tests {
 
     fn json_null() -> Value {
         Value::Null
+    }
+
+    /// Аудит 1.10 / mediation.md §2: успешные стадии сообщают свои
+    /// события — parsed после parse, validated после schema.
+    #[test]
+    fn successful_stages_are_traced() {
+        use berimor_types::event::EventKind;
+        let raw = r#"{"card_id": "card_1029", "reply": "Готово."}"#;
+        let checks = support_reply_rules();
+        let rules = PolicyRules {
+            state_references: &checks,
+            ..Default::default()
+        };
+        let mut trace = Vec::new();
+
+        let outcome =
+            mediate_traced::<SupportReply>("answer", raw, &state(), None, &rules, 0, &mut trace);
+
+        assert!(matches!(outcome, MediationOutcome::Committed(_)));
+        assert_eq!(
+            trace,
+            vec![EventKind::MediationParsed, EventKind::MediationValidated]
+        );
+    }
+
+    /// Отказ на schema: parsed есть, validated — нет; отказ на parse —
+    /// трасса пуста. По такой трассе «доля отказов по стадиям» из
+    /// журнала достижима в точной форме (mediation.md §6).
+    #[test]
+    fn trace_stops_at_the_failing_stage() {
+        use berimor_types::event::EventKind;
+        let mut trace = Vec::new();
+        let _ = mediate_traced::<SupportReply>(
+            "answer",
+            r#"{"card_id": 42}"#,
+            &state(),
+            None,
+            &PolicyRules::default(),
+            0,
+            &mut trace,
+        );
+        assert_eq!(trace, vec![EventKind::MediationParsed]);
+
+        let mut trace = Vec::new();
+        let _ = mediate_traced::<SupportReply>(
+            "answer",
+            "не json",
+            &state(),
+            None,
+            &PolicyRules::default(),
+            0,
+            &mut trace,
+        );
+        assert!(trace.is_empty());
     }
 }

@@ -190,10 +190,22 @@ impl CodeActExecutor<'_> {
             let known_secrets = self.secrets.known_values();
             let mut rules = (adapter.policy_rules)();
             rules.known_secrets = &known_secrets;
-            let outcome =
-                (adapter.mediate)(step_id, &raw, state, Some(model_tier), &rules, attempt);
+            // Трасса стадий (аудит 1.10) — как у StructuredLlm.
+            let mut trace = Vec::new();
+            let outcome = (adapter.mediate)(
+                step_id,
+                &raw,
+                state,
+                Some(model_tier),
+                &rules,
+                attempt,
+                &mut trace,
+            );
 
             if let Some(hook) = self.on_attempt {
+                for event in trace {
+                    hook(event);
+                }
                 hook(berimor_mediation::telemetry::outcome_to_event_kind(
                     &outcome,
                 ));

@@ -33,6 +33,10 @@ pub enum LayerKind {
     Skills,
     Facts,
     Session,
+    /// Граф сущностей (memory-model.md §4): прецеденты и связи («все
+    /// инциденты этого поставщика») — поверх семантического слоя, рядом
+    /// с сессионным контекстом, но до состояния текущей задачи.
+    EntityGraph,
     TaskState,
 }
 
@@ -59,6 +63,7 @@ pub fn layers_for_step(step_kind: &str) -> Vec<LayerKind> {
             LayerKind::SystemRules,
             LayerKind::Skills,
             LayerKind::Session,
+            LayerKind::EntityGraph,
             LayerKind::TaskState,
         ],
         // У шагов без модели контекста для модели нет вовсе — не ошибка,
@@ -91,6 +96,63 @@ pub fn budget_chars(tier: ModelTier) -> usize {
 /// Суммарный размер слоёв — то, что сравнивается с [`budget_chars`].
 pub fn total_chars(layers: &[ContextLayer]) -> usize {
     layers.iter().map(|l| l.content.len()).sum()
+}
+
+/// Пометка усечения слоя по бюджету — видимая модели, не тихий обрыв.
+const TRUNC_MARK: &str = "\n…[слой усечён по бюджету контекста]";
+
+/// C3 в действии (аудит 4.3): применяет бюджет класса модели к собранным
+/// слоям — до этого бюджет существовал только как API без потребителей.
+///
+/// Порядок жертв — по каноническому порядку слоёв от необязательных к
+/// обязательным: Skills и Session сбрасываются целиком первыми (память —
+/// усиление, не необходимость), `task_state` не сбрасывается, а усечётся
+/// с пометкой (шагу без состояния хуже, чем с частью), `system_rules`
+/// не сбрасывается и не урезается никогда — потерять форму ответа хуже,
+/// чем потерять контекст. Детерминированно: одинаковый вход → одинаковый
+/// набор слоёв, никаких эвристик «релевантности» (I1).
+pub fn apply_budget(mut layers: Vec<ContextLayer>, tier: ModelTier) -> Vec<ContextLayer> {
+    let budget = budget_chars(tier);
+    // Сброс необязательных слоёв целиком, пока не уложимся в бюджет.
+    while total_chars(&layers) > budget {
+        let Some(pos) = layers
+            .iter()
+            .position(|l| l.name != "system_rules" && l.name != "task_state")
+        else {
+            break;
+        };
+        layers.remove(pos);
+    }
+    // Усечение остатка сверх бюджета (прежде всего task_state) — по
+    // границе символа (UTF-8), с видимой пометкой.
+    let mut used = 0usize;
+    for layer in layers.iter_mut() {
+        if layer.name == "system_rules" {
+            used += layer.content.len();
+            continue;
+        }
+        let remaining = budget.saturating_sub(used);
+        if layer.content.len() > remaining {
+            // LOW независимого ревью §20.5: при remaining < пометки резать
+            // БЕЗ пометки — иначе слой превышал бы отведённое ею самой.
+            if remaining < TRUNC_MARK.len() {
+                let mut cut = remaining;
+                while cut > 0 && !layer.content.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                layer.content.truncate(cut);
+            } else {
+                let mut cut = remaining - TRUNC_MARK.len();
+                while cut > 0 && !layer.content.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                layer.content.truncate(cut);
+                layer.content.push_str(TRUNC_MARK);
+            }
+        }
+        used += layer.content.len();
+    }
+    layers
 }
 
 /// `build(step, state, task_hint) → context` — единственный путь чтения
@@ -142,7 +204,7 @@ impl ContextBuilder for SimpleContextBuilder {
     fn build(
         &self,
         step_kind: &str,
-        _tier: ModelTier,
+        tier: ModelTier,
         state: &serde_json::Value,
         _task_hint: &str,
     ) -> Vec<ContextLayer> {
@@ -150,7 +212,9 @@ impl ContextBuilder for SimpleContextBuilder {
             .into_iter()
             .filter_map(|kind| base_layer(kind, state).map(|layer| (kind, layer)))
             .collect();
-        assemble(available)
+        // Бюджет класса модели — на единственном пути сборки (аудит 4.3),
+        // не опция вызывающего кода.
+        apply_budget(assemble(available), tier)
     }
 }
 
@@ -176,6 +240,7 @@ mod tests {
                 LayerKind::SystemRules,
                 LayerKind::Skills,
                 LayerKind::Session,
+                LayerKind::EntityGraph,
                 LayerKind::TaskState,
             ]
         );
@@ -215,6 +280,80 @@ mod tests {
     fn budget_grows_with_model_tier() {
         assert!(budget_chars(ModelTier::Weak) < budget_chars(ModelTier::Medium));
         assert!(budget_chars(ModelTier::Medium) < budget_chars(ModelTier::Strong));
+    }
+
+    /// Аудит 4.3: перерасход сбрасывает Skills/Session целиком первыми,
+    /// SystemRules остаётся всегда, TaskState усечётся с пометкой.
+    #[test]
+    fn apply_budget_drops_memory_layers_then_truncates_state() {
+        let huge = "x".repeat(10_000);
+        let layers = vec![
+            ContextLayer {
+                name: "system_rules".into(),
+                content: "правила".into(),
+                weight: 1.0,
+            },
+            ContextLayer {
+                name: "skills".into(),
+                content: huge.clone(),
+                weight: 1.0,
+            },
+            ContextLayer {
+                name: "session".into(),
+                content: huge.clone(),
+                weight: 1.0,
+            },
+            ContextLayer {
+                name: "task_state".into(),
+                content: huge,
+                weight: 1.0,
+            },
+        ];
+
+        let result = apply_budget(layers, ModelTier::Weak);
+
+        let names: Vec<&str> = result.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, vec!["system_rules", "task_state"]);
+        assert!(total_chars(&result) <= budget_chars(ModelTier::Weak));
+        let state = &result[1];
+        assert!(
+            state.content.contains("усечён по бюджету"),
+            "{}",
+            state.content
+        );
+    }
+
+    /// Усечение — по границе символа UTF-8 (кириллица на границе реза не
+    /// должна давать битую строку).
+    #[test]
+    fn truncation_respects_char_boundaries() {
+        let layers = vec![
+            ContextLayer {
+                name: "system_rules".into(),
+                content: "r".into(),
+                weight: 1.0,
+            },
+            ContextLayer {
+                name: "task_state".into(),
+                content: "ё".repeat(5_000), // 2 байта на символ
+                weight: 1.0,
+            },
+        ];
+        let result = apply_budget(layers, ModelTier::Weak);
+        // Само существование String после truncate — доказательство:
+        // truncate вне границы символа паникует.
+        assert!(result[1].content.ends_with(']'));
+    }
+
+    /// Сильному классу тот же вход достаётся целиком — бюджет не режет
+    /// то, что влезает (§3.5: «слабая — более короткий», не «всем резать»).
+    #[test]
+    fn strong_tier_keeps_what_fits() {
+        let state = json!({"user": {"card_id": "c-1"}});
+        let layers = SimpleContextBuilder.build("llm_structured", ModelTier::Strong, &state, "");
+        let names: Vec<&str> = layers.iter().map(|l| l.name.as_str()).collect();
+        assert_eq!(names, vec!["system_rules", "task_state"]);
+        assert!(layers[1].content.contains("c-1"));
     }
 
     #[test]

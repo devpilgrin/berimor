@@ -116,13 +116,77 @@ pub enum HumanGateTimeoutPolicy {
     Escalate,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Step {
     pub id: String,
     /// `flatten` — в декларации `type`/`contract`/... соседи `id` в одном
     /// объекте (`process-engine.md` §2), не вложенный под ключом `kind`.
     #[serde(flatten)]
     pub kind: StepKind,
+}
+
+/// Известные поля каждого тега `type` шага (аудит 1.9). serde не умеет
+/// `deny_unknown_fields` ни на enum-вариантах, ни в сочетании с
+/// `flatten`, поэтому неизвестное поле в декларации (`contrakt: ...`,
+/// `maxturns: ...`) молча терялось. Список поддерживается ВМЕСТЕ с
+/// вариантами `StepKind`: новое поле варианта = новая строка здесь,
+/// иначе декларация с ним перестанет парситься (это и есть желаемая
+/// fail-closed семантика — проверяется тестами на все golden-фикстуры).
+fn known_step_keys(tag: &str) -> Option<&'static [&'static str]> {
+    match tag {
+        "sequential" => Some(&["type"]),
+        "parallel" => Some(&["type", "branches"]),
+        "loop" => Some(&["type", "condition"]),
+        "branch" => Some(&["type", "on", "cases"]),
+        "tool" => Some(&["type", "tool", "args"]),
+        "llm_structured" => Some(&["type", "contract", "model_tier"]),
+        "code_act" => Some(&["type", "contract", "tools", "model_tier"]),
+        "agent_step" => Some(&[
+            "type",
+            "contract",
+            "max_turns",
+            "self_critique",
+            "verify_actions",
+        ]),
+        "human_gate" => Some(&["type", "reason", "timeout", "on_timeout"]),
+        "checkpoint" => Some(&["type"]),
+        // Неизвестный тег — ошибку выдаст разбор `StepKind` ниже;
+        // вайтлист здесь не сужаем, чтобы не подменять его диагностику.
+        _ => None,
+    }
+}
+
+impl<'de> Deserialize<'de> for Step {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawStep {
+            id: String,
+            #[serde(flatten)]
+            rest: serde_json::Map<String, serde_json::Value>,
+        }
+
+        let raw = RawStep::deserialize(deserializer)?;
+        // Вайтлист — ДО разбора `StepKind`: иначе разбор упал бы на
+        // обязательном поле раньше, чем успел бы указать на опечатку
+        // в соседнем ключе (аудит 1.9 — именно такая опечатка и опасна).
+        if let Some(tag) = raw.rest.get("type").and_then(serde_json::Value::as_str) {
+            if let Some(known) = known_step_keys(tag) {
+                if let Some(extra) = raw.rest.keys().find(|key| !known.contains(&key.as_str())) {
+                    return Err(serde::de::Error::custom(format!(
+                        "неизвестное поле шага '{}': '{extra}' (известные: {})",
+                        raw.id,
+                        known.join(", ")
+                    )));
+                }
+            }
+        }
+        let kind: StepKind = serde_json::from_value(serde_json::Value::Object(raw.rest))
+            .map_err(serde::de::Error::custom)?;
+        Ok(Step { id: raw.id, kind })
+    }
 }
 
 /// Детерминированные прерыватели процесса — `process-engine.md` §4,
@@ -133,6 +197,7 @@ pub struct Step {
 /// `process-engine.md` §2), поэтому у обоих полей свой разбор строки с
 /// суффиксом — см. [`parse_duration_seconds`]/[`parse_count`] в `parser.rs`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProcessLimits {
     pub max_steps: u32,
     #[serde(
@@ -153,6 +218,7 @@ pub struct ProcessLimits {
 /// каждое событие. Инстанс фиксирует версию при создании и не меняет её
 /// сам по себе — миграция только через явную операцию (ADR-0012).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Process {
     /// В декларации — поле `process` (`process-engine.md` §2), не `name`:
     /// имя в Rust точнее отражает смысл (это имя процесса, а сам процесс —
@@ -170,4 +236,63 @@ pub struct Process {
 pub struct Patch {
     pub step_id: String,
     pub changes: serde_json::Value,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Регрессионный тест аудита 1.9: опечатка в поле шага (`contrakt`)
+    /// — ошибка разбора с именем поля, а не молчаливая потеря (раньше
+    /// такой шаг получал `contract` = отсутствует → паника/дефолт позже).
+    #[test]
+    fn typo_in_step_field_is_a_parse_error() {
+        let result = serde_json::from_str::<Step>(
+            r#"{"id": "s1", "type": "llm_structured", "contrakt": "ClassificationOut"}"#,
+        );
+        let err = result.expect_err("опечатка в поле обязана отклоняться");
+        assert!(err.to_string().contains("contrakt"), "{err}");
+        assert!(err.to_string().contains("contract"), "{err}");
+    }
+
+    /// Опечатка в опциональном поле (`modle_tier`) — та же fail-closed
+    /// семантика: раньше молча превращалась в `ModelTierRequirement::Any`,
+    /// то есть в выбор ДРУГОГО класса модели без ведома автора декларации.
+    #[test]
+    fn typo_in_optional_step_field_is_a_parse_error() {
+        let result = serde_json::from_str::<Step>(
+            r#"{"id": "s1", "type": "llm_structured", "contract": "C", "modle_tier": "strong"}"#,
+        );
+        assert!(result.is_err(), "modle_tier обязан отклоняться");
+    }
+
+    /// Известные поля всех форм шагов по-прежнему парсятся — список
+    /// `known_step_keys` не съедает легальные декларации.
+    #[test]
+    fn all_step_forms_still_parse() {
+        for text in [
+            r#"{"id": "a", "type": "sequential"}"#,
+            r#"{"id": "b", "type": "parallel", "branches": ["x"]}"#,
+            r#"{"id": "c", "type": "loop", "condition": "{{state.x}}"}"#,
+            r#"{"id": "d", "type": "branch", "on": "{{state.x}}", "cases": {"1": "a"}}"#,
+            r#"{"id": "e", "type": "tool", "tool": "t.x", "args": {}}"#,
+            r#"{"id": "f", "type": "llm_structured", "contract": "C", "model_tier": "weak"}"#,
+            r#"{"id": "g", "type": "code_act", "contract": "C", "tools": ["t"], "model_tier": "any"}"#,
+            r#"{"id": "h", "type": "agent_step", "contract": "C", "max_turns": 3, "self_critique": true, "verify_actions": false}"#,
+            r#"{"id": "i", "type": "human_gate", "reason": "r", "timeout": "5m", "on_timeout": {"action": "escalate"}}"#,
+            r#"{"id": "j", "type": "checkpoint"}"#,
+        ] {
+            serde_json::from_str::<Step>(text).unwrap_or_else(|err| panic!("{text}: {err}"));
+        }
+    }
+
+    /// Регрессионный тест аудита 1.9 (лимиты): `token_budjet` — ошибка,
+    /// а не молчаливый `None` бюджета токенов.
+    #[test]
+    fn typo_in_limits_field_is_a_parse_error() {
+        let result = serde_json::from_str::<Process>(
+            r#"{"process": "p", "version": 1, "steps": [], "limits": {"max_steps": 5, "timeout": "1m", "token_budjet": "100k"}}"#,
+        );
+        assert!(result.is_err(), "token_budjet обязан отклоняться");
+    }
 }

@@ -465,8 +465,21 @@ impl AgentStepExecutor<'_> {
     ) -> Result<Patch, AgentStepError> {
         let raw = serde_json::to_string(&result).expect("Value всегда сериализуем в JSON-текст");
         let rules = (adapter.policy_rules)();
-        let outcome = (adapter.mediate)(step_id, &raw, state, Some(model_tier), &rules, 0);
+        // Трасса стадий (аудит 1.10) — как у StructuredLlm.
+        let mut trace = Vec::new();
+        let outcome = (adapter.mediate)(
+            step_id,
+            &raw,
+            state,
+            Some(model_tier),
+            &rules,
+            0,
+            &mut trace,
+        );
         if let Some(hook) = self.on_attempt {
+            for event in trace {
+                hook(event);
+            }
             hook(berimor_mediation::telemetry::outcome_to_event_kind(
                 &outcome,
             ));

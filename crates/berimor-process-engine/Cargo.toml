@@ -8,6 +8,9 @@ description = "Детерминированный остов: граф шаго�
 [dependencies]
 berimor-storage = { path = "../berimor-storage" }
 berimor-types = { path = "../berimor-types" }
+# Адвизорные flock-блокировки для межпроцессного лиза инстанса (аудит
+# 1.11): in-memory реестр защищает только от потоков одного процесса.
+fs2 = "0.4"
 serde_json = { workspace = true }
 serde_norway = "0.9.42"
 sha2 = "0.11.0"
