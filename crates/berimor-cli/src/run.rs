@@ -178,6 +178,7 @@ pub fn run(
         confirmer: bundle.confirmer.as_ref(),
         dispatch: bundle.dispatch.as_ref(),
         secrets: bundle.masker.as_ref(),
+        on_tool_turn: None,
     };
 
     let wasm_host = WasmHost::new(

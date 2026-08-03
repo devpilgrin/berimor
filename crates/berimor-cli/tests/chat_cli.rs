@@ -129,9 +129,10 @@ fn chat_answers_simple_message_and_exits_on_eof() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("berimor> Здравствуйте, сэр."),
+        stdout.contains("Здравствуйте, сэр."),
         "ответ модели пользователю: {stdout}"
     );
+    assert!(stdout.contains("berimor"), "метка агента: {stdout}");
 }
 
 #[test]
@@ -156,7 +157,7 @@ fn chat_executes_builtin_tool_with_real_side_effect() {
     let written = std::fs::read_to_string(dir.join("output/from-chat.txt")).unwrap();
     assert_eq!(written, "написано агентом");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("berimor> Файл создан."), "{stdout}");
+    assert!(stdout.contains("Файл создан."), "{stdout}");
 }
 
 #[test]
@@ -186,7 +187,7 @@ fn chat_survives_gate_denial_as_observation_not_death() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("berimor> Сессия жива, продолжаем."),
+        stdout.contains("Сессия жива, продолжаем."),
         "следующее сообщение после отказа обработано: {stdout}"
     );
 }

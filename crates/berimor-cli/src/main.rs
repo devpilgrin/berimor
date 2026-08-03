@@ -12,6 +12,7 @@ use std::process::ExitCode;
 
 mod builtin_dispatch;
 mod chat;
+mod chat_ui;
 mod config;
 mod mcp_dispatch;
 mod observe;
@@ -35,8 +36,11 @@ struct Cli {
     #[arg(long, global = true)]
     config: Option<PathBuf>,
 
+    /// Без подкоманды — интерактивный чат (§20.13): `berimor` ==
+    /// `berimor chat`. Директива пользователя: CLI агента по умолчанию
+    /// разговаривает, а не требует команду.
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -160,7 +164,10 @@ fn main() -> ExitCode {
     // команда интерактивна и требует провайдера — предлагаем мастер
     // сразу, а не отсылку в документацию. Не-терминал (скрипты, пайпы)
     // мастер не предлагает — только факт отсутствия конфигурации.
-    let needs_provider = matches!(cli.command, Command::Chat | Command::Run { .. });
+    let needs_provider = matches!(
+        cli.command.as_ref().unwrap_or(&Command::Chat),
+        Command::Chat | Command::Run { .. }
+    );
     if needs_provider
         && !config::any_config_present(cli.config.as_deref().map(PathBuf::from).as_deref())
         && std::io::stdin().is_terminal()
@@ -186,7 +193,8 @@ fn main() -> ExitCode {
         }
     };
 
-    match cli.command {
+    // Без подкоманды — chat (§20.13).
+    match cli.command.unwrap_or(Command::Chat) {
         Command::Setup => {
             if let Err(err) = setup::run_wizard() {
                 eprintln!("[berimor] {err}");

@@ -20,6 +20,7 @@
 //! - self_critique/verify_actions выключены ради отзывчивости.
 
 use crate::builtin_dispatch::builtin_policies;
+use crate::chat_ui::{self, Theme};
 use crate::config::{self, Config};
 use crate::run::{build_executor_bundle, RunError};
 use crate::setup;
@@ -154,6 +155,18 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
         masker: Some(bundle.masker.as_ref()),
     };
 
+    // Живой вывод вызовов инструментов (§20.13): презентационный канал
+    // исполнителя — аргументы и наблюдения приходят замаскированными.
+    let theme = Theme::detect();
+    let on_tool_turn = |tool: &str, args: &Value, observation: &Value| {
+        chat_ui::print_tool_turn(
+            &theme,
+            tool,
+            &chat_ui::summarize_args(args),
+            !observation.to_string().contains("ошибк"),
+        );
+    };
+
     let agent = AgentStepExecutor {
         pool: &bundle.pool,
         providers: &providers,
@@ -164,29 +177,28 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
         confirmer: bundle.confirmer.as_ref(),
         dispatch: bundle.dispatch.as_ref(),
         secrets: bundle.masker.as_ref(),
+        on_tool_turn: Some(&on_tool_turn),
     };
 
     let catalog = tools_catalog(config);
     let builtin_names: Vec<String> = builtin_policies().iter().map(|(n, _)| n.clone()).collect();
-    eprintln!(
-        "[berimor] chat: рабочая область — текущая директория (jail), режим подтверждений: {:?}",
-        config.confirmation_mode
-    );
-    eprintln!(
-        "[berimor] инструменты: {}{}; сессия в журнале: {}",
+    let tools_summary = format!(
+        "{}{}",
         builtin_names.join(", "),
         if config.tool_stubs.is_empty() && config.mcp_servers.is_empty() {
             String::new()
         } else {
             " + конфигурация оператора".to_string()
-        },
-        instance_id.0
+        }
     );
-    eprintln!("[berimor] /help — команды; завершение: /exit или Ctrl+D");
+    let workspace = std::env::current_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| ".".to_string());
+    chat_ui::print_banner(&theme, &workspace, &tools_summary, &instance_id.0);
 
     let stdin = std::io::stdin();
     loop {
-        eprint!("вы> ");
+        eprint!("{} ", theme.green("›"));
         let _ = std::io::stderr().flush();
         let mut line = String::new();
         let read = stdin
@@ -228,7 +240,8 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
             "history": *history,
             "tools": catalog,
         });
-        match agent.execute(
+        let spinner = chat_ui::Spinner::start(&theme, "berimor думает…");
+        let outcome = agent.execute(
             "chat",
             ChatReply::NAME,
             MAX_TURNS_PER_MESSAGE,
@@ -236,7 +249,9 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
             false,
             &state,
             None,
-        ) {
+        );
+        drop(spinner);
+        match outcome {
             Ok(patch) => {
                 let reply = patch
                     .changes
@@ -247,7 +262,14 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
                 // Ответ модели — пользователю через маскировщик (та же
                 // граница, что tool-вывод и human_gate в run).
                 let reply = bundle.masker.mask_text(&reply);
-                println!("berimor> {reply}");
+                let rendered = chat_ui::render_markdown(&theme, &reply);
+                println!(
+                    "{}
+{}",
+                    theme.cyan(&theme.bold("berimor")),
+                    rendered
+                );
+                println!();
                 history.push(json!({"role": "user", "content": message}));
                 history.push(json!({"role": "assistant", "content": reply}));
             }

@@ -106,7 +106,15 @@ pub struct AgentStepExecutor<'a> {
     /// Реестр секретов запуска (S5) — контроль утечек policy-стадии
     /// (mediation.md §4.3) и маскировка наблюдений инструментов.
     pub secrets: &'a berimor_secrets::Masker,
+    /// Наблюдатель ходов с инструментами (§20.13: живой вывод в chat) —
+    /// вызывается ПОСЛЕ исполнения с уже замаскированными аргументами и
+    /// наблюдением; на ход finish и на решения гейта не вызывается.
+    /// Чисто презентационный канал: на логику цикла не влияет.
+    pub on_tool_turn: Option<ToolTurnObserver<'a>>,
 }
+
+/// (инструмент, замаскированные аргументы, замаскированное наблюдение).
+pub type ToolTurnObserver<'a> = &'a dyn Fn(&str, &Value, &Value);
 
 /// Один завершённый ход истории — то, что видит модель на следующем
 /// ходу (`executors.md` §5: «наблюдение» становится частью следующего
@@ -229,12 +237,16 @@ impl AgentStepExecutor<'_> {
                         )?;
                     }
 
+                    // Аргументы для истории и наблюдателя — маскируем
+                    // (I4). Наблюдение уже замаскировано в
+                    // dispatch_confirmed (S5, точка 1).
+                    let masked_args = self.secrets.mask_value(&args);
+                    if let Some(on_tool_turn) = self.on_tool_turn {
+                        on_tool_turn(&tool, &masked_args, &observation);
+                    }
                     history.push(TurnRecord {
                         thought: decision.thought,
-                        // Аргументы в истории — то, что модель увидит на
-                        // следующем ходу: маскируем (I4). Наблюдение уже
-                        // замаскировано в dispatch_confirmed (S5, точка 1).
-                        action: format!("tool:{tool}({})", self.secrets.mask_value(&args)),
+                        action: format!("tool:{tool}({masked_args})"),
                         observation: observation.to_string(),
                     });
                 }
@@ -684,6 +696,7 @@ mod tests {
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
+            on_tool_turn: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -715,6 +728,7 @@ mod tests {
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
+            on_tool_turn: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -742,6 +756,7 @@ mod tests {
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
+            on_tool_turn: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -765,6 +780,7 @@ mod tests {
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
+            on_tool_turn: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -791,6 +807,7 @@ mod tests {
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
+            on_tool_turn: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -823,6 +840,7 @@ mod tests {
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
+            on_tool_turn: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -858,6 +876,7 @@ mod tests {
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
+            on_tool_turn: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -886,6 +905,7 @@ mod tests {
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
+            on_tool_turn: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
