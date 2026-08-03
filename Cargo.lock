@@ -231,7 +231,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "berimor-actors"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-capability",
  "berimor-storage",
@@ -246,7 +246,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-capability"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-types",
  "serde",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-cli"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-capability",
  "berimor-context-engine",
@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-context-engine"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-memory",
  "berimor-secrets",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-eval"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-mediation",
  "berimor-memory",
@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-executors"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-capability",
  "berimor-context-engine",
@@ -337,7 +337,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-mediation"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-types",
  "schemars 1.2.2",
@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-memory"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-mediation",
  "berimor-secrets",
@@ -364,7 +364,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-model-pool"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-capability",
  "berimor-secrets",
@@ -378,7 +378,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-process-engine"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-storage",
  "berimor-types",
@@ -391,7 +391,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-secrets"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-mediation",
  "serde",
@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-storage"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-types",
  "rusqlite",
@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-tool-runtime"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "berimor-capability",
  "berimor-types",
@@ -423,7 +423,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-types"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "schemars 1.2.2",
  "serde",
