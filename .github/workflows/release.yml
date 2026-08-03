@@ -319,6 +319,14 @@ jobs:
       # что keyless cosign для платформенных архивов (D2), другим
       # механизмом (npm registry сам проверяет и показывает провенанс, не
       # отдельный `.sigstore.json`-бандл).
+      # Страница npmjs.com рендерит README ПАКЕТА: синхронизируем
+      # главный README репозитория в bootstrap/ перед публикацией —
+      # иначе страница показывает техническую доку установщика и
+      # выглядит «без изменений» (замечено пользователем 2026-08-03).
+      - name: sync README into npm package
+        shell: bash
+        run: cp README.md bootstrap/README.md
+
       - name: publish bootstrap to npm
         working-directory: bootstrap
         env:
