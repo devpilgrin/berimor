@@ -31,7 +31,12 @@ export function detectPlatform(version: string): PlatformInfo {
   }
 
   const ext = platform === "win32" ? "zip" : "tar.gz";
-  const assetName = `berimor-${version}-${platform}-${arch}.${ext}`;
+  // Имя артефакта — С `v` префикса версии: именно так называет файлы
+  // build-матрица release.yml (berimor-v0.9.0-linux-x64.tar.gz), и
+  // checksums.json пайплайн генерирует по фактическим именам. Первая
+  // реальная установка v0.9.0 поймала рассинхрон (fail-closed сработал
+  // верно: «нет записи в манифесте», не скачивание неизвестно чего).
+  const assetName = `berimor-v${version}-${platform}-${arch}.${ext}`;
 
   return { platform: platform as Platform, arch: arch as Arch, assetName };
 }

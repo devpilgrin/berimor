@@ -85,7 +85,15 @@ async function main(): Promise<void> {
   delegate(binaryPath, process.argv.slice(2));
 }
 
-const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
+// npm на Unix ставит bin как СИМЛИНК (~/.local/bin/berimor →
+// .../node_modules/berimor/dist/index.js): argv[1] — путь симлинка,
+// import.meta.url — реальный путь, наивное сравнение всегда ложно и
+// main() молча не запускается (поймано первой реальной установкой
+// v0.9.0 — юнит-тесты с импортом main() этого не видят). Разрешаем
+// симлинк перед сравнением.
+const isMainModule =
+  process.argv[1] !== undefined &&
+  fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url);
 if (isMainModule) {
   main().catch((err) => {
     console.error(`[berimor] ${(err as Error).message}`);
