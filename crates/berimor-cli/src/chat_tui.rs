@@ -671,6 +671,17 @@ impl App {
 }
 
 fn handle_key(app: &mut App, key: KeyEvent) {
+    // Терминалы с расширенным клавиатурным протоколом (kitty и др.)
+    // шлют события И на отпускание клавиши: без фильтра каждое
+    // нажатие обрабатывается ДВАЖДЫ — стрелка в модале подтверждения
+    // переключала выбор на «да» по Press и обратно на «нет» по
+    // Release, Enter получал «нет» (репорт 2026-08-03: «двигал
+    // стрелку, потом Enter — всё равно отказ»; сюда же «буквы через
+    // раз»). На обычных терминалах kind всегда Press — фильтр
+    // ничего не меняет.
+    if key.kind == crossterm::event::KeyEventKind::Release {
+        return;
+    }
     if key.modifiers.contains(KeyModifiers::CONTROL)
         && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'))
     {
