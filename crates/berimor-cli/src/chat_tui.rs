@@ -172,6 +172,11 @@ struct App {
     /// Накопленные провайдеры и ключи текущего /models add.
     staging_providers: Vec<ProviderConfig>,
     staging_keys: Vec<(String, String)>,
+    /// Явно выбранный пользователем провайдер (/model) — пин на сессию:
+    /// без него пул по требованию Any мог выбрать ДРУГОГО провайдера,
+    /// делая выбор пользователя декорацией (репорт 2026-08-03: выбран
+    /// deepseek, ход ушёл в kimi → 401).
+    active_provider: Option<String>,
     tx: Sender<WorkerMsg>,
     rx: Receiver<WorkerMsg>,
     done: bool,
@@ -244,6 +249,7 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         pending_presets: Vec::new(),
         staging_providers: Vec::new(),
         staging_keys: Vec::new(),
+        active_provider: None,
         tx,
         rx,
         done: false,
@@ -388,7 +394,12 @@ impl App {
     /// Ход агента — в воркер-потоке с собственным рантаймом (UI не
     /// блокируется; конфиг клонируется — «перезагрузка» бесплатна).
     fn start_turn(&self, message: String) {
-        let config = self.config.clone();
+        let mut config = self.config.clone();
+        // Пин провайдера (/model): явный выбор пользователя сильнее
+        // автоотбора пула — воркер видит только выбранного.
+        if let Some(name) = &self.active_provider {
+            config.providers.retain(|p| &p.name == name);
+        }
         let conversation = self.conversation.clone();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -489,6 +500,13 @@ impl App {
                     .and_then(|i| models.get(i))
                     .cloned()
                     .unwrap_or_else(|| preset.default_model.to_string());
+                if model.starts_with("sk-") {
+                    // Ключ на месте модели — защита от повтора инцидента
+                    // (старый мастер принял ключ в поле model_id).
+                    self.sys("«sk-…» похоже на ключ, не на модель — отклонено");
+                    self.next_preset();
+                    return;
+                }
                 let provider = presets::instantiate(preset, Some(model), None);
                 self.staging_providers.push(provider);
                 self.next_preset();
@@ -531,8 +549,9 @@ impl App {
                 {
                     provider.model_id = model.clone();
                 }
+                self.active_provider = Some(provider_name.clone());
                 self.sys(format!(
-                    "модель сессии: {provider_name} → {model} (до конца сессии; закрепить — model_id в конфиге)"
+                    "модель сессии: {provider_name} → {model} (закреплено на сессию; навсегда — model_id в конфиге)"
                 ));
             }
             Flow::AddAskKey { .. } => {} // обрабатывается в вводе, не пикером
@@ -1130,6 +1149,7 @@ mod tests {
             pending_presets: vec![],
             staging_providers: vec![],
             staging_keys: vec![],
+            active_provider: None,
             tx,
             rx,
             done: false,
@@ -1193,6 +1213,7 @@ mod tests {
             pending_presets: vec![],
             staging_providers: vec![],
             staging_keys: vec![],
+            active_provider: None,
             tx,
             rx,
             done: false,

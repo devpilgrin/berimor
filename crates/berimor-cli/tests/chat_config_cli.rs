@@ -37,6 +37,13 @@ fn run_chat(sandbox: &Sandbox, input: &str) -> Output {
         .arg("chat")
         .current_dir(&sandbox.dir)
         .env("XDG_CONFIG_HOME", &sandbox.xdg)
+        // Детерминизм мастера: ключ провайдера в окружении хоста меняет
+        // сценарий (пропуск вопроса о ключе → сдвиг пайп-ввода).
+        // Поймано на машине разработчика 2026-08-03.
+        .env_remove("DEEPSEEK_API_KEY")
+        .env_remove("MOONSHOT_API_KEY")
+        .env_remove("OPENAI_API_KEY")
+        .env_remove("OPENROUTER_API_KEY")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
