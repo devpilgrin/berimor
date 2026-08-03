@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Ручной запуск — диагностика «пуш не поднял CI» (2026-08-03: шесть
+  # пушей подряд не породили запусков, CodeQL при этом шёл) и проверка
+  # веток без PR.
+  workflow_dispatch:
 
 # Только чтение — ни одна из джоб этого workflow не пишет в репозиторий
 # (fmt/clippy/test/build), в отличие от release.yml, где publish отдельно
