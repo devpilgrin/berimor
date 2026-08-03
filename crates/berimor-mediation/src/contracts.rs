@@ -144,6 +144,22 @@ impl Contract for FactProposalBatch {
     const NAME: &'static str = "FactProposalBatch";
 }
 
+/// Ответ агента пользователю в интерактивном режиме `berimor chat`
+/// (§20.11): финальный контракт `Finish.result` свободного цикла —
+/// единственное текстовое поле, без доменной структуры (в отличие от
+/// SupportReply, привязанного к сценарию поддержки).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct ChatReply {
+    #[validate(length(min = 1, max = 8000))]
+    pub reply: String,
+}
+
+impl Contract for ChatReply {
+    const SCHEMA_VERSION: u32 = 1;
+    const NAME: &'static str = "ChatReply";
+}
+
 impl Contract for FactProposal {
     const SCHEMA_VERSION: u32 = 1;
     const NAME: &'static str = "FactProposal";

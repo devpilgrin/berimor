@@ -13,7 +13,7 @@
 use berimor_context_engine::ContextBuilder;
 use berimor_mediation::{
     commit::CommitOutcome,
-    contracts::{ClassificationOut, FactProposalBatch, SupportReply},
+    contracts::{ChatReply, ClassificationOut, FactProposalBatch, SupportReply},
     pipeline::{self, PolicyRules},
     policy,
 };
@@ -150,6 +150,26 @@ pub fn contract_registry() -> &'static [ContractAdapter] {
             policy_rules: PolicyRules::default,
             mediate: |step_id, raw, state, tier, rules, attempt, trace| {
                 pipeline::mediate_traced::<FactProposalBatch>(
+                    step_id, raw, state, tier, rules, attempt, trace,
+                )
+            },
+        },
+        // Финальный ответ интерактивного режима `berimor chat` (§20.11).
+        ContractAdapter {
+            name: ChatReply::NAME,
+            schema_version: ChatReply::SCHEMA_VERSION,
+            json_schema: || {
+                serde_json::to_value(schemars::schema_for!(ChatReply))
+                    .expect("схема derive-типа всегда сериализуема")
+            },
+            example: || {
+                serde_json::json!({
+                    "reply": "Файл output/note.txt создан, в нём 15 байт."
+                })
+            },
+            policy_rules: PolicyRules::default,
+            mediate: |step_id, raw, state, tier, rules, attempt, trace| {
+                pipeline::mediate_traced::<ChatReply>(
                     step_id, raw, state, tier, rules, attempt, trace,
                 )
             },

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 mod builtin_dispatch;
+mod chat;
 mod config;
 mod mcp_dispatch;
 mod observe;
@@ -37,6 +38,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Интерактивный диалог с агентом (свободный цикл со встроенными
+    /// инструментами; рабочая область — текущая директория).
+    Chat,
     /// Выполнить процесс (структурированную задачу).
     Run {
         /// Путь к декларации процесса (YAML).
@@ -155,6 +159,12 @@ fn main() -> ExitCode {
     };
 
     match cli.command {
+        Command::Chat => {
+            if let Err(err) = chat::cmd_chat(&resolved_config) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
         Command::Run {
             process,
             resume,

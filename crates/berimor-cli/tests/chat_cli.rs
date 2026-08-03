@@ -1,0 +1,186 @@
+//! §20.11: e2e-доказательство интерактивного режима `berimor chat` —
+//! REPL поверх AgentStep со встроенными инструментами через реальный
+//! бинарник, с stdin из пайпа и мок-провайдером по очереди ответов.
+//!
+//! Сценарии: простой ответ без инструментов; ход с реальным вызовом
+//! files.write (побочный эффект в рабочей области); отказ гейта
+//! (`rm -rf /`) — наблюдением агенту, не смертью сессии.
+
+use serde_json::{json, Value};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+
+fn bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_berimor"))
+}
+
+/// Мок, отвечающий телами `bodies` по очереди подключений (каждый ход
+/// агента — отдельный HTTP-вызов).
+fn sequential_mock(bodies: Vec<Value>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        for body in bodies {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut content_length = 0usize;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line.to_lowercase().starts_with("content-length:") {
+                    content_length = line[15..].trim().parse().unwrap();
+                }
+                if line.trim().is_empty() {
+                    break;
+                }
+            }
+            let mut request_body = vec![0u8; content_length];
+            reader.read_exact(&mut request_body).unwrap();
+
+            let content = serde_json::to_string(&body).unwrap();
+            let envelope = json!({"choices": [{"message": {"content": content}}]}).to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{envelope}",
+                envelope.len()
+            );
+            reader.get_mut().write_all(response.as_bytes()).unwrap();
+        }
+    });
+    url
+}
+
+fn finish_turn(reply: &str) -> Value {
+    json!({
+        "thought": "Отвечаю пользователю.",
+        "action": {"kind": "finish", "result": {"reply": reply}}
+    })
+}
+
+fn tool_turn(tool: &str, args: Value) -> Value {
+    json!({
+        "thought": "Нужно выполнить действие.",
+        "action": {"kind": "tool", "tool": tool, "args": args}
+    })
+}
+
+fn write_config(dir: &std::path::Path, name: &str, mock_url: &str) -> PathBuf {
+    let config_path = dir.join(format!("{name}.toml"));
+    std::fs::write(
+        &config_path,
+        format!(
+            r#"storage_path = "./{name}.db"
+confirmation_mode = "off"
+
+[[providers]]
+name = "mock"
+model_id = "mock-model"
+tier = "strong"
+base_url = "{mock_url}"
+api_key = "mock-key"
+allow_private_endpoint = true
+"#
+        ),
+    )
+    .unwrap();
+    config_path
+}
+
+fn run_chat(dir: &std::path::Path, config: &std::path::Path, input: &str) -> std::process::Output {
+    let mut child = Command::new(bin())
+        .arg("--config")
+        .arg(config)
+        .arg("chat")
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    // stdin закрывается при drop — для REPL это EOF, сессия завершается.
+    child.wait_with_output().unwrap()
+}
+
+#[test]
+fn chat_answers_simple_message_and_exits_on_eof() {
+    let dir = std::env::temp_dir().join(format!("berimor-e2e-chat-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let url = sequential_mock(vec![finish_turn("Здравствуйте, сэр.")]);
+    let config_path = write_config(&dir, "chat", &url);
+
+    let output = run_chat(&dir, &config_path, "привет\n");
+    assert!(
+        output.status.success(),
+        "chat обязан завершиться по EOF: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("berimor> Здравствуйте, сэр."),
+        "ответ модели пользователю: {stdout}"
+    );
+}
+
+#[test]
+fn chat_executes_builtin_tool_with_real_side_effect() {
+    let dir = std::env::temp_dir().join(format!("berimor-e2e-chattool-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("output")).unwrap();
+    let url = sequential_mock(vec![
+        tool_turn(
+            "files.write",
+            json!({"path": "output/from-chat.txt", "content": "написано агентом"}),
+        ),
+        finish_turn("Файл создан."),
+    ]);
+    let config_path = write_config(&dir, "chattool", &url);
+
+    let output = run_chat(&dir, &config_path, "создай файл\n/exit\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = std::fs::read_to_string(dir.join("output/from-chat.txt")).unwrap();
+    assert_eq!(written, "написано агентом");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("berimor> Файл создан."), "{stdout}");
+}
+
+#[test]
+fn chat_survives_gate_denial_as_observation_not_death() {
+    let dir = std::env::temp_dir().join(format!("berimor-e2e-chatdeny-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // Первый ход — опасная команда: deny-статика отклоняет ТЕРМИНАЛЬНО
+    // (осознанное решение security-model.md, подтверждённое ревью:
+    // цикл не пытается обойти отказ переформулировкой). Ход умирает —
+    // СЕССИЯ нет: следующее сообщение обрабатывается обычно.
+    let url = sequential_mock(vec![
+        tool_turn("terminal.exec", json!({"command": "rm -rf /"})),
+        finish_turn("Сессия жива, продолжаем."),
+    ]);
+    let config_path = write_config(&dir, "chatdeny", &url);
+
+    let output = run_chat(&dir, &config_path, "удали всё\nпривет\n");
+    assert!(
+        output.status.success(),
+        "отказ гейта убивает ход, не сессию: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("заблокирован") || stderr.contains("отклонено") || stderr.contains("deny"),
+        "причина отказа видна пользователю: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("berimor> Сессия жива, продолжаем."),
+        "следующее сообщение после отказа обработано: {stdout}"
+    );
+}
