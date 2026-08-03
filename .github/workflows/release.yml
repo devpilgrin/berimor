@@ -258,6 +258,7 @@ jobs:
           # было жечь следующую версию.
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "релиз $TAG уже существует — пропуск создания (идемпотентный повтор)"
+            echo "RELEASE_EXISTED=true" >> "$GITHUB_ENV"
             exit 0
           fi
           gh release create "$TAG" release-assets/* \
@@ -275,9 +276,25 @@ jobs:
       # установки должно приходить из независимого канала — npm, куда
       # публикация идёт отдельным шагом ниже.
       - name: compute checksums for bootstrap pin
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
+          # Повторный прогон при УЖЕ существующем релизе: checksums обязаны
+          # быть от артефактов, РЕАЛЬНО приложенных к релизу (первая
+          # сборка), а не от пересобранных в этом прогоне — сборки не
+          # байт-воспроизводимы, иначе пин в npm-пакете не сойдётся с
+          # файлом, который скачает пользователь (поймано на v0.9.0).
+          if [ "${RELEASE_EXISTED:-}" = "true" ]; then
+            echo "идемпотентный повтор: checksums по артефактам существующего релиза"
+            rm -f release-assets/berimor-*.tar.gz release-assets/berimor-*.zip
+            gh release download "$TAG" \
+              --repo "${{ github.repository }}" \
+              --dir release-assets \
+              --pattern 'berimor-*.tar.gz' --pattern 'berimor-*.zip' \
+              --clobber
+          fi
           shopt -s nullglob
           out="bootstrap/checksums.json"
           printf '{\n' > "$out"
