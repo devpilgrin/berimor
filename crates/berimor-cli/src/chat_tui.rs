@@ -135,9 +135,11 @@ enum Flow {
         preset: &'static ProviderPreset,
         models: Vec<String>,
     },
-    /// /models add: ввод ключа (маскируется звёздочками).
+    /// /models add: ввод ключа (маскируется звёздочками) — ДО выбора
+    /// модели: список `/models` у облачных провайдеров требует
+    /// авторизации.
     AddAskKey {
-        provider: ProviderConfig,
+        preset: &'static ProviderPreset,
         key_env: String,
         input: String,
     },
@@ -190,7 +192,19 @@ pub fn fetch_models(provider: &ProviderConfig) -> Result<Vec<String>, String> {
             request = request.bearer_auth(key);
         }
     }
-    let response = request.send().map_err(|e| format!("{url}: {e}"))?;
+    let response = request
+        .send()
+        .and_then(|r| r.error_for_status())
+        .map_err(|e| {
+            let status = e.status().map(|s| s.as_u16());
+            match status {
+                Some(401) | Some(403) => {
+                    format!("{url}: HTTP {} — ключ не принят", status.unwrap())
+                }
+                Some(code) => format!("{url}: HTTP {code}"),
+                None => format!("{url}: {e}"),
+            }
+        })?;
     let body: Value = response.json().map_err(|e| e.to_string())?;
     let mut models: Vec<String> = body
         .get("data")
@@ -476,16 +490,6 @@ impl App {
                     .cloned()
                     .unwrap_or_else(|| preset.default_model.to_string());
                 let provider = presets::instantiate(preset, Some(model), None);
-                if let Some(env_name) = preset.key_env {
-                    if std::env::var_os(env_name).is_none() {
-                        self.flow = Some(Flow::AddAskKey {
-                            provider,
-                            key_env: env_name.to_string(),
-                            input: String::new(),
-                        });
-                        return;
-                    }
-                }
                 self.staging_providers.push(provider);
                 self.next_preset();
             }
@@ -535,14 +539,32 @@ impl App {
         }
     }
 
-    /// Следующий пресет из очереди /models add: живой список моделей →
-    /// пикер; очередь пуста — запись в глобальный конфиг.
+    /// Следующий пресет из очереди /models add. Порядок для облачных
+    /// провайдеров: КЛЮЧ → потом список моделей — `/models` у DeepSeek
+    /// и др. требует авторизации (401 без ключа; репорт 2026-08-03
+    /// «провайдер не доступен»). Ключ вводится первым и сразу
+    /// действует в этой сессии (set_var), не только в secrets.env.
     fn next_preset(&mut self) {
         let Some(preset) = self.pending_presets.first().copied() else {
             self.finish_add();
             return;
         };
         self.pending_presets.remove(0);
+        if let Some(env_name) = preset.key_env {
+            if std::env::var_os(env_name).is_none() {
+                self.flow = Some(Flow::AddAskKey {
+                    preset,
+                    key_env: env_name.to_string(),
+                    input: String::new(),
+                });
+                return;
+            }
+        }
+        self.pick_model_for(preset);
+    }
+
+    /// Пикер модели пресета из живого списка провайдера.
+    fn pick_model_for(&mut self, preset: &'static ProviderPreset) {
         let probe = presets::instantiate(preset, None, None);
         let models = fetch_models(&probe).unwrap_or_else(|err| {
             self.sys(format!(
@@ -613,22 +635,24 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         match key.code {
             KeyCode::Enter => {
                 if let Some(Flow::AddAskKey {
-                    provider,
+                    preset,
                     key_env,
                     input,
                 }) = app.flow.take()
                 {
                     if !input.is_empty() {
+                        // В сессию — сразу (список моделей и ходы агента
+                        // используют ключ уже сейчас), в secrets.env —
+                        // при finish_add.
+                        std::env::set_var(&key_env, &input);
                         app.staging_keys.push((key_env, input));
                     }
-                    app.staging_providers.push(provider);
-                    app.next_preset();
+                    app.pick_model_for(preset);
                 }
             }
             KeyCode::Esc => {
-                if let Some(Flow::AddAskKey { provider, .. }) = app.flow.take() {
-                    app.staging_providers.push(provider);
-                    app.next_preset();
+                if let Some(Flow::AddAskKey { preset, .. }) = app.flow.take() {
+                    app.pick_model_for(preset);
                 }
             }
             KeyCode::Backspace => {
