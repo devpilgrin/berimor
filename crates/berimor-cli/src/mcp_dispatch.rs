@@ -185,16 +185,22 @@ fn content_to_text(content: &[ContentBlock]) -> String {
         .join("\n")
 }
 
-/// Пробует зарегистрированные MCP-серверы по имени инструмента, иначе —
-/// статические заглушки `tool_stubs`. Единственная реализация
-/// `ToolDispatch` в `run.rs` — `tool_only::execute` не меняется вовсе.
+/// Порядок разрешения инструмента (§20.10): встроенные (зарезервированное
+/// пространство имён — ни MCP, ни заглушка не перекрывают их) →
+/// зарегистрированные MCP-серверы → статические заглушки `tool_stubs`.
+/// Единственная реализация `ToolDispatch` в `run.rs` — `tool_only::execute`
+/// не меняется вовсе.
 pub struct CompositeToolDispatch {
+    pub builtin: crate::builtin_dispatch::BuiltinToolDispatch,
     pub mcp: Option<McpToolDispatch>,
     pub static_stubs: StaticToolDispatch,
 }
 
 impl ToolDispatch for CompositeToolDispatch {
     fn call(&self, tool: &str, args: &Value) -> Result<Value, DispatchError> {
+        if crate::builtin_dispatch::BuiltinToolDispatch::has_tool(tool) {
+            return self.builtin.call(tool, args);
+        }
         if let Some(mcp) = &self.mcp {
             if mcp.has_tool(tool) {
                 return mcp.call(tool, args);
@@ -211,6 +217,9 @@ mod tests {
     #[test]
     fn composite_dispatch_falls_back_to_static_stubs_without_mcp() {
         let dispatch = CompositeToolDispatch {
+            builtin: crate::builtin_dispatch::BuiltinToolDispatch::new(std::path::PathBuf::from(
+                ".",
+            )),
             mcp: None,
             static_stubs: StaticToolDispatch::new(vec![(
                 "echo".into(),
@@ -226,6 +235,9 @@ mod tests {
     #[test]
     fn composite_dispatch_errors_for_unknown_tool_same_as_static_dispatch_alone() {
         let dispatch = CompositeToolDispatch {
+            builtin: crate::builtin_dispatch::BuiltinToolDispatch::new(std::path::PathBuf::from(
+                ".",
+            )),
             mcp: None,
             static_stubs: StaticToolDispatch::new(Vec::new()),
         };

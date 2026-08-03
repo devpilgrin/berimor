@@ -299,7 +299,7 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
         .and_then(|p| p.canonicalize())
         .unwrap_or_else(|_| PathBuf::from("."));
 
-    let tool_policies: HashMap<String, ToolPolicy> = config
+    let mut tool_policies: HashMap<String, ToolPolicy> = config
         .tool_stubs
         .iter()
         .map(|stub| {
@@ -312,6 +312,12 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
             )
         })
         .collect();
+    // Политики встроенных инструментов (§20.10): декларируются кодом,
+    // не конфигом — оператор не может объявить `terminal.exec`
+    // неизменяющим. Имя встроенного инструмента зарезервировано.
+    for (name, policy) in crate::builtin_dispatch::builtin_policies() {
+        tool_policies.insert(name, policy);
+    }
     // S2 (§20.3): основной путь `berimor run` — с jail-слоем. Домен
     // инструментов этого процесса — рабочая область пользователя (cwd);
     // first-party процессы с доменом шире cwd (self-update,
@@ -335,7 +341,11 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
     } else {
         Some(McpToolDispatch::connect(&config.mcp_servers)?)
     };
-    let dispatch = CompositeToolDispatch { mcp, static_stubs };
+    let dispatch = CompositeToolDispatch {
+        builtin: crate::builtin_dispatch::BuiltinToolDispatch::new(workspace_root.clone()),
+        mcp,
+        static_stubs,
+    };
 
     // Мост к хранилищу секретов (S5, точка 2 из mediation.md §4.3):
     // реестр запуска наполняется значениями из окружения — ключами

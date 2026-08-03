@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+mod builtin_dispatch;
 mod config;
 mod mcp_dispatch;
 mod observe;
