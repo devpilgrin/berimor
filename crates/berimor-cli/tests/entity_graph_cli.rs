@@ -136,6 +136,7 @@ response = {{ status = "active", card_id = "card_1029" }}
         .arg("--input")
         .arg(r#"{"user":{"card_id":"card_1029"}}"#)
         .current_dir(&dir)
+        .env("XDG_CONFIG_HOME", "/nonexistent-berimor-e2e-xdg") // изоляция от глобального конфига (§20.12)
         .output()
         .unwrap();
     assert!(
@@ -215,6 +216,7 @@ response = {{ status = "active", card_id = "card_1029" }}
         .arg("--input")
         .arg(r#"{"user":{"card_id":"card_1029"}}"#)
         .current_dir(&dir)
+        .env("XDG_CONFIG_HOME", "/nonexistent-berimor-e2e-xdg") // изоляция от глобального конфига (§20.12)
         .output()
         .unwrap();
     assert!(

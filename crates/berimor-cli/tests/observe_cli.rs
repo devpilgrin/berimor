@@ -63,6 +63,7 @@ fn run_cli(args: &[&str], config: &std::path::Path) -> (bool, String, String) {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env("XDG_CONFIG_HOME", "/nonexistent-berimor-e2e-xdg") // изоляция от глобального конфига (§20.12)
         .output()
         .expect("бинарник berimor собран (cargo test)");
     (

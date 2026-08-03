@@ -6,6 +6,7 @@
 //! (ADR-0025). ROADMAP: F3.
 
 use clap::{Parser, Subcommand};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -15,8 +16,10 @@ mod config;
 mod mcp_dispatch;
 mod observe;
 mod plugin_install;
+mod presets;
 mod run;
 mod self_update;
+mod setup;
 mod trust;
 mod verify;
 
@@ -41,6 +44,9 @@ enum Command {
     /// Интерактивный диалог с агентом (свободный цикл со встроенными
     /// инструментами; рабочая область — текущая директория).
     Chat,
+    /// Мастер первичной настройки: пресеты провайдеров в глобальный
+    /// конфиг + ключи в secrets.env (§20.12).
+    Setup,
     /// Выполнить процесс (структурированную задачу).
     Run {
         /// Путь к декларации процесса (YAML).
@@ -150,6 +156,28 @@ enum ConfigAction {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
+    // First-run (§20.12): ни глобального, ни локального конфига нет, а
+    // команда интерактивна и требует провайдера — предлагаем мастер
+    // сразу, а не отсылку в документацию. Не-терминал (скрипты, пайпы)
+    // мастер не предлагает — только факт отсутствия конфигурации.
+    let needs_provider = matches!(cli.command, Command::Chat | Command::Run { .. });
+    if needs_provider
+        && !config::any_config_present(cli.config.as_deref().map(PathBuf::from).as_deref())
+        && std::io::stdin().is_terminal()
+    {
+        eprintln!("[berimor] конфигурация не найдена — первый запуск.");
+        eprint!("[berimor] настроить провайдеры моделей сейчас? [Y/n] ");
+        use std::io::Write as _;
+        let _ = std::io::stderr().flush();
+        let mut answer = String::new();
+        let _ = std::io::stdin().read_line(&mut answer);
+        if !matches!(answer.trim().to_lowercase().as_str(), "n" | "no" | "нет") {
+            if let Err(err) = setup::run_wizard() {
+                eprintln!("[berimor] мастер настройки: {err}");
+            }
+        }
+    }
+
     let resolved_config = match config::load(cli.config.as_deref()) {
         Ok(config) => config,
         Err(err) => {
@@ -159,8 +187,16 @@ fn main() -> ExitCode {
     };
 
     match cli.command {
+        Command::Setup => {
+            if let Err(err) = setup::run_wizard() {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
         Command::Chat => {
-            if let Err(err) = chat::cmd_chat(&resolved_config) {
+            // Chat грузит конфиг сам — и перегружает после /models add
+            // (§20.12): resolved_config выше не используется.
+            if let Err(err) = chat::cmd_chat(cli.config.as_deref().map(std::path::Path::new)) {
                 eprintln!("[berimor] {err}");
                 return ExitCode::FAILURE;
             }

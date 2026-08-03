@@ -176,34 +176,184 @@ pub enum ConfigError {
     },
 }
 
-/// Путь конфигурации по умолчанию — `./berimor.toml` в текущей директории.
-/// Осознанное упрощение для скелета: платформенные каталоги конфигурации
-/// (XDG и т.п.) добавляются отдельной задачей, когда появится реальный
-/// сценарий использования, диктующий их выбор — не раньше.
+// --- Слоистая конфигурация (§20.12) ------------------------------------
+
+/// Путь локальной конфигурации по умолчанию — `./berimor.toml` в
+/// текущей директории (слой проекта поверх глобального, §20.12).
 pub fn default_config_path() -> PathBuf {
     PathBuf::from("./berimor.toml")
 }
 
-/// Загружает конфигурацию: явный путь, если указан, иначе
-/// [`default_config_path`]. Отсутствие файла по пути по умолчанию — не
-/// ошибка, используются значения [`Config::default`]; отсутствие файла по
-/// явно указанному пути — тоже не ошибка (явный путь может быть заготовкой
-/// для будущего файла), но нечитаемый или невалидный существующий файл —
+/// Промежуточная форма файла конфигурации: скаляры опциональны, чтобы
+/// слияние отличало «задано в файле» от «умолчание» (сырой `Config` с
+/// serde-default этого не позволяет — слой-источник настроек потерялся
+/// бы). Коллекции и так сливаются поимённо.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct PartialConfig {
+    pub storage_path: Option<PathBuf>,
+    pub confirmation_mode: Option<ConfirmationMode>,
+    pub update_channel: Option<UpdateChannel>,
+    pub providers: Vec<ProviderConfig>,
+    pub tool_stubs: Vec<ToolStub>,
+    pub memory: Option<MemoryConfig>,
+    pub mcp_servers: Vec<McpServerConfig>,
+    pub secret_envs: Vec<String>,
+}
+
+impl PartialConfig {
+    fn load_file(path: &Path) -> Result<Option<Self>, ConfigError> {
+        match std::fs::read_to_string(path) {
+            Ok(contents) => {
+                toml::from_str(&contents)
+                    .map(Some)
+                    .map_err(|source| ConfigError::Parse {
+                        path: path.to_path_buf(),
+                        source,
+                    })
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            }),
+        }
+    }
+}
+
+/// Глобальная директория berimor: `$XDG_CONFIG_HOME/berimor` или
+/// `~/.config/berimor`. Директория — не файл: рядом с `config.toml`
+/// лежит `secrets.env` (см. ниже).
+pub fn global_dir() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(xdg).join("berimor"));
+    }
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config").join("berimor"))
+}
+
+pub fn global_config_path() -> Option<PathBuf> {
+    global_dir().map(|dir| dir.join("config.toml"))
+}
+
+pub fn secrets_env_path() -> Option<PathBuf> {
+    global_dir().map(|dir| dir.join("secrets.env"))
+}
+
+/// Есть ли ХОТЬ ОДИН файл конфигурации (глобальный или локальный) —
+/// сигнал first-run для мастера настройки (`berimor setup`).
+pub fn any_config_present(explicit_path: Option<&Path>) -> bool {
+    let global = global_config_path().is_some_and(|p| p.is_file());
+    let local = explicit_path
+        .map(|p| p.is_file())
+        .unwrap_or_else(|| default_config_path().is_file());
+    global || local
+}
+
+/// Слияние слоёв (§20.12): локальный переопределяет глобальный.
+/// Скаляры — локальный, если задан явно, иначе глобальный, иначе
+/// умолчание `Config`. Провайдеры/заглушки/MCP — объединение по имени,
+/// при совпадении имени побеждает локальный. Секция `[memory]`
+/// заменяется целиком (её поля не разделяются по слоям — осознанное
+/// упрощение, задокументировано здесь). `secret_envs` — объединение.
+pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
+    fn merge_named<T, K: Eq + std::hash::Hash>(
+        global: Vec<T>,
+        local: Vec<T>,
+        key: impl Fn(&T) -> K,
+    ) -> Vec<T> {
+        let local_keys: std::collections::HashSet<K> = local.iter().map(&key).collect();
+        let mut merged: Vec<T> = global
+            .into_iter()
+            .filter(|item| !local_keys.contains(&key(item)))
+            .collect();
+        merged.extend(local);
+        merged
+    }
+
+    let defaults = Config::default();
+    let mut secret_envs = global.secret_envs;
+    for name in local.secret_envs {
+        if !secret_envs.contains(&name) {
+            secret_envs.push(name);
+        }
+    }
+    Config {
+        storage_path: local
+            .storage_path
+            .or(global.storage_path)
+            .unwrap_or(defaults.storage_path),
+        confirmation_mode: local
+            .confirmation_mode
+            .or(global.confirmation_mode)
+            .unwrap_or(defaults.confirmation_mode),
+        update_channel: local
+            .update_channel
+            .or(global.update_channel)
+            .unwrap_or(defaults.update_channel),
+        providers: merge_named(global.providers, local.providers, |p| p.name.clone()),
+        tool_stubs: merge_named(global.tool_stubs, local.tool_stubs, |s| s.tool.clone()),
+        memory: local.memory.or(global.memory).unwrap_or(defaults.memory),
+        mcp_servers: merge_named(global.mcp_servers, local.mcp_servers, |s| s.name.clone()),
+        secret_envs,
+    }
+}
+
+/// Секреты глобального уровня: `secrets.env` рядом с глобальным
+/// конфигом, формат `KEY=value` (строки `#` — комментарии). Пишет
+/// мастер настройки с правами 0600. Переменная, УЖЕ заданная в
+/// окружении процесса, не переопределяется — явное окружение сильнее
+/// файла (стандартный приоритет env над dotenv).
+pub fn load_secrets_env(path: &Path) {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return;
+    };
+    for (name, value) in parse_secrets_env(&contents) {
+        if std::env::var_os(&name).is_none() {
+            std::env::set_var(&name, &value);
+        }
+    }
+}
+
+/// Чистый разбор `KEY=value` — отдельно от применения, чтобы
+/// тестировался без мутации окружения процесса.
+pub fn parse_secrets_env(contents: &str) -> Vec<(String, String)> {
+    contents
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let (name, value) = line.split_once('=')?;
+            let name = name.trim();
+            if name.is_empty() {
+                return None;
+            }
+            Some((name.to_string(), value.trim().to_string()))
+        })
+        .collect()
+}
+
+/// Загружает конфигурацию по слоям (§20.12): глобальный
+/// (`~/.config/berimor/config.toml`) ← локальный (явный `--config` или
+/// `./berimor.toml`) — локальный переопределяет. Отсутствие обоих
+/// файлов — не ошибка: значения [`Config::default`] (первый запуск до
+/// мастера настройки); нечитаемый или невалидный СУЩЕСТВУЮЩИЙ файл —
 /// ошибка: молчаливо игнорировать испорченную конфигурацию нельзя (I2).
+/// Перед слиянием подхватывается глобальный `secrets.env`.
 pub fn load(explicit_path: Option<&Path>) -> Result<Config, ConfigError> {
-    let path = explicit_path
+    if let Some(secrets) = secrets_env_path() {
+        load_secrets_env(&secrets);
+    }
+    let global = match global_config_path() {
+        Some(path) => PartialConfig::load_file(&path)?,
+        None => None,
+    };
+    let local_path = explicit_path
         .map(Path::to_path_buf)
         .unwrap_or_else(default_config_path);
-
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(contents) => contents,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Config::default());
-        }
-        Err(source) => return Err(ConfigError::Read { path, source }),
-    };
-
-    toml::from_str(&contents).map_err(|source| ConfigError::Parse { path, source })
+    let local = PartialConfig::load_file(&local_path)?;
+    Ok(merge(global.unwrap_or_default(), local.unwrap_or_default()))
 }
 
 #[cfg(test)]

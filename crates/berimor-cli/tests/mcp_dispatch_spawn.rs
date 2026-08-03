@@ -82,6 +82,7 @@ fn tool_step_is_served_by_a_real_mcp_server_not_a_static_stub() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env("XDG_CONFIG_HOME", "/nonexistent-berimor-e2e-xdg") // изоляция от глобального конфига (§20.12)
         .spawn()
         .expect("бинарник berimor собран (cargo test)");
     writeln!(child.stdin.take().unwrap(), "y").unwrap();

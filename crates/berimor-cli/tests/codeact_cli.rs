@@ -120,6 +120,7 @@ fn codeact_reaches_finished_through_a_real_js_program() {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .env("XDG_CONFIG_HOME", "/nonexistent-berimor-e2e-xdg") // изоляция от глобального конфига (§20.12)
         .output()
         .expect("бинарник berimor собран (cargo test)");
     server.join().unwrap();

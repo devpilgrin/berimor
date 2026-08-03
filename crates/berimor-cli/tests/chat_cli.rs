@@ -88,11 +88,17 @@ allow_private_endpoint = true
 }
 
 fn run_chat(dir: &std::path::Path, config: &std::path::Path, input: &str) -> std::process::Output {
+    // Изоляция от глобального конфига пользователя (§20.12): иначе
+    // ~/.config/berimor/config.toml подмешивал бы реальные провайдеры
+    // в тесты на машине разработчика.
+    let empty_xdg = std::env::temp_dir().join(format!("berimor-e2e-xdg-{}", std::process::id()));
+    std::fs::create_dir_all(&empty_xdg).unwrap();
     let mut child = Command::new(bin())
         .arg("--config")
         .arg(config)
         .arg("chat")
         .current_dir(dir)
+        .env("XDG_CONFIG_HOME", &empty_xdg)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

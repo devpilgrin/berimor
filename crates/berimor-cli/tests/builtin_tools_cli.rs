@@ -51,12 +51,16 @@ fn run(
     config: &std::path::Path,
     process: &std::path::Path,
 ) -> std::process::Output {
+    // Изоляция от глобального конфига пользователя (§20.12).
+    let empty_xdg = std::env::temp_dir().join(format!("berimor-e2e-xdg-{}", std::process::id()));
+    std::fs::create_dir_all(&empty_xdg).unwrap();
     Command::new(bin())
         .arg("--config")
         .arg(config)
         .arg("run")
         .arg(process)
         .current_dir(dir)
+        .env("XDG_CONFIG_HOME", &empty_xdg)
         .output()
         .unwrap()
 }

@@ -105,6 +105,7 @@ response = {{ status = "active", card_id = "card_1029" }}
 fn run_cli(config: &std::path::Path, resume: Option<&str>, stdin_lines: &[&str]) -> (bool, String) {
     let mut cmd = Command::new(bin());
     cmd.arg("--config")
+        .env("XDG_CONFIG_HOME", "/nonexistent-berimor-e2e-xdg") // изоляция от глобального конфига (§20.12)
         .arg(config)
         .arg("run")
         .arg(GOLDEN_PROCESS)
