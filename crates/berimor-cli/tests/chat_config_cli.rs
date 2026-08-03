@@ -87,11 +87,11 @@ fn slash_commands_work_without_any_provider() {
 fn models_add_full_cycle_writes_global_config_and_reloads_runtime() {
     use std::os::unix::fs::PermissionsExt;
     let sandbox = sandbox("modelsadd");
-    // deepseek — пресет №2; дальше мастер спрашивает model_id (Enter =
-    // умолчание) и ключ API; затем /models после перезагрузки рантайма.
+    // deepseek — по ИМЕНИ, не номеру: порядок пресетов меняется релизами
+    // (добавление moonshot сдвинуло номера 2026-08-03); имя устойчиво.
     let output = run_chat(
         &sandbox,
-        "/models add\n2\n\ntest-deepseek-key\n/models\n/exit\n",
+        "/models add\ndeepseek\n\ntest-deepseek-key\n/models\n/exit\n",
     );
     assert!(
         output.status.success(),

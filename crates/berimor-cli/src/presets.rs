@@ -30,13 +30,28 @@ pub struct ProviderPreset {
 
 pub const PRESETS: &[ProviderPreset] = &[
     ProviderPreset {
+        // Kimi Code (подписка): ОТДЕЛЬНЫЙ endpoint от платформы
+        // Moonshot — ключи несовместимы (репорт 2026-08-03: ключ Kimi
+        // Code на api.moonshot.ai даёт 401 «Invalid Authentication»).
+        // Актуальные модели по доке kimi.com/code/docs: k3, k3-256k,
+        // kimi-for-coding[-highspeed]; живой список — /models.
         name: "kimi",
-        display: "Kimi (Moonshot AI)",
-        about: "moonshot.ai, OpenAI-совместимый API",
+        display: "Kimi Code (подписка Kimi)",
+        about: "api.kimi.com/coding — ключ с kimi.com, модели k3/kimi-for-coding",
+        base_url: "https://api.kimi.com/coding/v1",
+        default_model: "k3-256k",
+        tier: ModelTier::Strong,
+        key_env: Some("MOONSHOT_API_KEY"),
+        private: false,
+    },
+    ProviderPreset {
+        name: "moonshot",
+        display: "Moonshot AI (платформа)",
+        about: "api.moonshot.ai — ключ с platform.moonshot.ai, НЕ ключ Kimi Code",
         base_url: "https://api.moonshot.ai/v1",
         default_model: "kimi-k2-0711-preview",
         tier: ModelTier::Strong,
-        key_env: Some("MOONSHOT_API_KEY"),
+        key_env: Some("MOONSHOT_PLATFORM_API_KEY"),
         private: false,
     },
     ProviderPreset {
@@ -157,7 +172,7 @@ mod tests {
     fn presets_cover_all_promised_providers() {
         let names: Vec<&str> = PRESETS.iter().map(|p| p.name).collect();
         for expected in [
-            "kimi", "deepseek", "openai", "claude", "ollama", "llamacpp", "lmstudio",
+            "kimi", "moonshot", "deepseek", "openai", "claude", "ollama", "llamacpp", "lmstudio",
         ] {
             assert!(names.contains(&expected), "нет пресета {expected}");
         }
