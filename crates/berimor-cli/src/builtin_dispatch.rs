@@ -80,7 +80,9 @@ impl BuiltinToolDispatch {
 
     /// Таймаут терминала под контролем теста: постоянный 30-секундный
     /// прогон `sleep` в тестовом наборе — налог на каждый прогон.
-    #[cfg(test)]
+    /// unix-only: единственный вызов — из cfg(unix)-теста, на Windows
+    /// clippy видит мёртвый код (CI 2026-08-03).
+    #[cfg(all(test, unix))]
     fn with_terminal_timeout(workspace_root: PathBuf, timeout: Duration) -> Self {
         Self {
             workspace_root,
@@ -115,6 +117,20 @@ impl BuiltinToolDispatch {
         buf.truncate(cap as usize);
         Ok((String::from_utf8_lossy(&buf).into_owned(), truncated))
     }
+}
+
+/// join с потолком 2 секунды: вернуть буфер, если читатель завершился,
+/// иначе пусто (поток отсоединяется и доигрывает сам — см. комментарий
+/// в terminal.exec про осиротевших потомков оболочки).
+fn join_capped(handle: std::thread::JoinHandle<Vec<u8>>) -> Vec<u8> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if handle.is_finished() {
+            return handle.join().unwrap_or_default();
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Vec::new()
 }
 
 impl ToolDispatch for BuiltinToolDispatch {
@@ -247,8 +263,15 @@ impl ToolDispatch for BuiltinToolDispatch {
                     }
                 };
                 let _ = child.wait();
-                let mut stdout = out_reader.join().unwrap_or_default();
-                let mut stderr = err_reader.join().unwrap_or_default();
+                // join с потолком, не вечный: если оболочка НЕ exec'нула
+                // команду (sh -c на части систем форкает), kill бьёт
+                // оболочку, а осиротевший потомок держит трубу открытой
+                // до своего естественного конца — read_to_end в потоке
+                // ждёт его (CI ubuntu 2026-08-03: sleep 60 доиграл 61
+                // секунду). Поток без join'а просто отсоединяется и
+                // завершится сам, когда труба закроется.
+                let mut stdout = join_capped(out_reader);
+                let mut stderr = join_capped(err_reader);
                 let status = status?;
                 let out_truncated = stdout.len() as u64 > TERMINAL_OUTPUT_CAP;
                 let err_truncated = stderr.len() as u64 > TERMINAL_OUTPUT_CAP;
