@@ -33,7 +33,7 @@ use berimor_types::event::{Event, EventKind, ProcessInstanceId};
 use serde_json::{json, Value};
 use std::io::IsTerminal;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Ходов агента на одно сообщение пользователя — потолок, не цель;
 /// каждый ход — до 4 вызовов модели (см. AgentStepExecutor::execute).
@@ -228,7 +228,15 @@ pub(crate) fn cmd_chat(explicit_config: Option<&Path>) -> Result<(), RunError> {
     }
     // История переживает перезагрузку рантайма (`/models add`): лента
     // диалога — не часть бандла, терять её из-за смены конфига нельзя.
-    let mut history: Vec<Value> = Vec::new();
+    // Плюс подхват ленты прошлых сессий области (§20.15).
+    let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut history: Vec<Value> = crate::chat_history::load(&workspace);
+    if !history.is_empty() {
+        eprintln!(
+            "[berimor] подхвачено сообщений прошлых сессий: {}",
+            history.len()
+        );
+    }
     loop {
         let config =
             config::load(explicit_config).map_err(|err| RunError::BadInput(err.to_string()))?;
@@ -386,7 +394,9 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
                 );
                 println!();
                 history.push(json!({"role": "user", "content": message}));
-                history.push(json!({"role": "assistant", "content": reply}));
+                history.push(json!({"role": "assistant", "content": reply.clone()}));
+                let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                crate::chat_history::append(&workspace, message, &reply);
             }
             Err(err) => {
                 // Ошибка хода — не смерть сессии: пользователь видит

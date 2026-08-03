@@ -34,7 +34,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use ratatui::{Frame, Terminal};
 use serde_json::Value;
 use std::io::Stdout;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
 
@@ -269,6 +269,16 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         rx,
         done: false,
     };
+    // Подхват ленты прошлых сессий этой области (§20.15).
+    let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let resumed = crate::chat_history::load(&workspace);
+    if !resumed.is_empty() {
+        app.sys(format!(
+            "подхвачено сообщений прошлых сессий: {}",
+            resumed.len()
+        ));
+    }
+    app.conversation = resumed;
     app.sys("berimor chat — /help или / для команд");
     if app.config.providers.is_empty() {
         app.sys("провайдеры не настроены — /models add");
@@ -323,6 +333,19 @@ fn event_loop(
                 }
                 WorkerMsg::Reply(Ok(reply)) => {
                     app.busy = false;
+                    // Лента пишется парой user+assistant на ответ
+                    // (§20.15); user-запись уже в conversation.
+                    if let Some(user) = app
+                        .conversation
+                        .last()
+                        .and_then(|m| m.get("content"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                    {
+                        let workspace =
+                            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                        crate::chat_history::append(&workspace, &user, &reply);
+                    }
                     app.conversation
                         .push(serde_json::json!({"role": "assistant", "content": reply}));
                     app.log.push(LogLine::Assistant(reply));
