@@ -113,8 +113,12 @@ pub struct AgentStepExecutor<'a> {
     pub on_tool_turn: Option<ToolTurnObserver<'a>>,
 }
 
-/// (инструмент, замаскированные аргументы, замаскированное наблюдение).
-pub type ToolTurnObserver<'a> = &'a dyn Fn(&str, &Value, &Value);
+/// (инструмент, замаскированные аргументы, замаскированное наблюдение,
+/// успех). Успех — факт от точки диспетча (Dispatch-ошибка или нет),
+/// НЕ эвристика по тексту наблюдения: содержимое файлов может
+/// содержать слово «ошибка» (репорт 2026-08-03: files.read TASK.md
+/// помечался ✗ из-за фразы «какие ошибки были» в тексте задачи).
+pub type ToolTurnObserver<'a> = &'a dyn Fn(&str, &Value, &Value, bool);
 
 /// Один завершённый ход истории — то, что видит модель на следующем
 /// ходу (`executors.md` §5: «наблюдение» становится частью следующего
@@ -190,7 +194,7 @@ impl AgentStepExecutor<'_> {
 
             match decision.action {
                 AgentAction::Tool { tool, args } => {
-                    let observation = match tool_only::dispatch_confirmed(
+                    let (observation, ok) = match tool_only::dispatch_confirmed(
                         &tool,
                         &args,
                         self.dispatch,
@@ -199,7 +203,7 @@ impl AgentStepExecutor<'_> {
                         self.confirmer,
                         self.secrets,
                     ) {
-                        Ok(value) => value,
+                        Ok(value) => (value, true),
                         // Сбой самого инструмента (неизвестное имя,
                         // ошибка сервера) — не решение безопасности, а
                         // восстановимая ошибка: становится наблюдением,
@@ -209,9 +213,10 @@ impl AgentStepExecutor<'_> {
                         // одна галлюцинация имени инструмента убивала
                         // весь цикл независимо от `max_turns` (найдено
                         // независимым ревью).
-                        Err(tool_only::ToolOnlyError::Dispatch(err)) => {
-                            Value::String(format!("вызов инструмента завершился ошибкой: {err}"))
-                        }
+                        Err(tool_only::ToolOnlyError::Dispatch(err)) => (
+                            Value::String(format!("вызов инструмента завершился ошибкой: {err}")),
+                            false,
+                        ),
                         // CapabilityDenied/ConfirmationRejected —
                         // решение, которое цикл обязан уважать, не
                         // пытаться обойти переформулировкой
@@ -242,7 +247,7 @@ impl AgentStepExecutor<'_> {
                     // dispatch_confirmed (S5, точка 1).
                     let masked_args = self.secrets.mask_value(&args);
                     if let Some(on_tool_turn) = self.on_tool_turn {
-                        on_tool_turn(&tool, &masked_args, &observation);
+                        on_tool_turn(&tool, &masked_args, &observation, ok);
                     }
                     history.push(TurnRecord {
                         thought: decision.thought,

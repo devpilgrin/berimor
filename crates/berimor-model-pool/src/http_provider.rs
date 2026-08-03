@@ -170,28 +170,56 @@ impl ModelProvider for OpenAiCompatibleProvider {
             }),
         };
 
-        let mut http = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .json(&body);
-        if let Some(key) = &self.api_key {
-            // Единственное место, где ключ покидает обёртку (F4).
-            http = http.bearer_auth(key.reveal());
-        }
-
-        let response = http
-            .send()
-            .map_err(|err| ModelError::Unavailable(format!("HTTP-вызов провайдера: {err}")))?;
-        let status = response.status();
-        // Size-cap на тело ответа (аудит 3.9): читается не более
-        // MAX+1 байт — сломанный/злонамеренный endpoint не может
-        // исчерпать память клиента бесконечным телом.
-        use std::io::Read as _;
+        // Один ретрай на ТРАНСПОРТНЫЕ сбои (обрыв соединения, усечённое
+        // тело — «error decoding response body», репорт 2026-08-03
+        // mid-run у DeepSeek): транзиент сети не должен убивать ход
+        // агента. Логических ошибок (4xx/5xx, не-JSON тела) ретрай не
+        // касается — их повторять бессмысленно.
+        let mut last_transport_err: Option<ModelError> = None;
         let mut body_bytes = Vec::new();
-        response
-            .take(MAX_RESPONSE_BODY_BYTES + 1)
-            .read_to_end(&mut body_bytes)
-            .map_err(|err| ModelError::Unavailable(format!("чтение ответа провайдера: {err}")))?;
+        let mut status = reqwest::StatusCode::OK;
+        for attempt in 0..=1u8 {
+            let mut http = self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .json(&body);
+            if let Some(key) = &self.api_key {
+                // Единственное место, где ключ покидает обёртку (F4).
+                http = http.bearer_auth(key.reveal());
+            }
+            let attempt_result = (|| {
+                let response = http.send().map_err(|err| {
+                    ModelError::Unavailable(format!("HTTP-вызов провайдера: {err}"))
+                })?;
+                status = response.status();
+                // Size-cap на тело ответа (аудит 3.9): читается не более
+                // MAX+1 байт — сломанный/злонамеренный endpoint не может
+                // исчерпать память клиента бесконечным телом.
+                use std::io::Read as _;
+                body_bytes.clear();
+                response
+                    .take(MAX_RESPONSE_BODY_BYTES + 1)
+                    .read_to_end(&mut body_bytes)
+                    .map_err(|err| {
+                        ModelError::Unavailable(format!("чтение ответа провайдера: {err}"))
+                    })
+            })();
+            match attempt_result {
+                Ok(_) => {
+                    last_transport_err = None;
+                    break;
+                }
+                Err(err) => {
+                    last_transport_err = Some(err);
+                    if attempt == 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                    }
+                }
+            }
+        }
+        if let Some(err) = last_transport_err {
+            return Err(err);
+        }
         if body_bytes.len() as u64 > MAX_RESPONSE_BODY_BYTES {
             return Err(ModelError::Unavailable(format!(
                 "ответ провайдера превышает лимит тела ({MAX_RESPONSE_BODY_BYTES} байт)"

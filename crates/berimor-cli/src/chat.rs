@@ -164,8 +164,7 @@ pub(crate) fn execute_turn(
             .then_some(&storage as &dyn berimor_storage::EntityGraphStore),
         masker: Some(bundle.masker.as_ref()),
     };
-    let on_tool_turn = |tool: &str, args: &Value, observation: &Value| {
-        let ok = !observation.to_string().contains("ошибк");
+    let on_tool_turn = |tool: &str, args: &Value, _observation: &Value, ok: bool| {
         let _ = tx.send(crate::chat_tui::WorkerMsg::ToolTurn(format!(
             "{} {}({})",
             if ok { "✓" } else { "✗" },
@@ -279,13 +278,8 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
     // Живой вывод вызовов инструментов (§20.13): презентационный канал
     // исполнителя — аргументы и наблюдения приходят замаскированными.
     let theme = Theme::detect();
-    let on_tool_turn = |tool: &str, args: &Value, observation: &Value| {
-        chat_ui::print_tool_turn(
-            &theme,
-            tool,
-            &chat_ui::summarize_args(args),
-            !observation.to_string().contains("ошибк"),
-        );
+    let on_tool_turn = |tool: &str, args: &Value, _observation: &Value, ok: bool| {
+        chat_ui::print_tool_turn(&theme, tool, &chat_ui::summarize_args(args), ok);
     };
 
     let agent = AgentStepExecutor {
