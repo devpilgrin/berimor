@@ -58,13 +58,28 @@ const SLASH_COMMANDS: &[(&str, &str)] = &[
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+/// Ответ модала подтверждения (0.14.0): не «да/нет», а с областью
+/// действия — директива «разрешить / разрешить для проекта / разрешить
+/// для сессии / нет». Порядок в модале — как здесь.
+#[derive(Clone, Copy)]
+pub(crate) enum ConfirmAnswer {
+    /// Одно действие.
+    Once,
+    /// Этот инструмент — до конца сессии.
+    Session,
+    /// Этот инструмент — для области (пишется в `.berimor-allow`).
+    Project,
+    /// Отказ.
+    Deny,
+}
+
 /// Событие от воркер-потока агента в UI-цикл.
 pub(crate) enum WorkerMsg {
     ToolTurn(String),
-    Reply(Result<String, String>),
-    /// Запрос подтверждения от capability-гейта (smart/manual) —
-    /// модалом в TUI, не текстом в терминал поверх экрана.
+    /// Служебная строка в ленту (failover провайдера и т.п.).
+    Sys(String),
     ConfirmRequest(String),
+    Reply(Result<String, String>),
 }
 
 /// Строка журнала диалога.
@@ -182,13 +197,18 @@ struct App {
     active_provider: Option<String>,
     /// Открытый запрос подтверждения (модал y/n).
     confirm_prompt: Option<String>,
+    /// Выбранный вариант модала: 0=да, 1=для сессии, 2=для проекта,
+    /// 3=нет (умолчание — «нет», безопасно).
+    confirm_selection: usize,
     /// Выбранный вариант в модале (подсветка): false = «Нет»
     /// (безопасное умолчание), true = «Да». Enter активирует ВЫБРАННОЕ
     /// — репорт 2026-08-03: Enter раньше означал «нет», что против
     /// интуиции пользователя («я ответил Да, но не прошло»).
-    confirm_yes_selected: bool,
+    /// Разрешения «для сессии»: имена инструментов, разрешённых на
+    /// время этого запуска чата (общие с воркером).
+    session_grants: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Ответ воркеру на подтверждение (канал создаётся на ход).
-    answer_tx: Option<Sender<bool>>,
+    answer_tx: Option<Sender<ConfirmAnswer>>,
     tx: Sender<WorkerMsg>,
     rx: Receiver<WorkerMsg>,
     done: bool,
@@ -263,7 +283,10 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         staging_keys: Vec::new(),
         active_provider: None,
         confirm_prompt: None,
-        confirm_yes_selected: false,
+        confirm_selection: 3,
+        session_grants: std::sync::Arc::new(
+            std::sync::Mutex::new(std::collections::HashSet::new()),
+        ),
         answer_tx: None,
         tx,
         rx,
@@ -328,6 +351,7 @@ fn event_loop(
                     app.log.push(LogLine::Tool(text));
                     app.maybe_follow();
                 }
+                WorkerMsg::Sys(text) => app.sys(text),
                 WorkerMsg::ConfirmRequest(prompt) => {
                     app.confirm_prompt = Some(prompt);
                 }
@@ -446,8 +470,9 @@ impl App {
         let tx = self.tx.clone();
         // Канал ответов на подтверждения: воркер спрашивает (модал в
         // TUI), UI отвечает; живёт до конца хода.
-        let (answer_tx, answer_rx) = channel::<bool>();
+        let (answer_tx, answer_rx) = channel::<ConfirmAnswer>();
         self.answer_tx = Some(answer_tx);
+        let session_grants = self.session_grants.clone();
         std::thread::spawn(move || {
             let reply = crate::chat::execute_turn(
                 &config,
@@ -455,6 +480,7 @@ impl App {
                 message,
                 tx.clone(),
                 Some(answer_rx),
+                session_grants,
             );
             let _ = tx.send(WorkerMsg::Reply(reply));
         });
@@ -713,25 +739,42 @@ fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     // Модал подтверждения действия (capability-гейт) — выше всего.
-    // Стрелки/Tab двигают подсветку, Enter активирует ВЫБРАННОЕ
-    // (умолчание-подсветка — «Нет», безопасно); буквы y/д/n/н — сразу.
+    // Четыре варианта с областью действия (0.14.0): да / для сессии /
+    // для проекта / нет. ←→/Tab двигают подсветку, Enter активирует
+    // ВЫБРАННОЕ (умолчание-подсветка — «Нет»); буквы — сразу.
     if app.confirm_prompt.is_some() {
         match key.code {
-            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
-                app.confirm_yes_selected = !app.confirm_yes_selected;
+            KeyCode::Left | KeyCode::BackTab => {
+                app.confirm_selection = (app.confirm_selection + 3) % 4;
+            }
+            KeyCode::Right | KeyCode::Tab => {
+                app.confirm_selection = (app.confirm_selection + 1) % 4;
             }
             _ => {
                 let answer = match key.code {
                     KeyCode::Char('y')
                     | KeyCode::Char('Y')
                     | KeyCode::Char('д')
-                    | KeyCode::Char('Д') => Some(true),
+                    | KeyCode::Char('Д') => Some(ConfirmAnswer::Once),
+                    KeyCode::Char('с')
+                    | KeyCode::Char('С')
+                    | KeyCode::Char('s')
+                    | KeyCode::Char('S') => Some(ConfirmAnswer::Session),
+                    KeyCode::Char('п')
+                    | KeyCode::Char('П')
+                    | KeyCode::Char('p')
+                    | KeyCode::Char('P') => Some(ConfirmAnswer::Project),
                     KeyCode::Char('n')
                     | KeyCode::Char('N')
                     | KeyCode::Char('н')
                     | KeyCode::Char('Н')
-                    | KeyCode::Esc => Some(false),
-                    KeyCode::Enter => Some(app.confirm_yes_selected),
+                    | KeyCode::Esc => Some(ConfirmAnswer::Deny),
+                    KeyCode::Enter => Some(match app.confirm_selection {
+                        0 => ConfirmAnswer::Once,
+                        1 => ConfirmAnswer::Session,
+                        2 => ConfirmAnswer::Project,
+                        _ => ConfirmAnswer::Deny,
+                    }),
                     _ => None,
                 };
                 if let Some(answer) = answer {
@@ -739,7 +782,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                         let _ = tx.send(answer);
                     }
                     app.confirm_prompt = None;
-                    app.confirm_yes_selected = false;
+                    app.confirm_selection = 3;
                 }
             }
         }
@@ -932,42 +975,50 @@ fn draw(frame: &mut Frame, app: &App) {
         draw_key_prompt(frame, key_env, input.len());
     }
     if let Some(prompt) = &app.confirm_prompt {
-        draw_confirm(frame, prompt, app.confirm_yes_selected);
+        draw_confirm(frame, prompt, app.confirm_selection);
     }
 }
 
-fn draw_confirm(frame: &mut Frame, prompt: &str, yes_selected: bool) {
-    let area = centered_rect(70, 30, frame.area());
+fn draw_confirm(frame: &mut Frame, prompt: &str, selection: usize) {
+    let area = centered_rect(78, 30, frame.area());
     let mut lines: Vec<Line> = prompt
         .lines()
         .map(|l| Line::from(format!(" {l}")))
         .collect();
     lines.push(Line::from(""));
-    let yes_style = if yes_selected {
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Green)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-    let no_style = if yes_selected {
-        Style::default().fg(Color::DarkGray)
-    } else {
-        Style::default()
-            .fg(Color::Black)
-            .bg(Color::Red)
-            .add_modifier(Modifier::BOLD)
-    };
-    lines.push(Line::from(vec![
-        Span::styled(" да [y/д] ", yes_style),
-        Span::raw("  "),
-        Span::styled(" нет [n/н] ", no_style),
-        Span::styled(
-            "   ←→ — выбор, Enter — активировать",
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]));
+    // 0=да 1=сессия 2=проект 3=нет; выбранный — инверсией.
+    const OPTIONS: [(&str, &str, Color); 4] = [
+        (" да [y] ", "разрешить", Color::Green),
+        (" сессия [с] ", "до конца сессии", Color::Cyan),
+        (" проект [п] ", "запись в .berimor-allow", Color::Cyan),
+        (" нет [n] ", "отказ", Color::Red),
+    ];
+    let mut spans: Vec<Span> = Vec::new();
+    for (i, (label, hint, color)) in OPTIONS.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(" "));
+        }
+        let style = if i == selection {
+            Style::default()
+                .fg(Color::Black)
+                .bg(*color)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        spans.push(Span::styled(*label, style));
+        if i == selection {
+            spans.push(Span::styled(
+                format!("({hint})"),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+    }
+    spans.push(Span::styled(
+        "  ←→/Tab — выбор, Enter — активировать",
+        Style::default().fg(Color::DarkGray),
+    ));
+    lines.push(Line::from(spans));
     let modal = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
@@ -1302,7 +1353,10 @@ mod tests {
             staging_keys: vec![],
             active_provider: None,
             confirm_prompt: None,
-            confirm_yes_selected: false,
+            confirm_selection: 3,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
             answer_tx: None,
             tx,
             rx,
@@ -1369,7 +1423,10 @@ mod tests {
             staging_keys: vec![],
             active_provider: None,
             confirm_prompt: None,
-            confirm_yes_selected: false,
+            confirm_selection: 3,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
             answer_tx: None,
             tx,
             rx,

@@ -148,6 +148,13 @@ pub struct Config {
     /// никогда (security-model.md §6).
     #[serde(default)]
     pub secret_envs: Vec<String>,
+    /// Инструменты, разрешённые к мутирующим действиям БЕЗ вопроса
+    /// (0.14.0, директива «не ебать пользователю мозги»): глобальные и
+    /// проектные разрешения складываются (union). Deny-статика и jail
+    /// выше — разрешение снимает ВОПРОС, не запрет. Плюс файл
+    /// `.berimor-allow` в корне области (пишет модал «для проекта»).
+    #[serde(default)]
+    pub auto_confirm: Vec<String>,
 }
 
 impl Default for Config {
@@ -161,6 +168,7 @@ impl Default for Config {
             memory: MemoryConfig::default(),
             mcp_servers: Vec::new(),
             secret_envs: Vec::new(),
+            auto_confirm: Vec::new(),
         }
     }
 }
@@ -204,6 +212,8 @@ pub struct PartialConfig {
     pub memory: Option<MemoryConfig>,
     pub mcp_servers: Vec<McpServerConfig>,
     pub secret_envs: Vec<String>,
+    #[serde(default)]
+    pub auto_confirm: Vec<String>,
 }
 
 impl PartialConfig {
@@ -282,6 +292,12 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
             secret_envs.push(name);
         }
     }
+    let mut auto_confirm = global.auto_confirm;
+    for name in local.auto_confirm {
+        if !auto_confirm.contains(&name) {
+            auto_confirm.push(name);
+        }
+    }
     Config {
         storage_path: local
             .storage_path
@@ -300,7 +316,38 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
         memory: local.memory.or(global.memory).unwrap_or(defaults.memory),
         mcp_servers: merge_named(global.mcp_servers, local.mcp_servers, |s| s.name.clone()),
         secret_envs,
+        auto_confirm,
     }
+}
+
+/// Проектные разрешения на мутации: `.berimor-allow` в корне области —
+/// по одному имени инструмента на строку (`#` — комментарии). Пишет
+/// модал подтверждения («разрешить для проекта»), читается при сборке
+/// бандла. Файл, а не ключ в TOML: дописывать строку честнее, чем
+/// переписывать пользовательский конфиг сериализатором.
+pub fn load_project_allow(workspace: &std::path::Path) -> Vec<String> {
+    let Ok(contents) = std::fs::read_to_string(workspace.join(".berimor-allow")) else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Дописывает разрешение в `.berimor-allow` области (идемпотентно).
+pub fn append_project_allow(workspace: &std::path::Path, tool: &str) -> std::io::Result<()> {
+    if load_project_allow(workspace).iter().any(|t| t == tool) {
+        return Ok(());
+    }
+    use std::io::Write as _;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(workspace.join(".berimor-allow"))?;
+    writeln!(file, "{tool}")
 }
 
 /// Секреты глобального уровня: `secrets.env` рядом с глобальным

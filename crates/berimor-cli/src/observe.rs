@@ -119,6 +119,7 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         dispatch: bundle.dispatch.as_ref(),
         secrets: bundle.masker.as_ref(),
         on_tool_turn: None,
+        on_provider_switch: None,
     };
     let wasm_host = WasmHost::new(
         bundle.dispatch.clone(),

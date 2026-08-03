@@ -59,6 +59,10 @@ pub fn evaluate(
     mode: ConfirmationMode,
     action: &ProposedAction,
     policy: &ToolPolicy,
+    // Инструмент разрешён к мутациям без вопроса (auto_confirm гейта):
+    // снимает ВОПРОС в smart/manual, не трогает deny-статику и
+    // external_effect (те — ветвями выше, до этой точки).
+    is_auto: bool,
 ) -> CapabilityDecision {
     let mutates = policy.mutates.unwrap_or(action.mutates);
 
@@ -104,18 +108,19 @@ pub fn evaluate(
         // smart: чтение свободно, мутации — подтверждение; явная декларация
         // инструмента перекрывает вывод по флагу мутации.
         ConfirmationMode::Smart => match policy.requires_confirmation {
-            Some(true) => CapabilityDecision::ConfirmRequired {
+            Some(true) if !is_auto => CapabilityDecision::ConfirmRequired {
                 reason: format!("'{}' объявлен требующим подтверждения", action.tool),
             },
+            Some(true) => CapabilityDecision::Allow,
             Some(false) => CapabilityDecision::Allow,
-            None if mutates => CapabilityDecision::ConfirmRequired {
+            None if mutates && !is_auto => CapabilityDecision::ConfirmRequired {
                 reason: format!("'{}' — мутирующее действие (режим smart)", action.tool),
             },
             None => CapabilityDecision::Allow,
         },
         // manual: подтверждение на всё, кроме явно read-only.
         ConfirmationMode::Manual => {
-            if !mutates || policy.requires_confirmation == Some(false) {
+            if !mutates || policy.requires_confirmation == Some(false) || is_auto {
                 CapabilityDecision::Allow
             } else {
                 CapabilityDecision::ConfirmRequired {
@@ -141,6 +146,12 @@ pub struct StandardCapability {
     workspace_root: PathBuf,
     tool_policies: HashMap<String, ToolPolicy>,
     jail: Option<FsJail>,
+    /// Инструменты с выданным разрешением на мутации (0.14.0, директива
+    /// «не ебать пользователю мозги»: разрешение дано — работаем молча).
+    /// Источники: `auto_confirm` в конфиге (глобальный+проектный) и
+    /// `.berimor-allow` в корне области. Deny-статика и jail ВЫШЕ —
+    /// разрешение не отменяет запреты, только снимает ВОПРОС.
+    auto_confirm: Vec<String>,
 }
 
 impl StandardCapability {
@@ -152,6 +163,7 @@ impl StandardCapability {
     /// Основной путь `berimor run` использует [`Self::with_jail`].
     pub fn new(workspace_root: PathBuf, tool_policies: HashMap<String, ToolPolicy>) -> Self {
         Self {
+            auto_confirm: Vec::new(),
             workspace_root,
             tool_policies,
             jail: None,
@@ -166,10 +178,23 @@ impl StandardCapability {
     /// только с объявленным каналом путей.
     pub fn with_jail(jail: FsJail, tool_policies: HashMap<String, ToolPolicy>) -> Self {
         Self {
+            auto_confirm: Vec::new(),
             workspace_root: jail.root().to_path_buf(),
             tool_policies,
             jail: Some(jail),
         }
+    }
+
+    /// Разрешения на мутации по именам инструментов (конфиг +
+    /// `.berimor-allow`). Снимает ВОПРОС подтверждения, не запреты.
+    pub fn with_auto_confirm(mut self, tools: Vec<String>) -> Self {
+        self.auto_confirm = tools;
+        self
+    }
+
+    /// Разрешён ли инструмент на мутирующие действия без вопроса.
+    fn is_auto_confirmed(&self, tool: &str) -> bool {
+        self.auto_confirm.iter().any(|t| t == tool)
     }
 
     pub fn jail(&self) -> Option<&FsJail> {
@@ -209,7 +234,7 @@ impl CapabilityGate for StandardCapability {
             .get(&action.tool)
             .cloned()
             .unwrap_or_default();
-        evaluate(mode, action, &policy)
+        evaluate(mode, action, &policy, self.is_auto_confirmed(&action.tool))
     }
 }
 
@@ -229,6 +254,46 @@ mod tests {
 
     fn root() -> PathBuf {
         PathBuf::from("/workspace")
+    }
+
+    #[test]
+    fn auto_confirm_skips_question_but_not_external_effect() {
+        // 0.14.0: разрешённый инструмент не спрашивает в smart/manual…
+        let mut policy = ToolPolicy {
+            mutates: Some(true),
+            ..ToolPolicy::default()
+        };
+        for mode in [ConfirmationMode::Smart, ConfirmationMode::Manual] {
+            let decision = evaluate(mode, &action("files.write", true), &policy, true);
+            assert!(
+                matches!(decision, CapabilityDecision::Allow),
+                "auto_confirm обязан снимать вопрос в {mode:?}"
+            );
+        }
+        // …но внешний деструктив — выше любых разрешений.
+        policy.external_effect = true;
+        let decision = evaluate(
+            ConfirmationMode::Smart,
+            &action("crm.purge", true),
+            &policy,
+            true,
+        );
+        assert!(matches!(
+            decision,
+            CapabilityDecision::ConfirmRequired { .. }
+        ));
+        // Без разрешения smart по-прежнему спрашивает.
+        policy.external_effect = false;
+        let decision = evaluate(
+            ConfirmationMode::Smart,
+            &action("files.write", true),
+            &policy,
+            false,
+        );
+        assert!(matches!(
+            decision,
+            CapabilityDecision::ConfirmRequired { .. }
+        ));
     }
 
     #[test]
@@ -257,14 +322,20 @@ mod tests {
     fn smart_mode_reads_free_mutations_confirm() {
         let policy = ToolPolicy::default();
         assert!(matches!(
-            evaluate(ConfirmationMode::Smart, &action("crm.get", false), &policy),
+            evaluate(
+                ConfirmationMode::Smart,
+                &action("crm.get", false),
+                &policy,
+                false
+            ),
             CapabilityDecision::Allow
         ));
         assert!(matches!(
             evaluate(
                 ConfirmationMode::Smart,
                 &action("crm.update", true),
-                &policy
+                &policy,
+                false
             ),
             CapabilityDecision::ConfirmRequired { .. }
         ));
@@ -274,14 +345,20 @@ mod tests {
     fn manual_mode_confirms_everything_except_read_only() {
         let policy = ToolPolicy::default();
         assert!(matches!(
-            evaluate(ConfirmationMode::Manual, &action("crm.get", false), &policy),
+            evaluate(
+                ConfirmationMode::Manual,
+                &action("crm.get", false),
+                &policy,
+                false
+            ),
             CapabilityDecision::Allow
         ));
         assert!(matches!(
             evaluate(
                 ConfirmationMode::Manual,
                 &action("crm.update", true),
-                &policy
+                &policy,
+                false
             ),
             CapabilityDecision::ConfirmRequired { .. }
         ));
@@ -295,7 +372,7 @@ mod tests {
         };
         for mode in [ConfirmationMode::Smart, ConfirmationMode::Manual] {
             assert!(matches!(
-                evaluate(mode, &action("reports.build", true), &policy),
+                evaluate(mode, &action("reports.build", true), &policy, false),
                 CapabilityDecision::Allow
             ));
         }
@@ -317,7 +394,7 @@ mod tests {
         ] {
             assert!(
                 matches!(
-                    evaluate(mode, &action("deploy.production", true), &policy),
+                    evaluate(mode, &action("deploy.production", true), &policy, false),
                     CapabilityDecision::ConfirmRequired { .. }
                 ),
                 "внешний деструктив не должен проходить свободно ни в одном режиме, {mode:?}"
@@ -341,7 +418,8 @@ mod tests {
             evaluate(
                 ConfirmationMode::Deny,
                 &action("deploy.production", true),
-                &policy
+                &policy,
+                false
             ),
             CapabilityDecision::Deny { .. }
         ));
@@ -363,7 +441,8 @@ mod tests {
             evaluate(
                 ConfirmationMode::Deny,
                 &action("external.read", false),
-                &policy
+                &policy,
+                false
             ),
             CapabilityDecision::ConfirmRequired { .. }
         ));
@@ -384,7 +463,7 @@ mod tests {
             ConfirmationMode::Manual,
             ConfirmationMode::Off,
         ] {
-            let decision = evaluate(mode, &action("external.read", false), &policy);
+            let decision = evaluate(mode, &action("external.read", false), &policy, false);
             assert!(
                 matches!(
                     decision,
@@ -399,11 +478,21 @@ mod tests {
     fn deny_mode_blocks_mutations_allows_reads() {
         let policy = ToolPolicy::default();
         assert!(matches!(
-            evaluate(ConfirmationMode::Deny, &action("crm.update", true), &policy),
+            evaluate(
+                ConfirmationMode::Deny,
+                &action("crm.update", true),
+                &policy,
+                false
+            ),
             CapabilityDecision::Deny { .. }
         ));
         assert!(matches!(
-            evaluate(ConfirmationMode::Deny, &action("crm.get", false), &policy),
+            evaluate(
+                ConfirmationMode::Deny,
+                &action("crm.get", false),
+                &policy,
+                false
+            ),
             CapabilityDecision::Allow
         ));
     }

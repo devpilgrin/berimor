@@ -118,18 +118,64 @@ fn print_models(config: &Config) {
 struct TuiConfirmer<'a> {
     masker: &'a berimor_secrets::Masker,
     tx: std::sync::mpsc::Sender<crate::chat_tui::WorkerMsg>,
-    answer_rx: std::sync::mpsc::Receiver<bool>,
+    answer_rx: std::sync::mpsc::Receiver<crate::chat_tui::ConfirmAnswer>,
+    /// Разрешения «для сессии» — общие с UI набор (0.14.0).
+    session_grants: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl berimor_executors::tool_only::ConfirmationHandler for TuiConfirmer<'_> {
     fn confirm(&self, action: &berimor_types::capability::ProposedAction, reason: &str) -> bool {
+        // Разрешение «для сессии» уже дано — работаем молча (директива:
+        // «если есть разрешение — не ебать пользователю мозги»).
+        if let Ok(grants) = self.session_grants.lock() {
+            if grants.contains(&action.tool) {
+                return true;
+            }
+        }
         let text = self
             .masker
             .mask_text(&format!("{reason}\n{} {}", action.tool, action.args));
         let _ = self
             .tx
             .send(crate::chat_tui::WorkerMsg::ConfirmRequest(text));
-        self.answer_rx.recv().unwrap_or(false)
+        match self
+            .answer_rx
+            .recv()
+            .unwrap_or(crate::chat_tui::ConfirmAnswer::Deny)
+        {
+            crate::chat_tui::ConfirmAnswer::Once => true,
+            crate::chat_tui::ConfirmAnswer::Session => {
+                if let Ok(mut grants) = self.session_grants.lock() {
+                    grants.insert(action.tool.clone());
+                }
+                let _ = self.tx.send(crate::chat_tui::WorkerMsg::Sys(format!(
+                    "разрешение на сессию: {}",
+                    action.tool
+                )));
+                true
+            }
+            crate::chat_tui::ConfirmAnswer::Project => {
+                let workspace =
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let persisted = crate::config::append_project_allow(&workspace, &action.tool);
+                if let Ok(mut grants) = self.session_grants.lock() {
+                    grants.insert(action.tool.clone());
+                }
+                let note = match persisted {
+                    Ok(()) => format!(
+                        "разрешение для проекта: {} (записано в .berimor-allow)",
+                        action.tool
+                    ),
+                    Err(err) => format!(
+                        "разрешение для проекта: {} — НЕ удалось записать .berimor-allow ({err}); действует до конца сессии",
+                        action.tool
+                    ),
+                };
+                let _ = self.tx.send(crate::chat_tui::WorkerMsg::Sys(note));
+                true
+            }
+            crate::chat_tui::ConfirmAnswer::Deny => false,
+        }
     }
 }
 
@@ -138,7 +184,8 @@ pub(crate) fn execute_turn(
     conversation: Vec<Value>,
     message: String,
     tx: std::sync::mpsc::Sender<crate::chat_tui::WorkerMsg>,
-    answer_rx: Option<std::sync::mpsc::Receiver<bool>>,
+    answer_rx: Option<std::sync::mpsc::Receiver<crate::chat_tui::ConfirmAnswer>>,
+    session_grants: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 ) -> Result<String, String> {
     let bundle = build_executor_bundle(config).map_err(|err| err.to_string())?;
     let storage = SqliteEventLog::open(&config.storage_path).map_err(|err| err.to_string())?;
@@ -176,6 +223,7 @@ pub(crate) fn execute_turn(
         masker: bundle.masker.as_ref(),
         tx: tx.clone(),
         answer_rx: rx,
+        session_grants,
     });
     let confirmer: &dyn berimor_executors::tool_only::ConfirmationHandler = match &tui_confirmer {
         Some(tui) => tui,
@@ -192,6 +240,7 @@ pub(crate) fn execute_turn(
         dispatch: bundle.dispatch.as_ref(),
         secrets: bundle.masker.as_ref(),
         on_tool_turn: Some(&on_tool_turn),
+        on_provider_switch: None,
     };
     let state = json!({
         "goal": message,
@@ -301,6 +350,7 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
         dispatch: bundle.dispatch.as_ref(),
         secrets: bundle.masker.as_ref(),
         on_tool_turn: Some(&on_tool_turn),
+        on_provider_switch: None,
     };
 
     let catalog = tools_catalog(config);

@@ -78,6 +78,20 @@ impl ModelPool {
         requirement: ModelTierRequirement,
         latency_budget_ms: Option<u64>,
     ) -> Option<&ModelEntry> {
+        self.select_ranked(requirement, latency_budget_ms)
+            .into_iter()
+            .next()
+    }
+
+    /// Упорядоченный список кандидатов (тот же порядок, что у
+    /// [`select`]) — основа failover: недоступность лучшего провайдера
+    /// — переход к следующему ТОГО ЖЕ класса или сильнее, не молчаливое
+    /// понижение (ideal-agent §3.10, директива 2026-08-03).
+    pub fn select_ranked(
+        &self,
+        requirement: ModelTierRequirement,
+        latency_budget_ms: Option<u64>,
+    ) -> Vec<&ModelEntry> {
         let min_tier = match requirement {
             ModelTierRequirement::Any => ModelTier::Weak,
             ModelTierRequirement::Weak => ModelTier::Weak,
@@ -85,7 +99,8 @@ impl ModelPool {
             ModelTierRequirement::Strong => ModelTier::Strong,
         };
 
-        self.entries
+        let mut candidates: Vec<(usize, &ModelEntry)> = self
+            .entries
             .iter()
             .enumerate()
             .filter(|(_, e)| e.identity.tier >= min_tier)
@@ -95,21 +110,22 @@ impl ModelPool {
                 (Some(budget), Some(measured)) => measured <= budget,
                 _ => true,
             })
-            .min_by_key(|(registration_order, e)| {
-                (
-                    // 1. Локальный при равном классе — впереди.
-                    matches!(e.kind, ProviderKind::Remote),
-                    // 2. Наименьшая стоимость среди оставшихся; None
-                    //    (локальный) дешевле любой цены — но до сюда
-                    //    локальный доходит только если уже отсортирован.
-                    e.cost_per_1k_tokens
-                        .map(|c| (c * 1_000_000.0) as u64)
-                        .unwrap_or(0),
-                    // 3. Фиксированный порядок конфигурации.
-                    *registration_order,
-                )
-            })
-            .map(|(_, e)| e)
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|(registration_order, e)| {
+            (
+                // 1. Локальный при равном классе — впереди.
+                matches!(e.kind, ProviderKind::Remote),
+                // 2. Наименьшая стоимость среди оставшихся; None
+                //    (локальный) дешевле любой цены — но до сюда
+                //    локальный доходит только если уже отсортирован.
+                e.cost_per_1k_tokens
+                    .map(|c| (c * 1_000_000.0) as u64)
+                    .unwrap_or(0),
+                // 3. Фиксированный порядок конфигурации.
+                *registration_order,
+            )
+        });
+        candidates.into_iter().map(|(_, e)| e).collect()
     }
 }
 

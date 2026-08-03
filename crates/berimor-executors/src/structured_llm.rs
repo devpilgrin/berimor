@@ -20,6 +20,7 @@ use berimor_mediation::{
 use berimor_model_pool::ModelPool;
 use berimor_types::{
     contract::Contract,
+    executor::ModelProvider,
     mediation::{MediationOutcome, MediationStage},
     model::{CompletionRequest, ModelError, ModelTier, ModelTierRequirement},
     step::Patch,
@@ -233,15 +234,26 @@ impl StructuredLlm<'_> {
         let adapter = find_contract(contract_name)
             .ok_or_else(|| StructuredLlmError::UnknownContract(contract_name.into()))?;
 
-        let entry = self
-            .pool
-            .select(tier_requirement, latency_budget_ms)
-            .ok_or_else(|| StructuredLlmError::NoProvider(format!("{tier_requirement:?}")))?;
-        let provider = self
-            .providers
-            .get(&entry.identity.provider)
-            .ok_or_else(|| StructuredLlmError::ProviderNotWired(entry.identity.provider.clone()))?;
-        let model_tier = entry.identity.tier;
+        // Failover (директива 2026-08-03): недоступность лучшего —
+        // следующий кандидат того же класса, не «шаг умер».
+        let ranked = self.pool.select_ranked(tier_requirement, latency_budget_ms);
+        if ranked.is_empty() {
+            return Err(StructuredLlmError::NoProvider(format!(
+                "{tier_requirement:?}"
+            )));
+        }
+        let mut candidates = Vec::with_capacity(ranked.len());
+        for entry in &ranked {
+            let provider = self
+                .providers
+                .get(&entry.identity.provider)
+                .ok_or_else(|| {
+                    StructuredLlmError::ProviderNotWired(entry.identity.provider.clone())
+                })?;
+            candidates.push((entry.identity.provider.as_str(), *provider));
+        }
+        let model_tier = ranked[0].identity.tier;
+        let provider = crate::failover::FailoverProvider::new(candidates, None);
 
         // task_hint = step_id, не contract_name: только step_id реально
         // журналируется (`EventKind::StepApplied{step_id}`) и потому

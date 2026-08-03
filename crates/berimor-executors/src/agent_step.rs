@@ -111,6 +111,9 @@ pub struct AgentStepExecutor<'a> {
     /// наблюдением; на ход finish и на решения гейта не вызывается.
     /// Чисто презентационный канал: на логику цикла не влияет.
     pub on_tool_turn: Option<ToolTurnObserver<'a>>,
+    /// Уведомление о failover между провайдерами (0.14.0): «от → к» —
+    /// пользователь видит, какая модель реально отвечает.
+    pub on_provider_switch: crate::failover::ProviderSwitchHook<'a>,
 }
 
 /// (инструмент, замаскированные аргументы, замаскированное наблюдение,
@@ -161,15 +164,25 @@ impl AgentStepExecutor<'_> {
         // (ideal-agent §3.10 запрещает понижать УЖЕ заявленное
         // требование), это единственное требование, которое шаг вообще
         // заявил.
-        let entry = self
+        // Failover (директива 2026-08-03): транспортная недоступность
+        // лучшего кандидата — переход к следующему ТОГО ЖЕ класса
+        // (ранжирование пула это гарантирует), не «ход умер».
+        let ranked = self
             .pool
-            .select(ModelTierRequirement::Any, latency_budget_ms)
-            .ok_or_else(|| AgentStepError::NoProvider("Any".into()))?;
-        let provider = *self
-            .providers
-            .get(&entry.identity.provider)
-            .ok_or_else(|| AgentStepError::ProviderNotWired(entry.identity.provider.clone()))?;
-        let model_tier = entry.identity.tier;
+            .select_ranked(ModelTierRequirement::Any, latency_budget_ms);
+        if ranked.is_empty() {
+            return Err(AgentStepError::NoProvider("Any".into()));
+        }
+        let mut candidates = Vec::with_capacity(ranked.len());
+        for entry in &ranked {
+            let provider = *self
+                .providers
+                .get(&entry.identity.provider)
+                .ok_or_else(|| AgentStepError::ProviderNotWired(entry.identity.provider.clone()))?;
+            candidates.push((entry.identity.provider.as_str(), provider));
+        }
+        let model_tier = ranked[0].identity.tier;
+        let provider = crate::failover::FailoverProvider::new(candidates, self.on_provider_switch);
 
         let layers = self.context.build("agent_step", model_tier, state, step_id);
         let system_context = layers
@@ -186,7 +199,7 @@ impl AgentStepExecutor<'_> {
                 step_id,
                 final_adapter,
                 &system_context,
-                provider,
+                &provider,
                 model_tier,
                 &history,
                 retry_feedback.take(),
@@ -234,7 +247,7 @@ impl AgentStepExecutor<'_> {
                         self.verify_action(
                             step_id,
                             &system_context,
-                            provider,
+                            &provider,
                             model_tier,
                             &tool,
                             &args,
@@ -260,7 +273,7 @@ impl AgentStepExecutor<'_> {
                         if let Some(reason) = self.critique_finish(
                             step_id,
                             &system_context,
-                            provider,
+                            &provider,
                             model_tier,
                             &decision.thought,
                             &result,
@@ -702,6 +715,7 @@ mod tests {
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
+            on_provider_switch: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -734,6 +748,7 @@ mod tests {
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
+            on_provider_switch: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -762,6 +777,7 @@ mod tests {
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
+            on_provider_switch: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -786,6 +802,7 @@ mod tests {
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
+            on_provider_switch: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -813,6 +830,7 @@ mod tests {
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
+            on_provider_switch: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -846,6 +864,7 @@ mod tests {
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
+            on_provider_switch: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -882,6 +901,7 @@ mod tests {
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
+            on_provider_switch: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -911,6 +931,7 @@ mod tests {
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
+            on_provider_switch: None,
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,

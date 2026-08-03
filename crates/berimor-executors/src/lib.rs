@@ -7,5 +7,6 @@
 
 pub mod agent_step;
 pub mod codeact;
+pub mod failover;
 pub mod structured_llm;
 pub mod tool_only;

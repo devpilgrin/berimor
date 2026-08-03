@@ -170,15 +170,17 @@ impl ModelProvider for OpenAiCompatibleProvider {
             }),
         };
 
-        // Один ретрай на ТРАНСПОРТНЫЕ сбои (обрыв соединения, усечённое
-        // тело — «error decoding response body», репорт 2026-08-03
-        // mid-run у DeepSeek): транзиент сети не должен убивать ход
-        // агента. Логических ошибок (4xx/5xx, не-JSON тела) ретрай не
-        // касается — их повторять бессмысленно.
+        // Ретраи на ТРАНСПОРТНЫЕ сбои (обрыв соединения, усечённое тело,
+        // «error sending request» — директива 2026-08-03: «попробовать
+        // повторный вызов через несколько секунд»): 4 попытки с backoff
+        // 0.5/1.5/3с, затем ошибка наверх — там failover на следующего
+        // провайдера того же класса (FailoverProvider). Логические
+        // ошибки (4xx/5xx, не-JSON тела) не ретраятся.
+        const TRANSPORT_BACKOFF_MS: [u64; 3] = [500, 1500, 3000];
         let mut last_transport_err: Option<ModelError> = None;
         let mut body_bytes = Vec::new();
         let mut status = reqwest::StatusCode::OK;
-        for attempt in 0..=1u8 {
+        for attempt in 0..=TRANSPORT_BACKOFF_MS.len() as u8 {
             let mut http = self
                 .client
                 .post(format!("{}/chat/completions", self.base_url))
@@ -211,8 +213,8 @@ impl ModelProvider for OpenAiCompatibleProvider {
                 }
                 Err(err) => {
                     last_transport_err = Some(err);
-                    if attempt == 0 {
-                        std::thread::sleep(std::time::Duration::from_millis(300));
+                    if let Some(pause) = TRANSPORT_BACKOFF_MS.get(attempt as usize) {
+                        std::thread::sleep(std::time::Duration::from_millis(*pause));
                     }
                 }
             }

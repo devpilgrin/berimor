@@ -179,6 +179,7 @@ pub fn run(
         dispatch: bundle.dispatch.as_ref(),
         secrets: bundle.masker.as_ref(),
         on_tool_turn: None,
+        on_provider_switch: None,
     };
 
     let wasm_host = WasmHost::new(
@@ -325,7 +326,16 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
     // plugin-install) осознанно остаются на StandardCapability::new.
     let jail = berimor_capability::jail::FsJail::new(&workspace_root)
         .map_err(|err| RunError::Jail(err.to_string()))?;
-    let gate = StandardCapability::with_jail(jail, tool_policies);
+    // Разрешения на мутации без вопроса (0.14.0): конфиг (глобальный +
+    // проектный, union) + `.berimor-allow` в корне области. Deny-статика
+    // и jail выше — разрешение снимает ВОПРОС, не запрет.
+    let mut auto_confirm = config.auto_confirm.clone();
+    for tool in crate::config::load_project_allow(&workspace_root) {
+        if !auto_confirm.contains(&tool) {
+            auto_confirm.push(tool);
+        }
+    }
+    let gate = StandardCapability::with_jail(jail, tool_policies).with_auto_confirm(auto_confirm);
     let static_stubs = StaticToolDispatch::new(
         config
             .tool_stubs
