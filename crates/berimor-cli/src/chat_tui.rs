@@ -709,13 +709,34 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             app.scroll = app.scroll.saturating_add(10);
             app.follow_tail = false;
         }
-        KeyCode::Left => app.cursor = app.cursor.saturating_sub(1),
-        KeyCode::Right => app.cursor = (app.cursor + 1).min(app.input.len()),
+        KeyCode::Left => {
+            // Курсор хранится в БАЙТАХ (границах символов): insert/remove
+            // в String — байтовые. Движение — по символам через
+            // char_indices, иначе первая же кириллица (2 байта) давала
+            // панику «not a char boundary» (репорт 2026-08-03).
+            app.cursor = app.input[..app.cursor]
+                .char_indices()
+                .next_back()
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+        }
+        KeyCode::Right => {
+            app.cursor = app.input[app.cursor..]
+                .char_indices()
+                .nth(1)
+                .map(|(i, _)| app.cursor + i)
+                .unwrap_or(app.input.len());
+        }
         KeyCode::Home => app.cursor = 0,
         KeyCode::End => app.cursor = app.input.len(),
         KeyCode::Backspace => {
             if app.cursor > 0 {
-                app.cursor -= 1;
+                let prev = app.input[..app.cursor]
+                    .chars()
+                    .next_back()
+                    .map(char::len_utf8)
+                    .unwrap_or(0);
+                app.cursor -= prev;
                 app.input.remove(app.cursor);
                 if app.input.is_empty() || !app.input.starts_with('/') {
                     app.slash_open = false;
@@ -729,7 +750,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         }
         KeyCode::Char(c) => {
             app.input.insert(app.cursor, c);
-            app.cursor += 1;
+            app.cursor += c.len_utf8();
             if app.input == "/" {
                 app.open_slash();
             } else if app.slash_open && !app.input.starts_with('/') {
@@ -946,7 +967,9 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
     ]))
     .block(block);
     frame.render_widget(prompt, area);
-    frame.set_cursor_position((area.x + 3 + app.cursor as u16, area.y + 1));
+    // Курсор на экране — в СИМВОЛАХ (кириллица — 1 колонка, 2 байта).
+    let display_cursor = app.input[..app.cursor].chars().count() as u16;
+    frame.set_cursor_position((area.x + 3 + display_cursor, area.y + 1));
 }
 
 fn draw_hints(frame: &mut Frame, app: &App, area: Rect) {
@@ -1118,6 +1141,56 @@ mod tests {
         assert!(plain.contains("Заголовок"));
         assert!(plain.contains("code"));
         assert!(!plain.contains("```"));
+    }
+
+    #[test]
+    fn cyrillic_input_never_panics_on_char_boundaries() {
+        // Репорт 2026-08-03: ввод в TUI вылетал — курсор в символах против
+        // байтовых insert/remove. Гоняем реальный handle_key.
+        let config = Config::default();
+        let (tx, rx) = channel();
+        let mut app = App {
+            config,
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            tx,
+            rx,
+            done: false,
+        };
+        let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+        for c in "привет".chars() {
+            handle_key(&mut app, key(c));
+        }
+        assert_eq!(app.input, "привет");
+        // Влево два символа, вставка латиницы посередине, backspace.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
+        handle_key(&mut app, key('X'));
+        assert_eq!(app.input, "привXет");
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        assert_eq!(app.input, "привет");
+        handle_key(&mut app, KeyEvent::new(KeyCode::Home, KeyModifiers::NONE));
+        handle_key(&mut app, KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE));
+        assert_eq!(app.input, "ривет");
     }
 
     #[test]
