@@ -182,6 +182,11 @@ struct App {
     active_provider: Option<String>,
     /// Открытый запрос подтверждения (модал y/n).
     confirm_prompt: Option<String>,
+    /// Выбранный вариант в модале (подсветка): false = «Нет»
+    /// (безопасное умолчание), true = «Да». Enter активирует ВЫБРАННОЕ
+    /// — репорт 2026-08-03: Enter раньше означал «нет», что против
+    /// интуиции пользователя («я ответил Да, но не прошло»).
+    confirm_yes_selected: bool,
     /// Ответ воркеру на подтверждение (канал создаётся на ход).
     answer_tx: Option<Sender<bool>>,
     tx: Sender<WorkerMsg>,
@@ -258,6 +263,7 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         staging_keys: Vec::new(),
         active_provider: None,
         confirm_prompt: None,
+        confirm_yes_selected: false,
         answer_tx: None,
         tx,
         rx,
@@ -672,26 +678,36 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Модал подтверждения действия (capability-гейт) — выше всего:
-    // y — подтвердить, n/Esc/Enter — отклонить (opt-in по определению).
+    // Модал подтверждения действия (capability-гейт) — выше всего.
+    // Стрелки/Tab двигают подсветку, Enter активирует ВЫБРАННОЕ
+    // (умолчание-подсветка — «Нет», безопасно); буквы y/д/n/н — сразу.
     if app.confirm_prompt.is_some() {
-        let answer = match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('д') | KeyCode::Char('Д') => {
-                Some(true)
+        match key.code {
+            KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
+                app.confirm_yes_selected = !app.confirm_yes_selected;
             }
-            KeyCode::Char('n')
-            | KeyCode::Char('N')
-            | KeyCode::Char('н')
-            | KeyCode::Char('Н')
-            | KeyCode::Esc
-            | KeyCode::Enter => Some(false),
-            _ => None,
-        };
-        if let Some(answer) = answer {
-            if let Some(tx) = app.answer_tx.take() {
-                let _ = tx.send(answer);
+            _ => {
+                let answer = match key.code {
+                    KeyCode::Char('y')
+                    | KeyCode::Char('Y')
+                    | KeyCode::Char('д')
+                    | KeyCode::Char('Д') => Some(true),
+                    KeyCode::Char('n')
+                    | KeyCode::Char('N')
+                    | KeyCode::Char('н')
+                    | KeyCode::Char('Н')
+                    | KeyCode::Esc => Some(false),
+                    KeyCode::Enter => Some(app.confirm_yes_selected),
+                    _ => None,
+                };
+                if let Some(answer) = answer {
+                    if let Some(tx) = app.answer_tx.take() {
+                        let _ = tx.send(answer);
+                    }
+                    app.confirm_prompt = None;
+                    app.confirm_yes_selected = false;
+                }
             }
-            app.confirm_prompt = None;
         }
         return;
     }
@@ -882,28 +898,40 @@ fn draw(frame: &mut Frame, app: &App) {
         draw_key_prompt(frame, key_env, input.len());
     }
     if let Some(prompt) = &app.confirm_prompt {
-        draw_confirm(frame, prompt);
+        draw_confirm(frame, prompt, app.confirm_yes_selected);
     }
 }
 
-fn draw_confirm(frame: &mut Frame, prompt: &str) {
+fn draw_confirm(frame: &mut Frame, prompt: &str, yes_selected: bool) {
     let area = centered_rect(70, 30, frame.area());
     let mut lines: Vec<Line> = prompt
         .lines()
         .map(|l| Line::from(format!(" {l}")))
         .collect();
     lines.push(Line::from(""));
+    let yes_style = if yes_selected {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let no_style = if yes_selected {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Red)
+            .add_modifier(Modifier::BOLD)
+    };
     lines.push(Line::from(vec![
+        Span::styled(" да [y/д] ", yes_style),
+        Span::raw("  "),
+        Span::styled(" нет [n/н] ", no_style),
         Span::styled(
-            " [y/д] подтвердить ",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            "[n/н/Esc] отклонить ",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            "   ←→ — выбор, Enter — активировать",
+            Style::default().fg(Color::DarkGray),
         ),
     ]));
     let modal = Paragraph::new(lines).block(
@@ -1104,7 +1132,7 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_hints(frame: &mut Frame, app: &App, area: Rect) {
     let hints = if app.confirm_prompt.is_some() {
-        " y/д — подтвердить · n/н/Esc — отклонить (по умолчанию — отклонить)"
+        " ←→ — выбор · Enter — активировать · y/д/n/н — сразу · Esc — нет"
     } else if app.busy {
         " агент работает… · Ctrl+C — выход"
     } else if app.picker.is_some() {
@@ -1240,6 +1268,7 @@ mod tests {
             staging_keys: vec![],
             active_provider: None,
             confirm_prompt: None,
+            confirm_yes_selected: false,
             answer_tx: None,
             tx,
             rx,
@@ -1306,6 +1335,7 @@ mod tests {
             staging_keys: vec![],
             active_provider: None,
             confirm_prompt: None,
+            confirm_yes_selected: false,
             answer_tx: None,
             tx,
             rx,
