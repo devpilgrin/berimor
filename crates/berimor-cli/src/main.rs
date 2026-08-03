@@ -12,6 +12,7 @@ use std::process::ExitCode;
 
 mod builtin_dispatch;
 mod chat;
+mod chat_tui;
 mod chat_ui;
 mod config;
 mod mcp_dispatch;

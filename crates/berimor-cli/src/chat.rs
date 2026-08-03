@@ -31,6 +31,7 @@ use berimor_storage::{EventLog, SqliteEventLog};
 use berimor_types::contract::Contract;
 use berimor_types::event::{Event, EventKind, ProcessInstanceId};
 use serde_json::{json, Value};
+use std::io::IsTerminal;
 use std::io::Write;
 use std::path::Path;
 
@@ -105,7 +106,95 @@ fn print_models(config: &Config) {
     }
 }
 
+/// Один ход агента с собственным рантаймом (TUI-воркер, §20.14):
+/// bundle/журнал/исполнитель строятся в потоке вызова из принадлежащего
+/// потоку конфига — никаких заимствований между потоками, «перезагрузка»
+/// после смены конфига бесплатна. События инструментов — в канал UI.
+/// Ошибка — маскированная строка (безопасно показывать и логировать).
+pub(crate) fn execute_turn(
+    config: &Config,
+    conversation: Vec<Value>,
+    message: String,
+    tx: std::sync::mpsc::Sender<crate::chat_tui::WorkerMsg>,
+) -> Result<String, String> {
+    let bundle = build_executor_bundle(config).map_err(|err| err.to_string())?;
+    let storage = SqliteEventLog::open(&config.storage_path).map_err(|err| err.to_string())?;
+    let providers = bundle.providers();
+    let instance_id = ProcessInstanceId(format!(
+        "chat-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    ));
+    let telemetry_id = instance_id.clone();
+    let on_attempt = |kind: EventKind| {
+        let _ = storage.append(Event::new(telemetry_id.clone(), 1, kind, Value::Null));
+    };
+    let memory_context = MemoryContextBuilder {
+        episodic: &storage,
+        skills: &bundle.skills,
+        session_search_limit: config.memory.session_search_limit,
+        entity_graph: config
+            .memory
+            .entity_graph
+            .then_some(&storage as &dyn berimor_storage::EntityGraphStore),
+        masker: Some(bundle.masker.as_ref()),
+    };
+    let on_tool_turn = |tool: &str, args: &Value, observation: &Value| {
+        let ok = !observation.to_string().contains("ошибк");
+        let _ = tx.send(crate::chat_tui::WorkerMsg::ToolTurn(format!(
+            "{} {}({})",
+            if ok { "✓" } else { "✗" },
+            tool,
+            crate::chat_ui::summarize_args(args)
+        )));
+    };
+    let agent = AgentStepExecutor {
+        pool: &bundle.pool,
+        providers: &providers,
+        context: &memory_context,
+        on_attempt: Some(&on_attempt),
+        gate: bundle.gate.as_ref(),
+        mode: config.confirmation_mode,
+        confirmer: bundle.confirmer.as_ref(),
+        dispatch: bundle.dispatch.as_ref(),
+        secrets: bundle.masker.as_ref(),
+        on_tool_turn: Some(&on_tool_turn),
+    };
+    let state = json!({
+        "goal": message,
+        "history": conversation,
+        "tools": tools_catalog(config),
+    });
+    agent
+        .execute(
+            "chat",
+            ChatReply::NAME,
+            MAX_TURNS_PER_MESSAGE,
+            false,
+            false,
+            &state,
+            None,
+        )
+        .map(|patch| {
+            let reply = patch
+                .changes
+                .get("reply")
+                .and_then(Value::as_str)
+                .unwrap_or("(пустой ответ)")
+                .to_string();
+            bundle.masker.mask_text(&reply)
+        })
+        .map_err(|err| bundle.masker.mask_text(&err.to_string()))
+}
+
 pub(crate) fn cmd_chat(explicit_config: Option<&Path>) -> Result<(), RunError> {
+    // Полноэкранный TUI — только на настоящем терминале (§20.14);
+    // пайпы/скрипты/e2e — построчный REPL ниже (его поведение не менялось).
+    if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+        return crate::chat_tui::run_tui(explicit_config);
+    }
     // История переживает перезагрузку рантайма (`/models add`): лента
     // диалога — не часть бандла, терять её из-за смены конфига нельзя.
     let mut history: Vec<Value> = Vec::new();
