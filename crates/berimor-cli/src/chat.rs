@@ -111,11 +111,34 @@ fn print_models(config: &Config) {
 /// потоку конфига — никаких заимствований между потоками, «перезагрузка»
 /// после смены конфига бесплатна. События инструментов — в канал UI.
 /// Ошибка — маскированная строка (безопасно показывать и логировать).
+/// Подтверждения в TUI (§20.14): TerminalConfirmer писал бы в stdout
+/// поверх alternate screen — каша в поле ввода (репорт 2026-08-03).
+/// Вместо этого — модал в TUI: запрос по каналу, ответ ждём блокируясь
+/// в воркере. Канал умер — «нет» (подтверждение opt-in по определению).
+struct TuiConfirmer<'a> {
+    masker: &'a berimor_secrets::Masker,
+    tx: std::sync::mpsc::Sender<crate::chat_tui::WorkerMsg>,
+    answer_rx: std::sync::mpsc::Receiver<bool>,
+}
+
+impl berimor_executors::tool_only::ConfirmationHandler for TuiConfirmer<'_> {
+    fn confirm(&self, action: &berimor_types::capability::ProposedAction, reason: &str) -> bool {
+        let text = self
+            .masker
+            .mask_text(&format!("{reason}\n{} {}", action.tool, action.args));
+        let _ = self
+            .tx
+            .send(crate::chat_tui::WorkerMsg::ConfirmRequest(text));
+        self.answer_rx.recv().unwrap_or(false)
+    }
+}
+
 pub(crate) fn execute_turn(
     config: &Config,
     conversation: Vec<Value>,
     message: String,
     tx: std::sync::mpsc::Sender<crate::chat_tui::WorkerMsg>,
+    answer_rx: Option<std::sync::mpsc::Receiver<bool>>,
 ) -> Result<String, String> {
     let bundle = build_executor_bundle(config).map_err(|err| err.to_string())?;
     let storage = SqliteEventLog::open(&config.storage_path).map_err(|err| err.to_string())?;
@@ -150,6 +173,15 @@ pub(crate) fn execute_turn(
             crate::chat_ui::summarize_args(args)
         )));
     };
+    let tui_confirmer = answer_rx.map(|rx| TuiConfirmer {
+        masker: bundle.masker.as_ref(),
+        tx: tx.clone(),
+        answer_rx: rx,
+    });
+    let confirmer: &dyn berimor_executors::tool_only::ConfirmationHandler = match &tui_confirmer {
+        Some(tui) => tui,
+        None => bundle.confirmer.as_ref(),
+    };
     let agent = AgentStepExecutor {
         pool: &bundle.pool,
         providers: &providers,
@@ -157,7 +189,7 @@ pub(crate) fn execute_turn(
         on_attempt: Some(&on_attempt),
         gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
-        confirmer: bundle.confirmer.as_ref(),
+        confirmer,
         dispatch: bundle.dispatch.as_ref(),
         secrets: bundle.masker.as_ref(),
         on_tool_turn: Some(&on_tool_turn),

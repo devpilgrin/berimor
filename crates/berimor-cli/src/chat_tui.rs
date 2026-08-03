@@ -62,6 +62,9 @@ const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧
 pub(crate) enum WorkerMsg {
     ToolTurn(String),
     Reply(Result<String, String>),
+    /// Запрос подтверждения от capability-гейта (smart/manual) —
+    /// модалом в TUI, не текстом в терминал поверх экрана.
+    ConfirmRequest(String),
 }
 
 /// Строка журнала диалога.
@@ -177,6 +180,10 @@ struct App {
     /// делая выбор пользователя декорацией (репорт 2026-08-03: выбран
     /// deepseek, ход ушёл в kimi → 401).
     active_provider: Option<String>,
+    /// Открытый запрос подтверждения (модал y/n).
+    confirm_prompt: Option<String>,
+    /// Ответ воркеру на подтверждение (канал создаётся на ход).
+    answer_tx: Option<Sender<bool>>,
     tx: Sender<WorkerMsg>,
     rx: Receiver<WorkerMsg>,
     done: bool,
@@ -250,6 +257,8 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         staging_providers: Vec::new(),
         staging_keys: Vec::new(),
         active_provider: None,
+        confirm_prompt: None,
+        answer_tx: None,
         tx,
         rx,
         done: false,
@@ -302,6 +311,9 @@ fn event_loop(
                 WorkerMsg::ToolTurn(text) => {
                     app.log.push(LogLine::Tool(text));
                     app.maybe_follow();
+                }
+                WorkerMsg::ConfirmRequest(prompt) => {
+                    app.confirm_prompt = Some(prompt);
                 }
                 WorkerMsg::Reply(Ok(reply)) => {
                     app.busy = false;
@@ -393,7 +405,8 @@ impl App {
 
     /// Ход агента — в воркер-потоке с собственным рантаймом (UI не
     /// блокируется; конфиг клонируется — «перезагрузка» бесплатна).
-    fn start_turn(&self, message: String) {
+    fn start_turn(&mut self, message: String) {
+        self.busy = true;
         let mut config = self.config.clone();
         // Пин провайдера (/model): явный выбор пользователя сильнее
         // автоотбора пула — воркер видит только выбранного.
@@ -402,8 +415,18 @@ impl App {
         }
         let conversation = self.conversation.clone();
         let tx = self.tx.clone();
+        // Канал ответов на подтверждения: воркер спрашивает (модал в
+        // TUI), UI отвечает; живёт до конца хода.
+        let (answer_tx, answer_rx) = channel::<bool>();
+        self.answer_tx = Some(answer_tx);
         std::thread::spawn(move || {
-            let reply = crate::chat::execute_turn(&config, conversation, message, tx.clone());
+            let reply = crate::chat::execute_turn(
+                &config,
+                conversation,
+                message,
+                tx.clone(),
+                Some(answer_rx),
+            );
             let _ = tx.send(WorkerMsg::Reply(reply));
         });
     }
@@ -649,6 +672,30 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Модал подтверждения действия (capability-гейт) — выше всего:
+    // y — подтвердить, n/Esc/Enter — отклонить (opt-in по определению).
+    if app.confirm_prompt.is_some() {
+        let answer = match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('д') | KeyCode::Char('Д') => {
+                Some(true)
+            }
+            KeyCode::Char('n')
+            | KeyCode::Char('N')
+            | KeyCode::Char('н')
+            | KeyCode::Char('Н')
+            | KeyCode::Esc
+            | KeyCode::Enter => Some(false),
+            _ => None,
+        };
+        if let Some(answer) = answer {
+            if let Some(tx) = app.answer_tx.take() {
+                let _ = tx.send(answer);
+            }
+            app.confirm_prompt = None;
+        }
+        return;
+    }
+
     // Ввод ключа API (маскируемый) — отдельный режим.
     if let Some(Flow::AddAskKey { input, .. }) = &mut app.flow {
         match key.code {
@@ -701,6 +748,13 @@ fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     match key.code {
+        // Enter при открытой палитре — выбранная команда, а не набранный
+        // фрагмент (репорт 2026-08-03: «выбор в палитре не учитывается»).
+        // Tab — только подстановка, без отправки.
+        KeyCode::Enter if app.slash_open => {
+            app.apply_slash_completion();
+            app.submit();
+        }
         KeyCode::Enter => app.submit(),
         KeyCode::Esc => app.slash_open = false,
         KeyCode::Tab if app.slash_open => app.apply_slash_completion(),
@@ -827,6 +881,39 @@ fn draw(frame: &mut Frame, app: &App) {
     if let Some(Flow::AddAskKey { key_env, input, .. }) = &app.flow {
         draw_key_prompt(frame, key_env, input.len());
     }
+    if let Some(prompt) = &app.confirm_prompt {
+        draw_confirm(frame, prompt);
+    }
+}
+
+fn draw_confirm(frame: &mut Frame, prompt: &str) {
+    let area = centered_rect(70, 30, frame.area());
+    let mut lines: Vec<Line> = prompt
+        .lines()
+        .map(|l| Line::from(format!(" {l}")))
+        .collect();
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            " [y/д] подтвердить ",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            "[n/н/Esc] отклонить ",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    let modal = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow))
+            .title(" подтверждение действия "),
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(modal, area);
 }
 
 fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
@@ -1016,7 +1103,9 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_hints(frame: &mut Frame, app: &App, area: Rect) {
-    let hints = if app.busy {
+    let hints = if app.confirm_prompt.is_some() {
+        " y/д — подтвердить · n/н/Esc — отклонить (по умолчанию — отклонить)"
+    } else if app.busy {
         " агент работает… · Ctrl+C — выход"
     } else if app.picker.is_some() {
         " ↑↓ — выбор · Space — пометить · Enter — подтвердить · Esc — отмена"
@@ -1047,7 +1136,7 @@ fn draw_slash_popup(frame: &mut Frame, app: &App, input_area: Rect) {
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title("команды"))
         .highlight_style(Style::default().bg(Color::DarkGray));
-    let mut state = app.slash_state.clone();
+    let mut state = app.slash_state;
     frame.render_widget(Clear, area);
     frame.render_stateful_widget(list, area, &mut state);
 }
@@ -1082,7 +1171,7 @@ fn draw_picker(frame: &mut Frame, picker: &Picker) {
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
         );
-    let mut state = picker.state.clone();
+    let mut state = picker.state;
     frame.render_widget(Clear, area);
     frame.render_stateful_widget(list, area, &mut state);
 }
@@ -1150,6 +1239,8 @@ mod tests {
             staging_providers: vec![],
             staging_keys: vec![],
             active_provider: None,
+            confirm_prompt: None,
+            answer_tx: None,
             tx,
             rx,
             done: false,
@@ -1214,6 +1305,8 @@ mod tests {
             staging_providers: vec![],
             staging_keys: vec![],
             active_provider: None,
+            confirm_prompt: None,
+            answer_tx: None,
             tx,
             rx,
             done: false,
