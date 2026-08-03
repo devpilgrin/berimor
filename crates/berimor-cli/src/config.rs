@@ -55,6 +55,11 @@ pub struct ProviderConfig {
     /// Стоимость из прайс-таблицы владельца (код-данные, ADR-0011).
     #[serde(default)]
     pub cost_per_1k_tokens: Option<f64>,
+    /// Явная температура запросов; None — 0.0 (воспроизводимость).
+    /// Часть моделей принимает только temperature=1 (Kimi k3) — пресет
+    /// kimi задаёт её (§20.14, репорт 2026-08-03).
+    #[serde(default)]
+    pub temperature: Option<f32>,
 }
 
 /// Заглушка инструмента для `berimor run`: детерминированный ответ на

@@ -443,6 +443,7 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
                     p.base_url.clone(),
                     api_key,
                     p.allow_private_endpoint,
+                    p.temperature,
                 )
                 .map_err(|err| RunError::Provider(err.to_string()))?,
             ),

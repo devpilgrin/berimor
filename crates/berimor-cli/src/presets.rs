@@ -26,6 +26,8 @@ pub struct ProviderPreset {
     pub key_env: Option<&'static str>,
     /// Приватный endpoint (сетевой гейт S3): локальные серверы — true.
     pub private: bool,
+    /// Обязательная температура, если модель её диктует (Kimi k3 — 1.0).
+    pub temperature: Option<f32>,
 }
 
 pub const PRESETS: &[ProviderPreset] = &[
@@ -43,6 +45,8 @@ pub const PRESETS: &[ProviderPreset] = &[
         tier: ModelTier::Strong,
         key_env: Some("MOONSHOT_API_KEY"),
         private: false,
+        // k3/kimi-for-coding: «only 1 is allowed for this model».
+        temperature: Some(1.0),
     },
     ProviderPreset {
         name: "moonshot",
@@ -53,6 +57,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         tier: ModelTier::Strong,
         key_env: Some("MOONSHOT_PLATFORM_API_KEY"),
         private: false,
+        temperature: None,
     },
     ProviderPreset {
         name: "deepseek",
@@ -63,6 +68,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         tier: ModelTier::Strong,
         key_env: Some("DEEPSEEK_API_KEY"),
         private: false,
+        temperature: None,
     },
     ProviderPreset {
         name: "openai",
@@ -73,6 +79,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         tier: ModelTier::Strong,
         key_env: Some("OPENAI_API_KEY"),
         private: false,
+        temperature: None,
     },
     ProviderPreset {
         name: "claude",
@@ -83,6 +90,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         tier: ModelTier::Strong,
         key_env: Some("OPENROUTER_API_KEY"),
         private: false,
+        temperature: None,
     },
     ProviderPreset {
         name: "ollama",
@@ -93,6 +101,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         tier: ModelTier::Strong,
         key_env: None,
         private: true,
+        temperature: None,
     },
     ProviderPreset {
         name: "llamacpp",
@@ -103,6 +112,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         tier: ModelTier::Weak,
         key_env: None,
         private: true,
+        temperature: None,
     },
     ProviderPreset {
         name: "lmstudio",
@@ -113,6 +123,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         tier: ModelTier::Weak,
         key_env: None,
         private: true,
+        temperature: None,
     },
 ];
 
@@ -136,6 +147,7 @@ pub fn instantiate(
         api_key_env: preset.key_env.map(str::to_string),
         allow_private_endpoint: preset.private,
         cost_per_1k_tokens: None,
+        temperature: preset.temperature,
     }
 }
 
@@ -160,6 +172,9 @@ pub fn render_provider_toml(provider: &ProviderConfig) -> String {
     }
     if provider.allow_private_endpoint {
         block.push_str("allow_private_endpoint = true\n");
+    }
+    if let Some(temperature) = provider.temperature {
+        block.push_str(&format!("temperature = {temperature:?}\n"));
     }
     block
 }

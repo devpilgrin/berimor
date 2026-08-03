@@ -46,6 +46,11 @@ pub struct OpenAiCompatibleProvider {
     base_url: String,
     api_key: Option<Secret>,
     allow_private_endpoint: bool,
+    /// Явная температура из конфига; None — 0.0 (воспроизводимость).
+    /// Часть моделей принимает только temperature=1 (Kimi k3: «only 1
+    /// is allowed», репорт 2026-08-03) — для них пресет/конфиг задаёт
+    /// её явно.
+    temperature: Option<f32>,
     client: reqwest::blocking::Client,
 }
 
@@ -57,6 +62,7 @@ impl OpenAiCompatibleProvider {
         base_url: String,
         api_key: Option<Secret>,
         allow_private_endpoint: bool,
+        temperature: Option<f32>,
     ) -> Result<Self, ModelError> {
         let client = reqwest::blocking::Client::builder()
             .timeout(REQUEST_TIMEOUT)
@@ -67,6 +73,7 @@ impl OpenAiCompatibleProvider {
         Ok(Self {
             identity,
             base_url: base_url.trim_end_matches('/').to_string(),
+            temperature,
             api_key,
             allow_private_endpoint,
             client,
@@ -147,7 +154,8 @@ impl ModelProvider for OpenAiCompatibleProvider {
             ],
             // Структурированный шаг — не творческий: минимальная температура
             // ради воспроизводимости (replay по журналу, ideal-agent §3.11).
-            temperature: 0.0,
+            // Конфиг провайдера переопределяет (Kimi k3 допускает только 1).
+            temperature: self.temperature.unwrap_or(0.0),
             // Подсказка формата — только подсказка; валидирует ответ всё
             // равно Mediation, не сервер и не этот клиент. TD3.3: раньше
             // включалось по `contract_name.is_some()` — но CodeAct тоже
@@ -284,6 +292,7 @@ mod tests {
             url,
             Some(Secret::new("sk-test".into())),
             true,
+            None,
         )
         .unwrap();
 
@@ -312,7 +321,7 @@ mod tests {
     #[test]
     fn expects_structured_output_false_omits_response_format_even_with_a_contract_name() {
         let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
-        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true).unwrap();
+        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true, None).unwrap();
         let request = CompletionRequest {
             expects_structured_output: false,
             ..request()
@@ -333,7 +342,7 @@ mod tests {
     fn oversized_response_body_is_rejected_with_limit_error() {
         let huge = format!("{{\"pad\": \"{}\"}}", "x".repeat(9 * 1024 * 1024));
         let (url, server) = serve_once("200 OK", huge);
-        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true).unwrap();
+        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true, None).unwrap();
 
         let result = provider.complete(request());
 
@@ -353,7 +362,7 @@ mod tests {
     #[test]
     fn response_within_limit_is_accepted() {
         let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
-        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true).unwrap();
+        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true, None).unwrap();
         assert!(provider.complete(request()).is_ok());
         server.join().unwrap();
     }
@@ -361,7 +370,7 @@ mod tests {
     #[test]
     fn http_error_maps_to_unavailable() {
         let (url, server) = serve_once("500 Internal Server Error", "{\"error\": \"boom\"}".into());
-        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true).unwrap();
+        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true, None).unwrap();
 
         let result = provider.complete(request());
 
@@ -373,9 +382,14 @@ mod tests {
     fn private_endpoint_without_optin_is_blocked_before_any_connection() {
         // Порт 9 (discard) закрыт наверняка: если ошибка — про соединение,
         // значит гейт пропустил запрос наружу, чего быть не должно.
-        let provider =
-            OpenAiCompatibleProvider::new(identity(), "http://127.0.0.1:9".into(), None, false)
-                .unwrap();
+        let provider = OpenAiCompatibleProvider::new(
+            identity(),
+            "http://127.0.0.1:9".into(),
+            None,
+            false,
+            None,
+        )
+        .unwrap();
 
         let result = provider.complete(request());
 
@@ -395,9 +409,14 @@ mod tests {
         // DNS-имя не используем (тест без сети): гейт проверяется на
         // литерале. Сам запрос не отправляется — проверяется только
         // отсутствие ошибки гейта; порт закрыт, ошибка будет про соединение.
-        let provider =
-            OpenAiCompatibleProvider::new(identity(), "http://203.0.113.10:9".into(), None, false)
-                .unwrap();
+        let provider = OpenAiCompatibleProvider::new(
+            identity(),
+            "http://203.0.113.10:9".into(),
+            None,
+            false,
+            None,
+        )
+        .unwrap();
 
         let result = provider.complete(request());
 
