@@ -130,14 +130,13 @@ limits:
 fn jail_stops_read_outside_workspace() {
     let dir = std::env::temp_dir().join(format!("berimor-e2e-btjail-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    // Файл-жертва ЗА пределами рабочей области.
-    let outside = dir
-        .join("..")
-        .join(format!("outside-{}.txt", std::process::id()));
-    let outside = outside.canonicalize().unwrap_or_else(|_| {
-        let p = std::env::temp_dir().join(format!("outside-{}.txt", std::process::id()));
-        p
-    });
+    // Файл-жертва ЗА пределами рабочей области — ОТНОСИТЕЛЬНЫЙ путь
+    // `../…`: абсолютный путь Windows содержит `\U`-последовательности,
+    // ломающие YAML-скаляр в двойных кавычках (CI windows 2026-08-03).
+    // Относительный путь — та же проверка jail (компонентный обход
+    // выходит за корень → EscapesJail) без платформенных сюрпризов.
+    let outside_name = format!("outside-{}.txt", std::process::id());
+    let outside = dir.join("..").join(&outside_name);
     std::fs::write(&outside, "секрет вне области").unwrap();
 
     let config_path = write_config(&dir, "btjail");
@@ -152,13 +151,12 @@ steps:
   - id: escape
     type: tool
     tool: files.read
-    args: {{path: "{}"}}
+    args: {{path: "../{outside_name}"}}
 limits:
   max_steps: 10
   timeout: 1m
   token_budget: 1k
-"#,
-            outside.display()
+"#
         ),
     )
     .unwrap();
