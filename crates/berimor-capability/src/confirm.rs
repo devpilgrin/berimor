@@ -193,8 +193,10 @@ impl StandardCapability {
     }
 
     /// Разрешён ли инструмент на мутирующие действия без вопроса.
+    /// `*` — широкое разрешение («всё для проекта», 0.14.1): любой
+    /// инструмент, но НЕ external_effect — тот проверяется ветвью выше.
     fn is_auto_confirmed(&self, tool: &str) -> bool {
-        self.auto_confirm.iter().any(|t| t == tool)
+        self.auto_confirm.iter().any(|t| t == tool || t == "*")
     }
 
     pub fn jail(&self) -> Option<&FsJail> {

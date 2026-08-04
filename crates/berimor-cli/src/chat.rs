@@ -128,7 +128,7 @@ impl berimor_executors::tool_only::ConfirmationHandler for TuiConfirmer<'_> {
         // Разрешение «для сессии» уже дано — работаем молча (директива:
         // «если есть разрешение — не ебать пользователю мозги»).
         if let Ok(grants) = self.session_grants.lock() {
-            if grants.contains(&action.tool) {
+            if grants.contains(&action.tool) || grants.contains("*") {
                 return true;
             }
         }
@@ -169,6 +169,22 @@ impl berimor_executors::tool_only::ConfirmationHandler for TuiConfirmer<'_> {
                     Err(err) => format!(
                         "разрешение для проекта: {} — НЕ удалось записать .berimor-allow ({err}); действует до конца сессии",
                         action.tool
+                    ),
+                };
+                let _ = self.tx.send(crate::chat_tui::WorkerMsg::Sys(note));
+                true
+            }
+            crate::chat_tui::ConfirmAnswer::ProjectAll => {
+                let workspace =
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let persisted = crate::config::append_project_allow(&workspace, "*");
+                if let Ok(mut grants) = self.session_grants.lock() {
+                    grants.insert("*".to_string());
+                }
+                let note = match persisted {
+                    Ok(()) => "широкое разрешение для проекта: все инструменты (записано в .berimor-allow)".to_string(),
+                    Err(err) => format!(
+                        "широкое разрешение НЕ записано ({err}); действует до конца сессии"
                     ),
                 };
                 let _ = self.tx.send(crate::chat_tui::WorkerMsg::Sys(note));

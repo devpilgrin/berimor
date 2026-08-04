@@ -69,6 +69,11 @@ pub(crate) enum ConfirmAnswer {
     Session,
     /// Этот инструмент — для области (пишется в `.berimor-allow`).
     Project,
+    /// ВСЕ инструменты — для области (`*` в `.berimor-allow`, 0.14.1:
+    /// «я давал везде разрешение на проект» — разрешение на РАБОТУ,
+    /// не на один инструмент). Deny-статика, jail и external_effect —
+    /// выше широкого разрешения.
+    ProjectAll,
     /// Отказ.
     Deny,
 }
@@ -283,7 +288,7 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         staging_keys: Vec::new(),
         active_provider: None,
         confirm_prompt: None,
-        confirm_selection: 3,
+        confirm_selection: 4,
         session_grants: std::sync::Arc::new(
             std::sync::Mutex::new(std::collections::HashSet::new()),
         ),
@@ -744,11 +749,14 @@ fn handle_key(app: &mut App, key: KeyEvent) {
     // ВЫБРАННОЕ (умолчание-подсветка — «Нет»); буквы — сразу.
     if app.confirm_prompt.is_some() {
         match key.code {
-            KeyCode::Left | KeyCode::BackTab => {
-                app.confirm_selection = (app.confirm_selection + 3) % 4;
+            // Обе оси (репорт 0.14.0: пикеры ходят ↑↓, модал учил ←→ —
+            // пользователь жмёт «вниз», модал глух, Enter на «нет» —
+            // отказ при намерении «проект»).
+            KeyCode::Left | KeyCode::Up | KeyCode::BackTab => {
+                app.confirm_selection = (app.confirm_selection + 4) % 5;
             }
-            KeyCode::Right | KeyCode::Tab => {
-                app.confirm_selection = (app.confirm_selection + 1) % 4;
+            KeyCode::Right | KeyCode::Down | KeyCode::Tab => {
+                app.confirm_selection = (app.confirm_selection + 1) % 5;
             }
             _ => {
                 let answer = match key.code {
@@ -769,10 +777,15 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                     | KeyCode::Char('н')
                     | KeyCode::Char('Н')
                     | KeyCode::Esc => Some(ConfirmAnswer::Deny),
+                    KeyCode::Char('в')
+                    | KeyCode::Char('В')
+                    | KeyCode::Char('a')
+                    | KeyCode::Char('A') => Some(ConfirmAnswer::ProjectAll),
                     KeyCode::Enter => Some(match app.confirm_selection {
                         0 => ConfirmAnswer::Once,
                         1 => ConfirmAnswer::Session,
                         2 => ConfirmAnswer::Project,
+                        3 => ConfirmAnswer::ProjectAll,
                         _ => ConfirmAnswer::Deny,
                     }),
                     _ => None,
@@ -782,7 +795,7 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                         let _ = tx.send(answer);
                     }
                     app.confirm_prompt = None;
-                    app.confirm_selection = 3;
+                    app.confirm_selection = 4;
                 }
             }
         }
@@ -987,10 +1000,11 @@ fn draw_confirm(frame: &mut Frame, prompt: &str, selection: usize) {
         .collect();
     lines.push(Line::from(""));
     // 0=да 1=сессия 2=проект 3=нет; выбранный — инверсией.
-    const OPTIONS: [(&str, &str, Color); 4] = [
+    const OPTIONS: [(&str, &str, Color); 5] = [
         (" да [y] ", "разрешить", Color::Green),
         (" сессия [с] ", "до конца сессии", Color::Cyan),
-        (" проект [п] ", "запись в .berimor-allow", Color::Cyan),
+        (" проект [п] ", "инструмент — в .berimor-allow", Color::Cyan),
+        (" всё [в] ", "ВСЁ для проекта", Color::Cyan),
         (" нет [n] ", "отказ", Color::Red),
     ];
     let mut spans: Vec<Span> = Vec::new();
@@ -1353,7 +1367,7 @@ mod tests {
             staging_keys: vec![],
             active_provider: None,
             confirm_prompt: None,
-            confirm_selection: 3,
+            confirm_selection: 4,
             session_grants: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
@@ -1395,6 +1409,66 @@ mod tests {
         assert!(!plain.contains("```"));
     }
 
+    /// Репорт 0.14.0: пользователь жмёт ↓ к «проекту», модал слушал
+    /// только ←→ — подсветка не двигалась, Enter на «нет» давал отказ
+    /// при намерении разрешить. Теперь обе оси двигают выбор.
+    #[test]
+    fn confirm_modal_arrows_both_axes_and_enter() {
+        let (answer_tx, answer_rx) = channel();
+        let (tx, rx) = channel();
+        let mut app = App {
+            config: Config::default(),
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: Some("test".into()),
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            answer_tx: Some(answer_tx),
+            tx,
+            rx,
+            done: false,
+        };
+        // ↓ ↓ ↓ от «нет» (4) → да(0) → сессия(1) → проект(2); Enter.
+        for _ in 0..3 {
+            handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        }
+        assert_eq!(app.confirm_selection, 2);
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(answer_rx.try_recv(), Ok(ConfirmAnswer::Project)));
+        assert!(app.confirm_prompt.is_none());
+        // ↑ от «нет» — «всё для проекта» (3); Enter → ProjectAll.
+        app.confirm_prompt = Some("test2".into());
+        app.confirm_selection = 4;
+        let (answer_tx2, answer_rx2) = channel();
+        app.answer_tx = Some(answer_tx2);
+        handle_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.confirm_selection, 3);
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(
+            answer_rx2.try_recv(),
+            Ok(ConfirmAnswer::ProjectAll)
+        ));
+    }
+
     #[test]
     fn cyrillic_input_never_panics_on_char_boundaries() {
         // Репорт 2026-08-03: ввод в TUI вылетал — курсор в символах против
@@ -1423,7 +1497,7 @@ mod tests {
             staging_keys: vec![],
             active_provider: None,
             confirm_prompt: None,
-            confirm_selection: 3,
+            confirm_selection: 4,
             session_grants: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
