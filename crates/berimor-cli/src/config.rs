@@ -243,7 +243,13 @@ pub fn global_dir() -> Option<PathBuf> {
     if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME") {
         return Some(PathBuf::from(xdg).join("berimor"));
     }
-    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config").join("berimor"))
+    if let Some(home) = std::env::var_os("HOME") {
+        return Some(PathBuf::from(home).join(".config").join("berimor"));
+    }
+    // Windows: HOME обычно не задан (CI windows-latest 2026-08-04 —
+    // global_dir возвращал None, chat-history молча не писалась, тесты
+    // падали с 0 записей). dirs::config_dir() — %APPDATA% и аналоги.
+    dirs::config_dir().map(|dir| dir.join("berimor"))
 }
 
 pub fn global_config_path() -> Option<PathBuf> {
