@@ -30,3 +30,6 @@ Thumbs.db
 *.swp
 .vscode/
 .idea/
+
+# Claude Code CLI (чужой инструмент; не коммитить)
+.claude/
