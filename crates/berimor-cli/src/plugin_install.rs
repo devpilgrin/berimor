@@ -759,6 +759,23 @@ fn extract_and_read_manifest(
 /// одинаково и для уже ДОВЕРЕННОГО репозитория — доверие удостоверяет
 /// подписанта CI, не содержимое `manifest.yaml`, которое тот же
 /// подписант полностью контролирует.
+/// Рекурсивное копирование каталога (фолбэк для rename через границу ФС).
+fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(dst).map_err(|err| err.to_string())?;
+    for entry in std::fs::read_dir(src).map_err(|err| err.to_string())? {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let target = dst.join(entry.file_name());
+        if entry.file_type().map_err(|err| err.to_string())?.is_dir() {
+            copy_dir_all(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target).map_err(|err| err.to_string())?;
+            // Исполняемые биты бинарника плагина — через границу ФС
+            // fs::copy сохраняет права исходника.
+        }
+    }
+    Ok(())
+}
+
 fn validate_plugin_name(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("имя плагина (manifest.name) не может быть пустым".to_string());
@@ -797,7 +814,12 @@ fn install_plugin(
     if installed_dir.exists() {
         std::fs::remove_dir_all(&installed_dir).map_err(|err| err.to_string())?;
     }
-    std::fs::rename(extract_dir, &installed_dir).map_err(|err| err.to_string())?;
+    // rename атомарен в пределах одной ФС; каталог распаковки (/tmp) и
+    // plugins_root (~/.local/share) — разные ФС (EXDEV) → копирование.
+    if std::fs::rename(extract_dir, &installed_dir).is_err() {
+        copy_dir_all(extract_dir, &installed_dir)?;
+        std::fs::remove_dir_all(extract_dir).map_err(|err| err.to_string())?;
+    }
 
     let manifests_dir = plugins_root.join("manifests");
     std::fs::create_dir_all(&manifests_dir).map_err(|err| err.to_string())?;
