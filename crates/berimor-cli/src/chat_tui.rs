@@ -212,6 +212,8 @@ struct App {
     /// Разрешения «для сессии»: имена инструментов, разрешённых на
     /// время этого запуска чата (общие с воркером).
     session_grants: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Установленные скилы (§20.16): триггер — кодом, потолок — фильтром.
+    skills: Vec<crate::skills::Skill>,
     /// Ответ воркеру на подтверждение (канал создаётся на ход).
     answer_tx: Option<Sender<ConfirmAnswer>>,
     tx: Sender<WorkerMsg>,
@@ -292,6 +294,7 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         session_grants: std::sync::Arc::new(
             std::sync::Mutex::new(std::collections::HashSet::new()),
         ),
+        skills: crate::skills::load_all(&std::env::current_dir().unwrap_or_default()),
         answer_tx: None,
         tx,
         rx,
@@ -458,12 +461,32 @@ impl App {
         self.conversation
             .push(serde_json::json!({"role": "user", "content": message.clone()}));
         self.maybe_follow();
-        self.start_turn(message);
+        // Триггер скилла — КОДОМ (§20.16): префикс фразы; потолок —
+        // фильтр диспетча на этот ход.
+        let matched = crate::skills::match_trigger(&self.skills, &message).map(|s| {
+            (
+                s.name.clone(),
+                s.version.clone(),
+                s.body.clone(),
+                s.tools.clone(),
+            )
+        });
+        match matched {
+            Some((name, version, body, tools)) => {
+                self.sys(format!("скилл «{name}» активен (триггер фразы)"));
+                let ceiling = if tools.is_empty() { None } else { Some(tools) };
+                let augmented = format!(
+                    "[Активен скилл «{name}» v{version}. Следуй его инструкциям:\n{body}]\n\nЗапрос пользователя: {message}"
+                );
+                self.start_turn(augmented, ceiling);
+            }
+            None => self.start_turn(message, None),
+        }
     }
 
     /// Ход агента — в воркер-потоке с собственным рантаймом (UI не
     /// блокируется; конфиг клонируется — «перезагрузка» бесплатна).
-    fn start_turn(&mut self, message: String) {
+    fn start_turn(&mut self, message: String, tool_ceiling: Option<Vec<String>>) {
         self.busy = true;
         let mut config = self.config.clone();
         // Пин провайдера (/model): явный выбор пользователя сильнее
@@ -486,6 +509,7 @@ impl App {
                 tx.clone(),
                 Some(answer_rx),
                 session_grants,
+                tool_ceiling,
             );
             let _ = tx.send(WorkerMsg::Reply(reply));
         });
@@ -547,7 +571,64 @@ impl App {
                 self.picker = Some(Picker::new("Провайдер (Enter — выбрать)", items, false));
                 self.flow = Some(Flow::SwitchPickProvider);
             }
-            other => self.sys(format!("неизвестная команда /{other} — /help")),
+            "skills" => {
+                if self.skills.is_empty() {
+                    self.sys("скиллы не установлены — berimor skill list --available");
+                }
+                let lines: Vec<String> = self
+                    .skills
+                    .iter()
+                    .map(|skill| {
+                        format!(
+                            "{} v{} — {} [{}]{} · {}",
+                            skill.name,
+                            skill.version,
+                            skill.description,
+                            skill.triggers.join(", "),
+                            if skill.tools.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" · потолок: {}", skill.tools.join(" "))
+                            },
+                            skill.origin.display()
+                        )
+                    })
+                    .collect();
+                for line in lines {
+                    self.sys(line);
+                }
+            }
+            other => {
+                // Slash-триггер скилла (§20.16): неизвестная встроенная
+                // команда может быть триггером — тогда это сообщение агенту.
+                let original = format!("/{other}");
+                let matched = crate::skills::match_trigger(&self.skills, &original).map(|s| {
+                    (
+                        s.name.clone(),
+                        s.version.clone(),
+                        s.body.clone(),
+                        s.tools.clone(),
+                    )
+                });
+                match matched {
+                    Some((name, version, body, tools)) => {
+                        self.sys(format!(
+                            "скилл «{name}» активен (триггер /{})",
+                            other.split_whitespace().next().unwrap_or(other)
+                        ));
+                        self.log.push(LogLine::User(original.clone()));
+                        self.conversation
+                            .push(serde_json::json!({"role": "user", "content": original.clone()}));
+                        self.maybe_follow();
+                        let ceiling = if tools.is_empty() { None } else { Some(tools) };
+                        let augmented = format!(
+                            "[Активен скилл «{name}» v{version}. Следуй его инструкциям:\n{body}]\n\nЗапрос пользователя: {original}"
+                        );
+                        self.start_turn(augmented, ceiling);
+                    }
+                    None => self.sys(format!("неизвестная команда /{other} — /help")),
+                }
+            }
         }
     }
 
@@ -1371,6 +1452,7 @@ mod tests {
             session_grants: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
+            skills: Vec::new(),
             answer_tx: None,
             tx,
             rx,
@@ -1409,6 +1491,67 @@ mod tests {
         assert!(!plain.contains("```"));
     }
 
+    /// /skills в TUI: ветка run_command выводит установленные скиллы.
+    #[test]
+    fn run_command_skills_lists_installed() {
+        let (tx, rx) = channel();
+        let mut app = App {
+            config: Config::default(),
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: vec![crate::skills::Skill {
+                name: "code-review-ru".into(),
+                version: "0.1.0".into(),
+                description: "Ревью".into(),
+                triggers: vec!["/review".into()],
+                tools: vec![],
+                model_tier: None,
+                body: String::new(),
+                origin: std::path::PathBuf::from("/tmp/x"),
+            }],
+            answer_tx: None,
+            tx,
+            rx,
+            done: false,
+        };
+        app.run_command("skills");
+        let text = app
+            .log
+            .iter()
+            .map(|l| match l {
+                LogLine::Sys(t) | LogLine::Tool(t) | LogLine::User(t) => t.clone(),
+                LogLine::Assistant(t) | LogLine::Err(t) => t.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            text.contains("code-review-ru"),
+            "ожидали скилл в логе: {text}"
+        );
+    }
+
     /// Репорт 0.14.0: пользователь жмёт ↓ к «проекту», модал слушал
     /// только ←→ — подсветка не двигалась, Enter на «нет» давал отказ
     /// при намерении разрешить. Теперь обе оси двигают выбор.
@@ -1442,6 +1585,7 @@ mod tests {
             session_grants: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
+            skills: Vec::new(),
             answer_tx: Some(answer_tx),
             tx,
             rx,
@@ -1501,6 +1645,7 @@ mod tests {
             session_grants: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashSet::new(),
             )),
+            skills: Vec::new(),
             answer_tx: None,
             tx,
             rx,

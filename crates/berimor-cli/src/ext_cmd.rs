@@ -1,0 +1,206 @@
+//! Команды `berimor skill|agent list|install|remove` (§20.16) — работа
+//! с каталогами расширений. Установка — копирование из git-каталога в
+//! глобальную директорию (или проектную, `--project`). Операторские
+//! команды: агентному диспетчеру недоступны, гейт не требуется.
+
+use clap::Subcommand;
+use std::path::PathBuf;
+
+#[derive(Subcommand)]
+pub enum ExtAction {
+    /// Установленные; `--available` — доступные в каталоге.
+    List {
+        /// Показать содержимое каталога (обновляет кэш).
+        #[arg(long)]
+        available: bool,
+    },
+    /// Установить из каталога по имени.
+    Install {
+        name: String,
+        /// В проект (`.berimor/...`), а не глобально.
+        #[arg(long)]
+        project: bool,
+        /// Свой URL каталога вместо официального.
+        #[arg(long)]
+        repo: Option<String>,
+    },
+    /// Удалить установленное.
+    Remove {
+        name: String,
+        /// Из проекта (`.berimor/...`).
+        #[arg(long)]
+        project: bool,
+    },
+}
+
+/// Тип расширения — параметризует каталог, префикс и маркер манифеста.
+pub enum ExtKind {
+    Skill,
+    Agent,
+}
+
+impl ExtKind {
+    fn default_repo(&self) -> &'static str {
+        match self {
+            ExtKind::Skill => crate::catalog::DEFAULT_SKILLS_REPO,
+            ExtKind::Agent => crate::catalog::DEFAULT_AGENTS_REPO,
+        }
+    }
+
+    fn prefix(&self) -> &'static str {
+        match self {
+            ExtKind::Skill => "skills",
+            ExtKind::Agent => "agents",
+        }
+    }
+
+    fn marker(&self) -> &'static str {
+        match self {
+            ExtKind::Skill => "SKILL.md",
+            ExtKind::Agent => "agent.yaml",
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            ExtKind::Skill => "скиллов",
+            ExtKind::Agent => "субагентов",
+        }
+    }
+}
+
+fn dest_root(kind: &ExtKind, project: bool) -> Result<PathBuf, String> {
+    if project {
+        let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+        Ok(cwd.join(".berimor").join(kind.prefix()))
+    } else {
+        crate::config::global_dir()
+            .map(|dir| dir.join(kind.prefix()))
+            .ok_or_else(|| "глобальная директория недоступна".to_string())
+    }
+}
+
+pub fn run(kind: ExtKind, action: ExtAction) -> i32 {
+    match action {
+        ExtAction::List { available } => list(&kind, available),
+        ExtAction::Install {
+            name,
+            project,
+            repo,
+        } => install(&kind, &name, project, repo.as_deref()),
+        ExtAction::Remove { name, project } => remove(&kind, &name, project),
+    }
+}
+
+fn list(kind: &ExtKind, available: bool) -> i32 {
+    if available {
+        let repo = kind.default_repo();
+        match crate::catalog::sync(repo) {
+            Ok(dir) => {
+                let entries = crate::catalog::list(&dir, kind.prefix(), kind.marker());
+                if entries.is_empty() {
+                    println!("каталог пуст ({})", kind.prefix());
+                } else {
+                    println!("доступно в каталоге ({repo}):");
+                    for entry in entries {
+                        println!("  {:24} {}", entry.name, entry.summary);
+                    }
+                }
+                0
+            }
+            Err(err) => {
+                eprintln!("каталог недоступен: {err}");
+                1
+            }
+        }
+    } else {
+        let global = dest_root(kind, false).unwrap_or_default();
+        let project = dest_root(kind, true).unwrap_or_default();
+        let mut shown = 0usize;
+        for (root, scope) in [(&global, "глобально"), (&project, "проект")] {
+            let Ok(entries) = std::fs::read_dir(root) else {
+                continue;
+            };
+            for entry in entries.filter_map(|e| e.ok()) {
+                if entry.path().is_dir() && entry.path().join(kind.marker()).is_file() {
+                    println!(
+                        "  {:24} {:10} {}",
+                        entry.file_name().to_string_lossy(),
+                        scope,
+                        entry.path().display()
+                    );
+                    shown += 1;
+                }
+            }
+        }
+        if shown == 0 {
+            println!(
+                "ничего не установлено. Каталог: berimor {} list --available; \
+                 установка: berimor {} install <имя>",
+                kind_label_cmd(kind),
+                kind_label_cmd(kind)
+            );
+        }
+        0
+    }
+}
+
+fn kind_label_cmd(kind: &ExtKind) -> &'static str {
+    match kind {
+        ExtKind::Skill => "skill",
+        ExtKind::Agent => "agent",
+    }
+}
+
+fn install(kind: &ExtKind, name: &str, project: bool, repo: Option<&str>) -> i32 {
+    let repo = repo.unwrap_or_else(|| kind.default_repo());
+    let root = match dest_root(kind, project) {
+        Ok(root) => root,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    match crate::catalog::install(repo, kind.prefix(), name, &root) {
+        Ok(path) => {
+            println!("установлено: {}", path.display());
+            if matches!(kind, ExtKind::Agent) {
+                println!(
+                    "· исполнитель субагентов — следующий этап ROADMAP; определение совместимо"
+                );
+            }
+            0
+        }
+        Err(err) => {
+            eprintln!("установка не удалась: {err}");
+            eprintln!(
+                "· список каталога {}: berimor {} list --available",
+                kind.label(),
+                kind_label_cmd(kind)
+            );
+            1
+        }
+    }
+}
+
+fn remove(kind: &ExtKind, name: &str, project: bool) -> i32 {
+    let Ok(root) = dest_root(kind, project) else {
+        eprintln!("глобальная директория недоступна");
+        return 1;
+    };
+    let target = root.join(name);
+    if !target.is_dir() {
+        eprintln!("'{name}' не установлен ({})", root.display());
+        return 1;
+    }
+    match std::fs::remove_dir_all(&target) {
+        Ok(()) => {
+            println!("удалено: {}", target.display());
+            0
+        }
+        Err(err) => {
+            eprintln!("удаление не удалось: {err}");
+            1
+        }
+    }
+}

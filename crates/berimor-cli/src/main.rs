@@ -11,11 +11,13 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 mod builtin_dispatch;
+mod catalog;
 mod chat;
 mod chat_history;
 mod chat_tui;
 mod chat_ui;
 mod config;
+mod ext_cmd;
 mod mcp_dispatch;
 mod observe;
 mod plugin_install;
@@ -23,6 +25,7 @@ mod presets;
 mod run;
 mod self_update;
 mod setup;
+mod skills;
 mod trust;
 mod verify;
 
@@ -79,6 +82,18 @@ enum Command {
     Plugin {
         #[command(subcommand)]
         action: PluginAction,
+    },
+    /// Скилы: список (установленные и доступные в каталоге), установка,
+    /// удаление (§20.16).
+    Skill {
+        #[command(subcommand)]
+        action: ext_cmd::ExtAction,
+    },
+    /// Субагенты: список, установка, удаление (§20.16; исполнитель —
+    /// отдельный этап ROADMAP).
+    Agent {
+        #[command(subcommand)]
+        action: ext_cmd::ExtAction,
     },
     /// Доверенный список репозиториев (ROADMAP D5) — источник обновлений
     /// (`self-update`) и плагинов (`plugin install`).
@@ -258,6 +273,18 @@ fn main() -> ExitCode {
                 }
             }
         },
+        Command::Skill { action } => {
+            let code = ext_cmd::run(ext_cmd::ExtKind::Skill, action);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
+        Command::Agent { action } => {
+            let code = ext_cmd::run(ext_cmd::ExtKind::Agent, action);
+            if code != 0 {
+                std::process::exit(code);
+            }
+        }
         Command::Trust { action } => {
             let result = match action {
                 TrustAction::Add {

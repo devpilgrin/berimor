@@ -195,6 +195,30 @@ impl berimor_executors::tool_only::ConfirmationHandler for TuiConfirmer<'_> {
     }
 }
 
+/// Потолок инструментов активного скилла (§20.16): вызов вне списка —
+/// ошибка диспетча, модель видит причину. Пересечение с правами
+/// сессии вычислено снаружи кодом (триггер — не модель).
+struct CeilingDispatch<'a> {
+    inner: &'a dyn berimor_executors::tool_only::ToolDispatch,
+    allowed: &'a [String],
+}
+
+impl berimor_executors::tool_only::ToolDispatch for CeilingDispatch<'_> {
+    fn call(
+        &self,
+        tool: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, berimor_executors::tool_only::DispatchError> {
+        if !self.allowed.iter().any(|t| t == tool) {
+            return Err(berimor_executors::tool_only::DispatchError {
+                tool: tool.into(),
+                reason: "инструмент вне потолка активного скилла".into(),
+            });
+        }
+        self.inner.call(tool, args)
+    }
+}
+
 pub(crate) fn execute_turn(
     config: &Config,
     conversation: Vec<Value>,
@@ -202,6 +226,7 @@ pub(crate) fn execute_turn(
     tx: std::sync::mpsc::Sender<crate::chat_tui::WorkerMsg>,
     answer_rx: Option<std::sync::mpsc::Receiver<crate::chat_tui::ConfirmAnswer>>,
     session_grants: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    tool_ceiling: Option<Vec<String>>,
 ) -> Result<String, String> {
     let bundle = build_executor_bundle(config).map_err(|err| err.to_string())?;
     let storage = SqliteEventLog::open(&config.storage_path).map_err(|err| err.to_string())?;
@@ -235,6 +260,10 @@ pub(crate) fn execute_turn(
             crate::chat_ui::summarize_args(args)
         )));
     };
+    let ceiling_dispatch = tool_ceiling.as_deref().map(|allowed| CeilingDispatch {
+        inner: bundle.dispatch.as_ref(),
+        allowed,
+    });
     let tui_confirmer = answer_rx.map(|rx| TuiConfirmer {
         masker: bundle.masker.as_ref(),
         tx: tx.clone(),
@@ -253,7 +282,10 @@ pub(crate) fn execute_turn(
         gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
         confirmer,
-        dispatch: bundle.dispatch.as_ref(),
+        dispatch: ceiling_dispatch
+            .as_ref()
+            .map(|d| d as &dyn berimor_executors::tool_only::ToolDispatch)
+            .unwrap_or(bundle.dispatch.as_ref()),
         secrets: bundle.masker.as_ref(),
         on_tool_turn: Some(&on_tool_turn),
         on_provider_switch: None,
@@ -411,6 +443,25 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
                 }
                 "help" => print_help(),
                 "config" => print_config(config),
+                "skills" => {
+                    let workspace =
+                        std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                    let skills = crate::skills::load_all(&workspace);
+                    if skills.is_empty() {
+                        eprintln!(
+                            "[berimor] скиллы не установлены — berimor skill list --available"
+                        );
+                    }
+                    for skill in &skills {
+                        eprintln!(
+                            "[berimor] {} v{} — {} [{}]",
+                            skill.name,
+                            skill.version,
+                            skill.description,
+                            skill.triggers.join(", ")
+                        );
+                    }
+                }
                 "models" => print_models(config),
                 "models add" => {
                     if let Err(err) = setup::run_wizard() {
