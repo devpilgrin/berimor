@@ -275,9 +275,10 @@ pub fn run(
 /// берут его через `Arc::as_ref`/автодеref — поведение не меняется.
 pub(crate) struct ExecutorBundle {
     pub(crate) gate: std::sync::Arc<StandardCapability>,
-    pub(crate) dispatch: std::sync::Arc<CompositeToolDispatch>,
+    pub(crate) dispatch:
+        std::sync::Arc<dyn berimor_executors::tool_only::ToolDispatch + Send + Sync>,
     pub(crate) pool: ModelPool,
-    provider_clients: Vec<(String, Box<dyn ModelProvider>)>,
+    provider_clients: Vec<(String, std::sync::Arc<dyn ModelProvider + Send + Sync>)>,
     pub(crate) skills: Vec<berimor_memory::procedural::SkillSummary>,
     pub(crate) confirmer: std::sync::Arc<TerminalConfirmer>,
     /// Реестр секретов запуска (S5): ключи API провайдеров +
@@ -379,7 +380,8 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
     masker.register_from_env(&config.secret_envs);
 
     let mut pool = ModelPool::new();
-    let mut provider_clients: Vec<(String, Box<dyn ModelProvider>)> = Vec::new();
+    let mut provider_clients: Vec<(String, std::sync::Arc<dyn ModelProvider + Send + Sync>)> =
+        Vec::new();
     // llama.cpp-бэкенд инициализируется один раз на процесс и только если
     // в конфигурации есть локальные провайдеры (E4, ADR-0024).
     #[cfg(feature = "local-inference")]
@@ -416,7 +418,11 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
             });
             provider_clients.push((
                 p.name.clone(),
-                build_local_provider(&identity, model_path, llama_backend.as_ref())?,
+                std::sync::Arc::from(build_local_provider(
+                    &identity,
+                    model_path,
+                    llama_backend.as_ref(),
+                )?),
             ));
             continue;
         }
@@ -447,7 +453,7 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
         };
         provider_clients.push((
             p.name.clone(),
-            Box::new(
+            std::sync::Arc::new(
                 OpenAiCompatibleProvider::new(
                     identity,
                     p.base_url.clone(),
@@ -462,16 +468,39 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
 
     let skills = load_skills(config.memory.skills_dir.as_deref());
     let masker = std::sync::Arc::new(masker);
+    let gate = std::sync::Arc::new(gate);
+    let confirmer = std::sync::Arc::new(TerminalConfirmer {
+        masker: std::sync::Arc::clone(&masker),
+    });
+
+    // agents.run (§20.17): обёртка над композитом — поручение субагенту
+    // исполняется вложенным циклом со своими потолком/бюджетом/журналом.
+    let dispatch: std::sync::Arc<dyn berimor_executors::tool_only::ToolDispatch + Send + Sync> =
+        std::sync::Arc::new(crate::agent_dispatch::AgentRunDispatch::new(
+            std::sync::Arc::new(dispatch),
+            crate::agent_dispatch::AgentRunContext {
+                pool: pool.clone(),
+                providers: provider_clients.clone(),
+                gate: gate.clone(),
+                confirmer: confirmer.clone(),
+                masker: masker.clone(),
+                mode: config.confirmation_mode,
+                storage_path: config.storage_path.clone(),
+                builtin_names: crate::builtin_dispatch::builtin_policies()
+                    .iter()
+                    .map(|(n, _)| n.clone())
+                    .collect(),
+                depth: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            },
+        ));
 
     Ok(ExecutorBundle {
-        gate: std::sync::Arc::new(gate),
-        dispatch: std::sync::Arc::new(dispatch),
+        gate,
+        dispatch,
         pool,
         provider_clients,
         skills,
-        confirmer: std::sync::Arc::new(TerminalConfirmer {
-            masker: std::sync::Arc::clone(&masker),
-        }),
+        confirmer,
         masker,
     })
 }
@@ -484,7 +513,7 @@ fn build_local_provider(
     identity: &ModelIdentity,
     model_path: &std::path::Path,
     backend: Option<&std::sync::Arc<berimor_model_pool::local_provider::LlamaBackend>>,
-) -> Result<Box<dyn ModelProvider>, RunError> {
+) -> Result<Box<dyn ModelProvider + Send + Sync>, RunError> {
     let backend = backend.cloned().ok_or_else(|| {
         RunError::Provider("внутренняя ошибка: llama.cpp backend не инициализирован".to_string())
     })?;
@@ -502,7 +531,7 @@ fn build_local_provider(
     identity: &ModelIdentity,
     model_path: &std::path::Path,
     _backend: Option<&()>,
-) -> Result<Box<dyn ModelProvider>, RunError> {
+) -> Result<Box<dyn ModelProvider + Send + Sync>, RunError> {
     Err(RunError::Provider(format!(
         "провайдер '{}': задан model_path ({}), но бинарник собран без локального инференса — пересоберите с `--features local-inference`",
         identity.provider,

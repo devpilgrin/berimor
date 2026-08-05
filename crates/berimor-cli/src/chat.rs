@@ -56,6 +56,7 @@ fn tools_catalog(config: &Config) -> Value {
         json!({"name": "files.list", "args": {"path": "строка, по умолчанию \".\""}, "about": "листинг каталога (до 1000 записей)"}),
         json!({"name": "terminal.exec", "args": {"command": "строка"}, "about": "выполнить команду оболочки (30 сек, 64 КиБ вывода)"}),
         json!({"name": "http.fetch", "args": {"url": "строка"}, "about": "GET-запрос (приватные адреса запрещены, редиректы не следуются)"}),
+        json!({"name": "agents.run", "args": {"name": "имя субагента", "task": "поручение"}, "about": "поручить задачу субагенту (свои потолок и бюджет; berimor agent list)"}),
     ];
     for stub in &config.tool_stubs {
         tools.push(json!({"name": stub.tool, "args": {}, "about": "объявленный оператором инструмент (заглушка)"}));
@@ -193,6 +194,25 @@ impl berimor_executors::tool_only::ConfirmationHandler for TuiConfirmer<'_> {
             crate::chat_tui::ConfirmAnswer::Deny => false,
         }
     }
+}
+
+/// Триггер скилла → расширенное сообщение + потолок + имя (общий для
+/// TUI и REPL — §20.16; триггер вычисляет код, не модель).
+pub(crate) fn resolve_skill_trigger(
+    skills: &[crate::skills::Skill],
+    message: &str,
+) -> Option<(String, Option<Vec<String>>, String)> {
+    let skill = crate::skills::match_trigger(skills, message)?;
+    let ceiling = if skill.tools.is_empty() {
+        None
+    } else {
+        Some(skill.tools.clone())
+    };
+    let augmented = format!(
+        "[Активен скилл «{}» v{}. Следуй его инструкциям:\n{}]\n\nЗапрос пользователя: {}",
+        skill.name, skill.version, skill.body, message
+    );
+    Some((augmented, ceiling, skill.name.clone()))
 }
 
 /// Потолок инструментов активного скилла (§20.16): вызов вне списка —
@@ -417,6 +437,8 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
         .unwrap_or_else(|_| ".".to_string());
     chat_ui::print_banner(&theme, &workspace, &tools_summary, &instance_id.0);
 
+    // Скилы сессии (§20.16): триггер — кодом, потолок — фильтром хода.
+    let chat_skills = crate::skills::load_all(&std::env::current_dir().unwrap_or_default());
     let stdin = std::io::stdin();
     loop {
         eprint!("{} ", theme.green("›"));
@@ -434,15 +456,22 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
             continue;
         }
 
+        // Ход после разбора команд/триггеров: (сообщение, потолок).
         // Slash-команды — служебный канал, модели не уходят.
-        if let Some(command) = message.strip_prefix('/') {
+        let turn: (String, Option<Vec<String>>) = if let Some(command) = message.strip_prefix('/') {
             match command {
                 "exit" | "quit" => {
                     eprintln!("[berimor] сессия завершена");
                     return Ok(SessionOutcome::Exit);
                 }
-                "help" => print_help(),
-                "config" => print_config(config),
+                "help" => {
+                    print_help();
+                    continue;
+                }
+                "config" => {
+                    print_config(config);
+                    continue;
+                }
                 "skills" => {
                     let workspace =
                         std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -461,8 +490,12 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
                             skill.triggers.join(", ")
                         );
                     }
+                    continue;
                 }
-                "models" => print_models(config),
+                "models" => {
+                    print_models(config);
+                    continue;
+                }
                 "models add" => {
                     if let Err(err) = setup::run_wizard() {
                         eprintln!("[berimor] мастер настройки: {err}");
@@ -470,26 +503,81 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
                     }
                     return Ok(SessionOutcome::Reload);
                 }
-                _ => eprintln!("[berimor] неизвестная команда /{command} — /help"),
+                _ => {
+                    // Slash-триггер скилла: неизвестная встроенная команда
+                    // может быть триггером — тогда это сообщение агенту.
+                    match resolve_skill_trigger(&chat_skills, message) {
+                        Some((augmented, ceiling, name)) => {
+                            eprintln!(
+                                "[berimor] скилл «{name}» активен (триггер /{})",
+                                command.split_whitespace().next().unwrap_or(command)
+                            );
+                            (augmented, ceiling)
+                        }
+                        None => {
+                            eprintln!("[berimor] неизвестная команда /{command} — /help");
+                            continue;
+                        }
+                    }
+                }
             }
-            continue;
-        }
+        } else {
+            // Триггер фразы — кодом (§20.16).
+            match resolve_skill_trigger(&chat_skills, message) {
+                Some((augmented, ceiling, name)) => {
+                    eprintln!("[berimor] скилл «{name}» активен (триггер фразы)");
+                    (augmented, ceiling)
+                }
+                None => (message.to_string(), None),
+            }
+        };
 
         let state = json!({
-            "goal": message,
+            "goal": turn.0,
             "history": *history,
             "tools": catalog,
         });
         let spinner = chat_ui::Spinner::start(&theme, "berimor думает…");
-        let outcome = agent.execute(
-            "chat",
-            ChatReply::NAME,
-            MAX_TURNS_PER_MESSAGE,
-            false,
-            false,
-            &state,
-            None,
-        );
+        // Потолок скилла — per-turn агент с фильтром диспетча (§20.16).
+        let ceiling_dispatch = turn.1.as_deref().map(|allowed| CeilingDispatch {
+            inner: bundle.dispatch.as_ref(),
+            allowed,
+        });
+        let outcome = match &ceiling_dispatch {
+            Some(ceiling) => {
+                let turn_agent = AgentStepExecutor {
+                    pool: &bundle.pool,
+                    providers: &providers,
+                    context: &memory_context,
+                    on_attempt: Some(&on_attempt),
+                    gate: bundle.gate.as_ref(),
+                    mode: config.confirmation_mode,
+                    confirmer: bundle.confirmer.as_ref(),
+                    dispatch: ceiling,
+                    secrets: bundle.masker.as_ref(),
+                    on_tool_turn: Some(&on_tool_turn),
+                    on_provider_switch: None,
+                };
+                turn_agent.execute(
+                    "chat",
+                    ChatReply::NAME,
+                    MAX_TURNS_PER_MESSAGE,
+                    false,
+                    false,
+                    &state,
+                    None,
+                )
+            }
+            None => agent.execute(
+                "chat",
+                ChatReply::NAME,
+                MAX_TURNS_PER_MESSAGE,
+                false,
+                false,
+                &state,
+                None,
+            ),
+        };
         drop(spinner);
         match outcome {
             Ok(patch) => {

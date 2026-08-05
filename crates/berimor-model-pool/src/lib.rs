@@ -49,7 +49,7 @@ pub struct ModelEntry {
 /// Реестр моделей + селектор. Порядок регистрации значим: это и есть
 /// «явный фиксированный порядок предпочтения в конфигурации» (ADR-0011) —
 /// финальный критерий, когда предыдущие равны.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ModelPool {
     entries: Vec<ModelEntry>,
 }

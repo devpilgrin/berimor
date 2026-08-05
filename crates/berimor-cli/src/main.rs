@@ -10,6 +10,8 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+mod agent_dispatch;
+mod agents;
 mod builtin_dispatch;
 mod catalog;
 mod chat;

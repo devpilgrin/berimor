@@ -161,33 +161,141 @@ fn chat_executes_builtin_tool_with_real_side_effect() {
 }
 
 #[test]
-fn chat_survives_gate_denial_as_observation_not_death() {
-    let dir = std::env::temp_dir().join(format!("berimor-e2e-chatdeny-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    // Первый ход — опасная команда: deny-статика отклоняет ТЕРМИНАЛЬНО
-    // (осознанное решение security-model.md, подтверждённое ревью:
-    // цикл не пытается обойти отказ переформулировкой). Ход умирает —
-    // СЕССИЯ нет: следующее сообщение обрабатывается обычно.
+fn skill_trigger_injects_body_and_enforces_tool_ceiling() {
+    // §20.16: триггер фразы — кодом; тело скилла — системным контекстом
+    // хода; потолок инструментов — фильтром диспетча. Скилл разрешает
+    // только files.read: terminal.exec обязан быть отклонён фильтром с
+    // говорящей причиной (модель получает её наблюдением).
+    let dir = std::env::temp_dir().join(format!("berimor-e2e-skill-{}", std::process::id()));
+    let skill_dir = dir.join(".berimor/skills/reviewer");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: reviewer\nversion: 0.1.0\ndescription: Ревьюер\ntriggers:\n  - \"ревью\"\ntools:\n  - files.read\n---\n\n# Инструкции ревьюера\n",
+    )
+    .unwrap();
     let url = sequential_mock(vec![
-        tool_turn("terminal.exec", json!({"command": "rm -rf /"})),
-        finish_turn("Сессия жива, продолжаем."),
+        // Побочный эффект вне потолка скилла: если фильтр не сработает,
+        // файл появится (confirmation_mode = off — конфирмер не мешает).
+        tool_turn(
+            "terminal.exec",
+            json!({"command": "touch escaped-skill.txt"}),
+        ),
+        finish_turn("Понял, работаю в потолке."),
     ]);
-    let config_path = write_config(&dir, "chatdeny", &url);
+    let config_path = write_config(&dir, "chatskill", &url);
 
-    let output = run_chat(&dir, &config_path, "удали всё\nпривет\n");
+    let output = run_chat(&dir, &config_path, "ревью проекта\n/exit\n");
     assert!(
         output.status.success(),
-        "отказ гейта убивает ход, не сессию: {}",
+        "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("заблокирован") || stderr.contains("отклонено") || stderr.contains("deny"),
-        "причина отказа видна пользователю: {stderr}"
+        stderr.contains("скилл «reviewer» активен"),
+        "заметка об активации: {stderr}"
+    );
+    // Доказательство фильтра потолка — отсутствие побочного эффекта.
+    assert!(
+        !dir.join("escaped-skill.txt").exists(),
+        "файл не должен быть создан: вызов вне потолка скилла отклонён"
+    );
+    assert!(
+        stderr.contains("✗") && stderr.contains("terminal.exec"),
+        "ход terminal.exec отклонён потолком: {stderr}"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("Сессия жива, продолжаем."),
-        "следующее сообщение после отказа обработано: {stdout}"
+        stdout.contains("Понял, работаю в потолке."),
+        "цикл дошёл до ответа: {stdout}"
+    );
+}
+#[test]
+fn subagent_runs_nested_loop_and_reports_back() {
+    // §20.17: agents.run исполняет поручение вложенным циклом AgentStep
+    // (тот же мок-провайдер отвечает по очереди: родитель → ребёнок →
+    // родитель); итог ребёнка — наблюдение родителю.
+    let dir = std::env::temp_dir().join(format!("berimor-e2e-agentrun-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let url = sequential_mock(vec![
+        tool_turn(
+            "agents.run",
+            json!({"name": "scout", "task": "найди файлы"}),
+        ),
+        finish_turn("Отчёт скаута: 3 файла."),
+        finish_turn("Готово: субагент доложил."),
+    ]);
+    let agent_dir = dir.join(".berimor/agents/scout");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(
+        agent_dir.join("agent.yaml"),
+        "name: scout\ndescription: разведчик\ntools:\n  - files.list\nbudget:\n  max_turns: 4\n",
+    )
+    .unwrap();
+    let config_path = write_config(&dir, "agentrun", &url);
+
+    let output = run_chat(&dir, &config_path, "поручи скауту разведку\n/exit\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("✓") && stderr.contains("agents.run"),
+        "ход agents.run успешен: {stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("субагент доложил"),
+        "финальный ответ родителя: {stdout}"
+    );
+}
+
+#[test]
+fn subagent_tool_ceiling_rejects_out_of_scope_tool() {
+    // §20.17: потолок ребёнка — agent.tools ∩ права родителя; вызов вне
+    // потолка отклоняется кодом (✗), без потолка `ls` прошёл бы.
+    let dir = std::env::temp_dir().join(format!("berimor-e2e-agentceil-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let url = sequential_mock(vec![
+        tool_turn(
+            "agents.run",
+            json!({"name": "scout", "task": "проверь диск"}),
+        ),
+        // Попытка побочного эффекта ВНЕ потолка: если фильтр не сработает,
+        // файл появится (confirmation_mode = off — конфирмер не мешает).
+        tool_turn(
+            "terminal.exec",
+            json!({"command": "touch escaped-subagent.txt"}),
+        ),
+        finish_turn("Потолок не пускает: только files.list."),
+        finish_turn("Субагент честно доложил о границе."),
+    ]);
+    let agent_dir = dir.join(".berimor/agents/scout");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(
+        agent_dir.join("agent.yaml"),
+        "name: scout\ntools:\n  - files.list\nbudget:\n  max_turns: 4\n",
+    )
+    .unwrap();
+    let config_path = write_config(&dir, "agentceil", &url);
+
+    let output = run_chat(&dir, &config_path, "поручи скауту\n/exit\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Доказательство потолка — отсутствие побочного эффекта.
+    assert!(
+        !dir.join("escaped-subagent.txt").exists(),
+        "файл не должен быть создан: вызов вне потолка отклонён кодом"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("границе"),
+        "цепочка дошла до финального ответа: {stdout}"
     );
 }
