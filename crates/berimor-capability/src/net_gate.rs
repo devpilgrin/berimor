@@ -100,7 +100,36 @@ fn is_private(ip: IpAddr) -> bool {
             let segments = v6.segments();
             let compatible = segments[..6].iter().all(|s| *s == 0);
             let mapped = segments[..5].iter().all(|s| *s == 0) && segments[5] == 0xffff;
-            if compatible || mapped {
+            // NAT64 (RFC 6052): 64:ff9b::/96 — последние 32 бита — вложенный
+            // IPv4; проверяем ЕГО (находка 2.15 аудита: 64:ff9b::7f00:1 —
+            // замаскированный 127.0.0.1).
+            let nat64 = segments[0] == 0x0064
+                && segments[1] == 0xff9b
+                && segments[2..6].iter().all(|s| *s == 0);
+            // 6to4 (RFC 3056): 2002:V4::/48 — биты 16..48 — вложенный IPv4
+            // (находка 2.21 аудита: 2002:7f00:1:: — 127.0.0.1).
+            let six_to_four = segments[0] == 0x2002;
+            // Teredo (RFC 4380): 2001::/32 — v4 в последних 32 битах с
+            // побитовой инверсией (obscured); приватное ядро всё равно
+            // распознаётся после XOR.
+            let teredo = segments[0] == 0x2001 && segments[1] == 0x0000;
+            if six_to_four {
+                let v4 = Ipv4Addr::new(
+                    (segments[1] >> 8) as u8,
+                    segments[1] as u8,
+                    (segments[2] >> 8) as u8,
+                    segments[2] as u8,
+                );
+                is_private_v4(v4)
+            } else if teredo {
+                let v4 = Ipv4Addr::new(
+                    !(segments[6] >> 8) as u8,
+                    !segments[6] as u8,
+                    !(segments[7] >> 8) as u8,
+                    !segments[7] as u8,
+                );
+                is_private_v4(v4)
+            } else if compatible || mapped || nat64 {
                 let v4 = Ipv4Addr::new(
                     (segments[6] >> 8) as u8,
                     segments[6] as u8,
@@ -180,6 +209,33 @@ mod tests {
         // публичная цель не должна проходить молча.
         let decision = check_host("no-such-host-berimor-test.invalid", 443);
         assert!(matches!(decision, NetworkDecision::ConfirmRequired { .. }));
+    }
+
+    #[test]
+    fn nat64_embedded_private_v4_is_caught() {
+        // Находка 2.15 аудита: 64:ff9b::7f00:1 — замаскированный 127.0.0.1.
+        let decision = check_ip("64:ff9b::7f00:1".parse().unwrap());
+        assert!(
+            matches!(decision, NetworkDecision::ConfirmRequired { .. }),
+            "NAT64 с приватным вложением обязан идти на подтверждение: {decision:?}"
+        );
+        // Публичное вложение (8.8.8.8) — свободно.
+        assert!(check_ip("64:ff9b::808:808".parse().unwrap()).is_allowed());
+    }
+
+    #[test]
+    fn six_to_four_and_teredo_private_are_caught() {
+        // 2.21: 6to4 2002:7f00:1:: = 127.0.0.1; Teredo с ~127.0.0.1.
+        assert!(matches!(
+            check_ip("2002:7f00:1::".parse().unwrap()),
+            NetworkDecision::ConfirmRequired { .. }
+        ));
+        assert!(check_ip("2002:808:808::".parse().unwrap()).is_allowed());
+        // Teredo: последние 32 бита = !127.0.0.1 = 80.fe.fe.fe.
+        assert!(matches!(
+            check_ip("2001:0::80fe:fefe".parse().unwrap()),
+            NetworkDecision::ConfirmRequired { .. }
+        ));
     }
 
     #[test]

@@ -17,10 +17,10 @@
 //!
 //! Граница контракта jail-канала (находки M2/M3 независимого ревью S2,
 //! зафиксировано явно для будущих инструментов, включая MCP): (а) канал —
-//! ровно `deny::PATH_KEYS`, регистрозависимо, строковые значения; ключи
-//! вида `Path`/`src`/`output` и нестроковые значения через jail НЕ
-//! проходят — инструмент с такими полями обязан либо принять
-//! соглашение `PATH_KEYS`, либо валидировать пути сам; (б) jail
+//! ровно `deny::PATH_KEYS` (регистронезависимо — 2.19 аудита),
+//! строковые значения; ключи вида `src`/`output` и нестроковые значения
+//! через jail НЕ проходят — инструмент с такими полями обязан либо
+//! принять соглашение `PATH_KEYS`, либо валидировать пути сам; (б) jail
 //! валидирует относительные пути против корня CLI-процесса, а внешний
 //! исполнитель (MCP-сервер) разрешит их против СВОЕГО cwd — resolved-путь
 //! инструменту не передаётся, контракт смысловой («этот путь обязан быть
@@ -118,14 +118,18 @@ pub fn evaluate(
             },
             None => CapabilityDecision::Allow,
         },
-        // manual: подтверждение на всё, кроме явно read-only.
+        // manual: подтверждение на всё, кроме ЯВНО read-only (декларация
+        // инструмента `requires_confirmation: false`). Отсутствие флага
+        // мутации — не доказательство чистоты (находка 2.20 аудита:
+        // раньше `!mutates` пропускал — латентно, т.к. единственный
+        // исполнитель слал mutates:true; семантика приведена к документу).
         ConfirmationMode::Manual => {
-            if !mutates || policy.requires_confirmation == Some(false) || is_auto {
+            if policy.requires_confirmation == Some(false) || is_auto {
                 CapabilityDecision::Allow
             } else {
                 CapabilityDecision::ConfirmRequired {
                     reason: format!(
-                        "'{}' — режим manual: подтверждение на всё, кроме read-only",
+                        "'{}' — режим manual: подтверждение на всё, кроме явно read-only",
                         action.tool
                     ),
                 }
@@ -220,7 +224,7 @@ impl CapabilityGate for StandardCapability {
         // выход за рабочую область (security-model.md §1).
         if let Some(jail) = &self.jail {
             for (key, text) in deny::collect_strings(&action.args) {
-                if deny::PATH_KEYS.contains(&key.as_str()) {
+                if deny::key_matches(&key, deny::PATH_KEYS) {
                     if let Err(err) = jail.resolve(Path::new(&text)) {
                         return CapabilityDecision::Deny {
                             reason: format!("нарушение jail ({key}={text}): {err}"),
@@ -344,7 +348,10 @@ mod tests {
     }
 
     #[test]
-    fn manual_mode_confirms_everything_except_read_only() {
+    fn manual_mode_confirms_everything_except_explicit_read_only() {
+        // 2.20 аудита: manual пропускает только ЯВНО read-only
+        // (requires_confirmation: Some(false)); отсутствие флага мутации
+        // — не доказательство чистоты → подтверждение.
         let policy = ToolPolicy::default();
         assert!(matches!(
             evaluate(
@@ -353,7 +360,7 @@ mod tests {
                 &policy,
                 false
             ),
-            CapabilityDecision::Allow
+            CapabilityDecision::ConfirmRequired { .. }
         ));
         assert!(matches!(
             evaluate(

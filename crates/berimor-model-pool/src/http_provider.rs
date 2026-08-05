@@ -64,8 +64,13 @@ impl OpenAiCompatibleProvider {
         allow_private_endpoint: bool,
         temperature: Option<f32>,
     ) -> Result<Self, ModelError> {
+        // Находка 2.14 аудита: гейт применялся только к первому хопу —
+        // reqwest следовал за 302 на непроверенный хост. Редирект для
+        // LLM API — аномалия: fail-closed (3xx всплывёт как HTTP-ошибка),
+        // как у встроенного http.fetch («редиректы не следуются»).
         let client = reqwest::blocking::Client::builder()
             .timeout(REQUEST_TIMEOUT)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|err| {
                 ModelError::Unavailable(format!("не удалось собрать HTTP-клиент: {err}"))
@@ -261,6 +266,33 @@ mod tests {
 
     const GOLDEN_RESPONSE: &str =
         include_str!("../../../fixtures/golden/providers/chat-completion-response.json");
+
+    /// Находка 2.14 аудита: редирект на второй хост НЕ следуется —
+    /// 302 всплывает как ошибка (гейт не обходится через Location).
+    #[test]
+    fn redirect_to_other_host_is_not_followed() {
+        // Сервер-редиректор: 302 + Location на «другой» endpoint.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let redirect_target = "http://127.0.0.1:1/never-checked";
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = [0u8; 2048];
+            let _ = stream.read(&mut head);
+            let response = format!(
+                "HTTP/1.1 302 Found\r\nLocation: {redirect_target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true, None).unwrap();
+        let result = provider.complete(request());
+        server.join().unwrap();
+        assert!(
+            result.is_err(),
+            "302 обязан всплывать ошибкой, не следованием: {result:?}"
+        );
+    }
 
     fn identity() -> ModelIdentity {
         ModelIdentity {

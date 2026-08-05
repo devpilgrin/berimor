@@ -168,7 +168,9 @@ impl PluginRegistry {
                 .and_then(|e| e.to_str())
                 .map(|e| e.eq_ignore_ascii_case("yaml") || e.eq_ignore_ascii_case("yml"))
                 .unwrap_or(false);
-            if !is_yaml {
+            // Аудит 2.22: каталог с именем `*.yaml` — не манифест; без
+            // фильтра реестр падал целиком на попытке его прочитать.
+            if !is_yaml || !path.is_file() {
                 continue;
             }
             let manifest = load_manifest(&path)?;

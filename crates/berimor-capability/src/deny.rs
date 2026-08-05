@@ -43,6 +43,14 @@ use std::path::{Component, Path, PathBuf};
 /// Ключи аргументов, чьи строковые значения трактуются как текст команды.
 pub const COMMAND_KEYS: &[&str] = &["command", "cmd", "script", "shell", "run"];
 
+/// Совпадение ключа аргумента с соглашением — РЕГИСТРОНЕЗАВИСИМО
+/// (находка 2.19 аудита: `{"Command": "rm -rf /"}` проходил мимо
+/// регистрозависимого разбора; ключ `Command`/`Path` у инструмента —
+/// та же семантика, молчаливый пропуск недопустим).
+pub(crate) fn key_matches(key: &str, keys: &[&str]) -> bool {
+    keys.iter().any(|k| k.eq_ignore_ascii_case(key))
+}
+
 /// Ключи аргументов, чьи строковые значения трактуются как пути в ФС.
 pub const PATH_KEYS: &[&str] = &[
     "path",
@@ -132,7 +140,7 @@ pub fn analyze(action: &ProposedAction, workspace_root: &Path) -> Option<DenyMat
         // эвристикой имени инструмента — флаг мог быть неизвестен
         // вызывающему (находка m10 XL-ревью).
         let mutating = action.mutates || looks_mutating(&action.tool);
-        if mutating && PATH_KEYS.contains(&key.as_str()) && !path_within(&text, workspace_root) {
+        if mutating && key_matches(&key, PATH_KEYS) && !path_within(&text, workspace_root) {
             return Some(DenyMatch {
                 class: ForbiddenClass::DeletionOutsideWorkspace,
                 evidence: text,
@@ -213,10 +221,10 @@ enum CommandForm {
 fn collect_commands(value: &Value, out: &mut Vec<CommandForm>) {
     fn walk(key: &str, value: &Value, out: &mut Vec<CommandForm>) {
         match value {
-            Value::String(s) if COMMAND_KEYS.contains(&key) => {
+            Value::String(s) if key_matches(key, COMMAND_KEYS) => {
                 out.push(CommandForm::Text(s.clone()));
             }
-            Value::Array(items) if COMMAND_KEYS.contains(&key) => {
+            Value::Array(items) if key_matches(key, COMMAND_KEYS) => {
                 let argv: Vec<String> = items
                     .iter()
                     .filter_map(|item| item.as_str().map(String::from))
@@ -305,6 +313,11 @@ fn analyze_tokens(tokens: Vec<String>, evidence: &str, workspace_root: &Path) ->
             Some((ForbiddenClass::PrivilegeEscalation, evidence.to_string()))
         }
         "chmod" if is_setuid_chmod(&args) => {
+            Some((ForbiddenClass::PrivilegeEscalation, evidence.to_string()))
+        }
+        // --reference=RFILE берёт владельца/режим из файла-образца:
+        // содержимое RFILE недоказуемо статически — отказ (2.17 аудита).
+        "chown" | "chgrp" | "chmod" if args.iter().any(|a| a.starts_with("--reference")) => {
             Some((ForbiddenClass::PrivilegeEscalation, evidence.to_string()))
         }
         "chown" | "chgrp" if args.iter().any(|a| is_root_owner(a)) => {
@@ -923,8 +936,10 @@ fn changes_privilege_scope(args: &[String]) -> bool {
 fn is_root_owner(spec: &str) -> bool {
     spec == "root"
         || spec.starts_with("root:")
+        || spec.starts_with("root.") // legacy-сепаратор (2.17 аудита)
         || spec == "0"
         || spec.starts_with("0:")
+        || spec.starts_with("0.")
         || spec.starts_with(":root")
         || spec.starts_with(":0")
 }
