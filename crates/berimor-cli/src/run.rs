@@ -336,6 +336,14 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
             auto_confirm.push(tool);
         }
     }
+    // Установленные плагины (§20.18): политики mutates из ACL-манифестов
+    // — до построения гейта (политика точнее догадок вызывающего кода).
+    let plugin_runtime = crate::plugin_runtime::PluginRuntimeDispatch::scan(
+        &crate::plugin_install::plugins_root_dir(),
+    );
+    for (name, policy) in plugin_runtime.policies() {
+        tool_policies.insert(name, policy);
+    }
     let gate = StandardCapability::with_jail(jail, tool_policies).with_auto_confirm(auto_confirm);
     let static_stubs = StaticToolDispatch::new(
         config
@@ -353,8 +361,11 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
     } else {
         Some(McpToolDispatch::connect(&config.mcp_servers)?)
     };
+    // Диспетчер: подписанные/доверенные артефакты — инструменты первого
+    // класса (слой между встроенными и MCP).
     let dispatch = CompositeToolDispatch {
         builtin: crate::builtin_dispatch::BuiltinToolDispatch::new(workspace_root.clone()),
+        plugin: (!plugin_runtime.is_empty()).then_some(plugin_runtime),
         mcp,
         static_stubs,
     };

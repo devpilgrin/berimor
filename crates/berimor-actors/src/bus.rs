@@ -120,6 +120,7 @@ mod tests {
             allowed_events: allowed_events.iter().map(|s| s.to_string()).collect(),
             allowed_secrets: vec![],
             capability_ceiling: vec![],
+            capabilities: Default::default(),
         }
     }
 

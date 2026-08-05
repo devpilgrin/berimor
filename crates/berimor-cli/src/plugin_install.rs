@@ -84,7 +84,7 @@ pub enum PluginInstallRunError {
 /// недоступности — временный каталог (не отказ, деградация только по
 /// постоянству между запусками — тот же выбор, что `verify.rs::
 /// trust_root_cache_dir`).
-fn plugins_root_dir() -> PathBuf {
+pub(crate) fn plugins_root_dir() -> PathBuf {
     dirs::data_dir()
         .or_else(dirs::config_dir)
         .map(|d| d.join("berimor").join("plugins"))

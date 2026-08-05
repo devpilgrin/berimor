@@ -45,6 +45,29 @@ pub struct PluginManifest {
     /// может запросить больше, даже если инструмент технически ему доступен.
     #[serde(default)]
     pub capability_ceiling: Vec<String>,
+    /// Декларируемые инструменты (§20.18): рантайм регистрирует ТОЛЬКО
+    /// их — что не объявлено, то не вызывается.
+    #[serde(default)]
+    pub capabilities: PluginCapabilities,
+}
+
+/// Секция capabilities манифеста (контракт berimor-plugins).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PluginCapabilities {
+    #[serde(default)]
+    pub tools: Vec<PluginToolDecl>,
+}
+
+/// Декларация одного инструмента плагина.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PluginToolDecl {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    /// mutates декларируется манифестом — политика гейта строится из неё,
+    /// не из догадок кода (тот же принцип, что у встроенных).
+    #[serde(default)]
+    pub mutates: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -180,6 +203,7 @@ mod tests {
             allowed_events: vec!["crm.card_status_requested".into()],
             allowed_secrets: vec!["crm_api_key".into()],
             capability_ceiling: vec!["net.http".into()],
+            capabilities: Default::default(),
         }
     }
 
@@ -227,6 +251,7 @@ mod tests {
             allowed_events: vec![],
             allowed_secrets: vec![],
             capability_ceiling: vec![],
+            capabilities: Default::default(),
         };
         assert!(empty.check_event("anything").is_err());
         assert!(empty.check_secret("anything").is_err());

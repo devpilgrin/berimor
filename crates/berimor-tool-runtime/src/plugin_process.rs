@@ -107,6 +107,7 @@ mod tests {
             allowed_events: vec![],
             allowed_secrets: vec![],
             capability_ceiling: capability_ceiling.iter().map(|s| s.to_string()).collect(),
+            capabilities: Default::default(),
         }
     }
 

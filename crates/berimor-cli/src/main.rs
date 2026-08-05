@@ -23,6 +23,7 @@ mod ext_cmd;
 mod mcp_dispatch;
 mod observe;
 mod plugin_install;
+mod plugin_runtime;
 mod presets;
 mod run;
 mod self_update;

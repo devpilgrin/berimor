@@ -61,6 +61,15 @@ fn tools_catalog(config: &Config) -> Value {
     for stub in &config.tool_stubs {
         tools.push(json!({"name": stub.tool, "args": {}, "about": "объявленный оператором инструмент (заглушка)"}));
     }
+    // Инструменты установленных плагинов (§20.18) — из ACL-манифестов.
+    let plugin_runtime = crate::plugin_runtime::PluginRuntimeDispatch::scan(
+        &crate::plugin_install::plugins_root_dir(),
+    );
+    for decl in plugin_runtime.tool_decls() {
+        tools.push(
+            json!({"name": decl.name, "args": {}, "about": format!("плагин: {}", decl.description)}),
+        );
+    }
     for server in &config.mcp_servers {
         tools.push(json!({"name": format!("{}.*", server.name), "args": {}, "about": "инструменты MCP-сервера"}));
     }

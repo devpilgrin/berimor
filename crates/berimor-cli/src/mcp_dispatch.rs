@@ -192,6 +192,7 @@ fn content_to_text(content: &[ContentBlock]) -> String {
 /// не меняется вовсе.
 pub struct CompositeToolDispatch {
     pub builtin: crate::builtin_dispatch::BuiltinToolDispatch,
+    pub plugin: Option<crate::plugin_runtime::PluginRuntimeDispatch>,
     pub mcp: Option<McpToolDispatch>,
     pub static_stubs: StaticToolDispatch,
 }
@@ -200,6 +201,13 @@ impl ToolDispatch for CompositeToolDispatch {
     fn call(&self, tool: &str, args: &Value) -> Result<Value, DispatchError> {
         if crate::builtin_dispatch::BuiltinToolDispatch::has_tool(tool) {
             return self.builtin.call(tool, args);
+        }
+        // Плагины (§20.18) — до MCP: установленные доверенные артефакты
+        // с ACL-манифестом приоритетнее внешних серверов.
+        if let Some(plugin) = &self.plugin {
+            if plugin.has_tool(tool) {
+                return plugin.call(tool, args);
+            }
         }
         if let Some(mcp) = &self.mcp {
             if mcp.has_tool(tool) {
@@ -220,6 +228,7 @@ mod tests {
             builtin: crate::builtin_dispatch::BuiltinToolDispatch::new(std::path::PathBuf::from(
                 ".",
             )),
+            plugin: None,
             mcp: None,
             static_stubs: StaticToolDispatch::new(vec![(
                 "echo".into(),
@@ -238,6 +247,7 @@ mod tests {
             builtin: crate::builtin_dispatch::BuiltinToolDispatch::new(std::path::PathBuf::from(
                 ".",
             )),
+            plugin: None,
             mcp: None,
             static_stubs: StaticToolDispatch::new(Vec::new()),
         };
