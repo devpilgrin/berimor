@@ -473,3 +473,108 @@ fn plugin_tool_callable_from_chat() {
         "ответ с данными плагина: {stdout}"
     );
 }
+
+/// §20.22 v2 шаг 2 — двухпроцессный e2e: сессия A читает файл (FileObserved),
+/// сессия B пишет тот же файл (FileTouched → конверт), A видит «⚠» на
+/// границе следующего хода. Общий журнал (один storage_path), мок-провайдеры
+/// на localhost, без сети. Синхронизация — паузами с запасом: ход против
+/// localhost-мока детерминированно быстрый.
+#[test]
+fn file_changed_notification_flows_between_two_chat_sessions() {
+    let dir = std::env::temp_dir().join(format!("berimor-e2e-swarm-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("shared.txt"), "исходное содержимое").unwrap();
+
+    // Один журнал на обе сессии — транспорт реестра и почты.
+    let config_text = |mock_url: &str| {
+        format!(
+            r#"storage_path = "./shared.db"
+confirmation_mode = "off"
+
+[[providers]]
+name = "mock"
+model_id = "mock-model"
+tier = "strong"
+base_url = "{mock_url}"
+api_key = "mock-key"
+allow_private_endpoint = true
+"#
+        )
+    };
+    // A: ход 1 = files.read + finish; ход 2 (после уведомления) = finish.
+    let url_a = sequential_mock(vec![
+        tool_turn("files.read", json!({"path": "shared.txt"})),
+        finish_turn("прочитал"),
+        finish_turn("понял, спасибо"),
+    ]);
+    // B: files.write + finish.
+    let url_b = sequential_mock(vec![
+        tool_turn(
+            "files.write",
+            json!({"path": "shared.txt", "content": "переписано сессией B"}),
+        ),
+        finish_turn("записал"),
+    ]);
+    let config_a = dir.join("a.toml");
+    let config_b = dir.join("b.toml");
+    std::fs::write(&config_a, config_text(&url_a)).unwrap();
+    std::fs::write(&config_b, config_text(&url_b)).unwrap();
+
+    let empty_xdg = std::env::temp_dir().join(format!("berimor-e2e-xdg-{}", std::process::id()));
+    let empty_data = std::env::temp_dir().join(format!("berimor-e2e-data-{}", std::process::id()));
+    std::fs::create_dir_all(&empty_xdg).unwrap();
+    std::fs::create_dir_all(&empty_data).unwrap();
+
+    // Сессия A — долгоживущая: stdin держим открытым до конца сценария.
+    let mut child_a = Command::new(bin())
+        .arg("--config")
+        .arg(&config_a)
+        .arg("chat")
+        .current_dir(&dir)
+        .env("XDG_CONFIG_HOME", &empty_xdg)
+        .env("XDG_DATA_HOME", &empty_data)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin_a = child_a.stdin.take().unwrap();
+
+    // Ход A: читает файл → FileObserved в реестре.
+    stdin_a.write_all("прочитай файл\n".as_bytes()).unwrap();
+    // Ждём завершения хода A (observed записан) с запасом — localhost-мок.
+    std::thread::sleep(std::time::Duration::from_secs(4));
+
+    // Сессия B: пишет тот же файл → FileTouched + конверт живому наблюдателю.
+    let output_b = run_chat(&dir, &config_b, "запиши файл\n");
+    assert!(
+        output_b.status.success(),
+        "сессия B обязана завершиться: {}",
+        String::from_utf8_lossy(&output_b.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("shared.txt")).unwrap(),
+        "переписано сессией B",
+        "запись B реально состоялась"
+    );
+
+    // Любая следующая строка A — граница хода: дренаж конвертов.
+    stdin_a.write_all("ещё слово\n".as_bytes()).unwrap();
+    std::thread::sleep(std::time::Duration::from_secs(4));
+    // EOF → A завершается; собираем stderr.
+    drop(stdin_a);
+    let output_a = child_a.wait_with_output().unwrap();
+    let stderr_a = String::from_utf8_lossy(&output_a.stderr);
+    assert!(
+        output_a.status.success(),
+        "сессия A обязана завершиться по EOF: {stderr_a}"
+    );
+    assert!(
+        stderr_a.contains("⚠") && stderr_a.contains("изменён сессией"),
+        "A обязана увидеть уведомление file.changed: {stderr_a}"
+    );
+    assert!(
+        stderr_a.contains("shared.txt"),
+        "уведомление обязано называть путь: {stderr_a}"
+    );
+}
