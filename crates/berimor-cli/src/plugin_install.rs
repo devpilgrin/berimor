@@ -942,6 +942,40 @@ fn plugin_install_fail(args: &Value) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
+    /// Ревью 2026-08-06 (supply chain): манифест плагина — авторский
+    /// артефакт, контролирующий потолок capability и пути на диске
+    /// (manifest.name). Гарантия целостности — только подписью: в
+    /// процессе plugin-install шаг верификации ОБЯЗАН идти раньше шага
+    /// чтения манифеста. Тест фиксирует порядок структурно — регрессия
+    /// (extract до verify) не пройдёт незамеченной.
+    #[test]
+    fn install_process_verifies_signature_before_reading_manifest() {
+        let yaml = PROCESS_YAML;
+        let verify_pos = yaml
+            .find("crypto.verify_plugin_signature")
+            .expect("шаг верификации подписи обязан присутствовать");
+        let extract_pos = yaml
+            .find("plugin.extract_and_read_manifest")
+            .expect("шаг чтения манифеста обязан присутствовать");
+        assert!(
+            verify_pos < extract_pos,
+            "манифест читается ДО верификации подписи — supply-chain окно"
+        );
+    }
+
+    /// Вторая половина той же находки: имя из манифеста валидируется
+    /// ДО любого формирования путей — и в подписанном, и в локальном
+    /// (--allow-unsigned, осознанный отказ от подписи) путях.
+    #[test]
+    fn plugin_name_rejected_before_any_path_formation() {
+        for bad in ["..", "../evil", "/abs", "a/b", "..\\win"] {
+            assert!(
+                validate_plugin_name(bad).is_err(),
+                "имя '{bad}' обязано отклоняться"
+            );
+        }
+        assert!(validate_plugin_name("hello-tool").is_ok());
+    }
     use super::*;
 
     /// Пустой реестр — маскировка no-op для тестов, не про S5.

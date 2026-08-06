@@ -19,7 +19,7 @@
 //! 3. `StepKind::Checkpoint` — это аудит-снапшот состояния Process Engine
 //!    (`storage.write_snapshot`), не резервная копия бинарного файла.
 //!    Бэкап/откат САМОГО БИНАРНИКА — целиком внутри `fs.
-//!    atomic_replace_binary`/`fs.restore_from_checkpoint` (переименование
+//!    prepare_swap`/`fs.swap_binary`/`fs.restore_from_checkpoint` (переименование
 //!    файла в сторону перед заменой = и бэкап, и подготовка отката одним
 //!    действием) — движок для этого не трогается вообще.
 //!
@@ -27,7 +27,7 @@
 //! исполняемого файла) видны ТОЛЬКО процессу `agent-self-update` —
 //! `SelfUpdateDispatch` не часть `CompositeToolDispatch`, которым
 //! пользуется обычный `berimor run <любой.yaml>`. Пользовательский процесс
-//! не может вызвать `fs.atomic_replace_binary`, просто назвав его в своём
+//! не может вызвать `fs.swap_binary`, просто назвав его в своём
 //! YAML. `SelfUpdateExecutor` поддерживает только `StepKind::Tool` — у
 //! self-update-процесса нет llm_structured/agent_step/codeact шагов.
 //!
@@ -251,7 +251,11 @@ pub fn self_update_tool_policies() -> HashMap<String, ToolPolicy> {
             },
         );
     }
-    for tool in ["fs.atomic_replace_binary", "fs.restore_from_checkpoint"] {
+    for tool in [
+        "fs.prepare_swap",
+        "fs.swap_binary",
+        "fs.restore_from_checkpoint",
+    ] {
         policies.insert(
             tool.to_string(),
             ToolPolicy {
@@ -394,9 +398,18 @@ impl ToolDispatch for SelfUpdateDispatch {
                 let archive_path = required_str(args, "archive_path")?;
                 Ok(verify_signature(Path::new(archive_path)))
             })(),
-            "fs.atomic_replace_binary" => (|| {
+            "fs.prepare_swap" => (|| {
                 let archive_path = required_str(args, "archive_path")?;
-                atomic_replace_binary(&self.current_exe, Path::new(archive_path))
+                prepare_swap(&self.current_exe, Path::new(archive_path))
+            })(),
+            "fs.swap_binary" => (|| {
+                let backup_path = required_str(args, "backup_path")?;
+                let new_binary = required_str(args, "new_binary")?;
+                swap_binary(
+                    &self.current_exe,
+                    Path::new(backup_path),
+                    Path::new(new_binary),
+                )
             })(),
             "agent.self_check" => (|| {
                 let expected_version = required_str(args, "expected_version")?;
@@ -641,7 +654,7 @@ fn extract_archive(archive_path: &Path, dest_dir: &Path) -> Result<(), String> {
 }
 
 /// Ищет осиротевший бэкап рядом с `current_exe` по префиксу имени
-/// (`<имя>.backup-*`) — см. doc-комментарий `atomic_replace_binary`
+/// (`<имя>.backup-*`) — см. doc-комментарий `prepare_swap`
 /// (независимое ревью, CRITICAL-1) про окно между двумя `rename`.
 fn find_orphaned_backup(current_exe: &Path) -> Option<PathBuf> {
     let parent = current_exe.parent()?;
@@ -678,11 +691,24 @@ fn find_orphaned_backup(current_exe: &Path) -> Option<PathBuf> {
 /// задачи. Минимальный фикс здесь — не оставлять оператора с непонятной
 /// ошибкой ОС: если `current_exe` уже отсутствует к началу вызова (типичный
 /// след прерванной попытки), явно ищем осиротевший бэкап и называем его.
-fn atomic_replace_binary(current_exe: &Path, archive_path: &Path) -> Result<Value, String> {
+/// Ревью (2026-08-06): монолитный swap распиливается на два шага, чтобы
+/// `backup_path` попал в ЖУРНАЛ ДО первого переименования — раньше окно
+/// между двумя rename не было зажурналировано, и `--resume` не мог
+/// использовать `backup_path` (он не был записан в состояние).
+///
+/// Шаг 1 (`fs.prepare_swap`): распаковка + вычисление путей — патч с
+/// `backup_path`/`new_binary` журналируется ДВИЖКОМ при завершении шага,
+/// т.е. гарантированно до начала самой замены.
+fn prepare_swap(current_exe: &Path, archive_path: &Path) -> Result<Value, String> {
     if !current_exe.exists() {
+        // Два случая: авария ДО prepare_swap предыдущего запуска (путей
+        // в журнале нет — тогда префикс-поиск осиротевшего бэкапа, как у
+        // монолитной версии) либо чужое удаление. Честное сообщение в
+        // обоих: с бэкапом — как восстановить, без — что восстановление
+        // невозможно.
         return Err(match find_orphaned_backup(current_exe) {
             Some(backup) => format!(
-                "{} отсутствует — похоже, предыдущая попытка обновления прервалась между переименованиями; вероятный бэкап: {} (восстановите вручную: переименуйте его обратно в {})",
+                "{} отсутствует — похоже, предыдущая попытка обновления прервалась до журналирования путей; вероятный бэкап: {} (восстановите вручную: переименуйте его обратно в {})",
                 current_exe.display(),
                 backup.display(),
                 current_exe.display()
@@ -719,10 +745,50 @@ fn atomic_replace_binary(current_exe: &Path, archive_path: &Path) -> Result<Valu
         p.push(format!(".backup-{}", std::process::id()));
         PathBuf::from(p)
     };
-    std::fs::rename(current_exe, &backup_path)
+    Ok(json!({
+        "backup_path": backup_path.display().to_string(),
+        "new_binary": new_binary.display().to_string(),
+    }))
+}
+
+/// Шаг 2 (`fs.swap_binary`): два переименования — после того, как пути
+/// УЖЕ в журнале. ИДЕМПОТЕНТЕН (окно между rename больше не фатально):
+/// при повторном входе (resume после аварии посреди замены) —
+/// `current_exe` отсутствует, бэкап на месте: достраиваем замену, если
+/// новый бинарник ещё существует, иначе возвращаем бэкап.
+fn swap_binary(current_exe: &Path, backup_path: &Path, new_binary: &Path) -> Result<Value, String> {
+    if !current_exe.exists() {
+        // Авария посреди предыдущей попытки: текущего нет, журнал (и
+        // этот вызов через resume) знает оба пути — достраиваем.
+        if !backup_path.exists() {
+            return Err(format!(
+                "{} отсутствует и резервная копия {} не найдена — автоматическое восстановление невозможно",
+                current_exe.display(),
+                backup_path.display()
+            ));
+        }
+        if new_binary.exists() {
+            std::fs::rename(new_binary, current_exe).map_err(|err| {
+                format!("достройка замены после прерванной попытки не удалась: {err}")
+            })?;
+            return Ok(json!({
+                "backup_path": backup_path.display().to_string(),
+                "recovered": "completed_swap",
+            }));
+        }
+        std::fs::rename(backup_path, current_exe).map_err(|err| {
+            format!("возврат резервной копии после прерванной попытки не удался: {err}")
+        })?;
+        return Ok(json!({
+            "backup_path": backup_path.display().to_string(),
+            "recovered": "restored_backup",
+        }));
+    }
+
+    std::fs::rename(current_exe, backup_path)
         .map_err(|err| format!("не удалось создать резервную копию: {err}"))?;
-    if let Err(err) = std::fs::rename(&new_binary, current_exe) {
-        let _ = std::fs::rename(&backup_path, current_exe);
+    if let Err(err) = std::fs::rename(new_binary, current_exe) {
+        let _ = std::fs::rename(backup_path, current_exe);
         return Err(format!("не удалось подставить новый бинарник: {err}"));
     }
     Ok(json!({"backup_path": backup_path.display().to_string()}))
@@ -1019,7 +1085,10 @@ mod tests {
     }
 
     #[test]
-    fn atomic_replace_binary_backs_up_old_and_swaps_in_new() {
+    /// Пара prepare+swap в нормальном пути: prepare отдаёт оба пути в
+    /// патч (они журналируются движком ДО замены), swap делает два
+    /// rename по журнальным путям.
+    fn prepare_then_swap_backs_up_old_and_swaps_in_new() {
         let work = temp_work_dir("swap");
         let pack_dir = work.join("pack");
         std::fs::create_dir_all(&pack_dir).unwrap();
@@ -1031,11 +1100,55 @@ mod tests {
         let current_exe = work.join(binary_name());
         std::fs::write(&current_exe, b"old-binary-content").unwrap();
 
-        let result = atomic_replace_binary(&current_exe, &archive_path).unwrap();
-        let backup_path = PathBuf::from(result["backup_path"].as_str().unwrap());
+        let prepared = prepare_swap(&current_exe, &archive_path).unwrap();
+        let backup_path = PathBuf::from(prepared["backup_path"].as_str().unwrap());
+        let new_binary = PathBuf::from(prepared["new_binary"].as_str().unwrap());
+        // До swap бэкапа ещё нет — но путь уже известен и зажурналирован.
+        assert!(!backup_path.exists());
 
+        let result = swap_binary(&current_exe, &backup_path, &new_binary).unwrap();
+        let _ = result;
         assert_eq!(std::fs::read(&current_exe).unwrap(), b"new-binary-content");
         assert_eq!(std::fs::read(&backup_path).unwrap(), b"old-binary-content");
+
+        std::fs::remove_dir_all(&work).ok();
+    }
+
+    /// Ревью 2026-08-06: окно между rename больше не фатально — swap
+    /// идемпотентен. Авария ПОСЛЕ первого rename (current отсутствует,
+    /// новый на месте): resume достраивает замену по журнальным путям.
+    #[test]
+    fn swap_binary_completes_half_done_swap_on_resume() {
+        let work = temp_work_dir("half-swap");
+        let current_exe = work.join(binary_name());
+        let backup_path = work.join(format!("{}.backup-777", binary_name()));
+        let new_binary = work.join("extracted-new");
+        std::fs::write(&backup_path, b"old-binary-content").unwrap();
+        std::fs::write(&new_binary, b"new-binary-content").unwrap();
+        // current_exe намеренно НЕ создаём — имитация аварии между rename.
+
+        let result = swap_binary(&current_exe, &backup_path, &new_binary).unwrap();
+        assert_eq!(result["recovered"], "completed_swap");
+        assert_eq!(std::fs::read(&current_exe).unwrap(), b"new-binary-content");
+        assert_eq!(std::fs::read(&backup_path).unwrap(), b"old-binary-content");
+
+        std::fs::remove_dir_all(&work).ok();
+    }
+
+    /// Авария между rename, а новый бинарник ещё и пропал (убран
+    /// извлекатель): resume возвращает бэкап, не оставляет пустоту.
+    #[test]
+    fn swap_binary_restores_backup_when_new_binary_gone() {
+        let work = temp_work_dir("lost-new");
+        let current_exe = work.join(binary_name());
+        let backup_path = work.join(format!("{}.backup-778", binary_name()));
+        let new_binary = work.join("gone");
+        std::fs::write(&backup_path, b"old-binary-content").unwrap();
+
+        let result = swap_binary(&current_exe, &backup_path, &new_binary).unwrap();
+        assert_eq!(result["recovered"], "restored_backup");
+        assert_eq!(std::fs::read(&current_exe).unwrap(), b"old-binary-content");
+        assert!(!backup_path.exists());
 
         std::fs::remove_dir_all(&work).ok();
     }
@@ -1053,7 +1166,7 @@ mod tests {
         let current_exe = work.join(binary_name());
         std::fs::write(&current_exe, b"old-binary-content").unwrap();
 
-        let result = atomic_replace_binary(&current_exe, &archive_path);
+        let result = prepare_swap(&current_exe, &archive_path);
         assert!(result.is_err());
         assert_eq!(std::fs::read(&current_exe).unwrap(), b"old-binary-content");
 
@@ -1146,7 +1259,7 @@ mod tests {
         // current_exe намеренно НЕ создаём — имитирует прерванную попытку.
 
         let fake_archive = work.join(format!("update.{}", test_archive_extension()));
-        let result = atomic_replace_binary(&current_exe, &fake_archive);
+        let result = prepare_swap(&current_exe, &fake_archive);
         let err = result.unwrap_err();
         assert!(
             err.contains(&backup_path.display().to_string()),
@@ -1383,8 +1496,10 @@ mod tests {
         )
         .unwrap();
 
-        let swap_result = atomic_replace_binary(&current_exe, &archive_path).unwrap();
-        let backup_path = PathBuf::from(swap_result["backup_path"].as_str().unwrap());
+        let prepared = prepare_swap(&current_exe, &archive_path).unwrap();
+        let backup_path = PathBuf::from(prepared["backup_path"].as_str().unwrap());
+        let new_binary = PathBuf::from(prepared["new_binary"].as_str().unwrap());
+        let _ = swap_binary(&current_exe, &backup_path, &new_binary).unwrap();
 
         let check = self_check(&current_exe, "9.9.9").unwrap();
         assert_eq!(
@@ -1439,8 +1554,10 @@ mod tests {
         )
         .unwrap();
 
-        let swap_result = atomic_replace_binary(&current_exe, &archive_path).unwrap();
-        let backup_path = PathBuf::from(swap_result["backup_path"].as_str().unwrap());
+        let prepared = prepare_swap(&current_exe, &archive_path).unwrap();
+        let backup_path = PathBuf::from(prepared["backup_path"].as_str().unwrap());
+        let new_binary = PathBuf::from(prepared["new_binary"].as_str().unwrap());
+        let _ = swap_binary(&current_exe, &backup_path, &new_binary).unwrap();
 
         let broken_check = self_check(&current_exe, "9.9.9").unwrap();
         assert_eq!(

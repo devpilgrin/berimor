@@ -51,10 +51,14 @@ steps:
       "false": fail_update
   - id: checkpoint_current
     type: checkpoint
+  - id: prepare_swap
+    type: tool
+    tool: fs.prepare_swap
+    args: {archive_path: "{{state.download.archive_path}}"}
   - id: swap
     type: tool
-    tool: fs.atomic_replace_binary
-    args: {archive_path: "{{state.download.archive_path}}"}
+    tool: fs.swap_binary
+    args: {backup_path: "{{state.prepare_swap.backup_path}}", new_binary: "{{state.prepare_swap.new_binary}}"}
   - id: smoke_test
     type: tool
     tool: agent.self_check
