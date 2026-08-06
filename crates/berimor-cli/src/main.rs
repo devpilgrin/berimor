@@ -22,6 +22,7 @@ mod config;
 mod daemon;
 mod ext_cmd;
 mod mcp_dispatch;
+mod oauth;
 mod observe;
 mod plugin_install;
 mod plugin_runtime;
@@ -124,6 +125,26 @@ enum Command {
     Config {
         #[command(subcommand)]
         action: ConfigAction,
+    },
+    /// OAuth-вход по подписке (PKCE, ADR-0027): Claude Pro/Max, ChatGPT
+    /// Plus/Pro — без API-ключа. Токены — в secrets.env (0600), refresh —
+    /// прозрачно кодом (§20.25).
+    Login {
+        /// Провайдер: claude | openai.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Ручной ввод кода (headless) вместо loopback-listener.
+        #[arg(long)]
+        manual: bool,
+        /// Показать сохранённые OAuth-профили (без значений токенов, I4).
+        #[arg(long)]
+        list: bool,
+    },
+    /// Отзыв OAuth-профиля: удаление записи из реестра секретов (§20.25).
+    Logout {
+        /// Провайдер: claude | openai.
+        #[arg(long)]
+        provider: String,
     },
     /// Человекочитаемая трассировка журнала одного инстанса (O1).
     Trace {
@@ -407,6 +428,60 @@ fn main() -> ExitCode {
                 println!("{resolved_config:#?}");
             }
         },
+        Command::Login {
+            provider,
+            manual,
+            list,
+        } => {
+            if list {
+                match oauth::list() {
+                    Ok(profiles) if profiles.is_empty() => {
+                        eprintln!("[berimor] oauth-профилей нет — `berimor login --provider claude|openai`");
+                    }
+                    Ok(profiles) => {
+                        for status in profiles {
+                            let state = if status.expired {
+                                "access истёк (обновится прозрачно)"
+                            } else {
+                                "access действителен"
+                            };
+                            let refresh = if status.has_refresh {
+                                ", refresh есть"
+                            } else {
+                                ""
+                            };
+                            println!(
+                                "{}\t{} до {}{}\t{}",
+                                status.provider,
+                                state,
+                                status.expires_at_unix,
+                                refresh,
+                                status.token_url
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        eprintln!("[berimor] {err}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            } else {
+                let Some(provider) = provider else {
+                    eprintln!("[berimor] укажите --provider claude|openai (или --list)");
+                    return ExitCode::FAILURE;
+                };
+                if let Err(err) = oauth::login(&provider, manual) {
+                    eprintln!("[berimor] {err}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        }
+        Command::Logout { provider } => {
+            if let Err(err) = oauth::logout(&provider) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
         Command::Trace { instance } => {
             if let Err(err) = observe::trace(&resolved_config, &instance) {
                 eprintln!("[berimor] {err}");
