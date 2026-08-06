@@ -928,6 +928,9 @@ pub trait ScheduleStore {
     /// очередь подтверждений не разобрана — расписание остаётся due и
     /// попробует снова на следующем тике.
     fn due(&self, now_ms: i64) -> Result<Vec<Schedule>, StorageError>;
+    /// Все расписания по ближайшему срабатыванию — для `schedule list`
+    /// (CLI, §20.22). Не потребляет и не продвигает.
+    fn list_schedules(&self) -> Result<Vec<Schedule>, StorageError>;
 }
 
 impl ScheduleStore for SqliteEventLog {
@@ -1044,6 +1047,10 @@ impl ScheduleStore for SqliteEventLog {
             });
         }
         Ok(schedules)
+    }
+
+    fn list_schedules(&self) -> Result<Vec<Schedule>, StorageError> {
+        self.due(i64::MAX)
     }
 }
 

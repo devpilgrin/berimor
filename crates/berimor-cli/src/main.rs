@@ -19,6 +19,7 @@ mod chat_history;
 mod chat_tui;
 mod chat_ui;
 mod config;
+mod daemon;
 mod ext_cmd;
 mod mcp_dispatch;
 mod observe;
@@ -86,6 +87,20 @@ enum Command {
         #[command(subcommand)]
         action: PluginAction,
     },
+    /// Расписания процессов: добавление, список, снятие (§20.22).
+    Schedule {
+        #[command(subcommand)]
+        action: ScheduleAction,
+    },
+    /// Демон расписаний: исполняет due-процессы тик за тиком (§20.22).
+    Daemon {
+        /// Один тик и выход (для cron и ручного запуска).
+        #[arg(long)]
+        once: bool,
+        /// Потолок сна между тиками, мс (по умолчанию 60000).
+        #[arg(long, default_value = "60000")]
+        tick_cap: i64,
+    },
     /// Скилы: список (установленные и доступные в каталоге), установка,
     /// удаление (§20.16).
     Skill {
@@ -120,6 +135,29 @@ enum Command {
         /// Директория с `process.yaml` и `<сценарий>.json` файлами входа.
         golden_dir: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum ScheduleAction {
+    /// Добавить расписание: --every <dur> (повторяющееся) или
+    /// --once-in <dur> (одноразовое); длительность с суффиксом (30s/10m/1h).
+    Add {
+        /// Путь к декларации процесса (YAML).
+        process: String,
+        /// Повторяющееся расписание с интервалом.
+        #[arg(long)]
+        every: Option<String>,
+        /// Одноразовое срабатывание через интервал.
+        #[arg(long)]
+        once_in: Option<String>,
+        /// Вход процесса — JSON-объект начального состояния.
+        #[arg(long)]
+        input: Option<String>,
+    },
+    /// Список расписаний по ближайшему срабатыванию.
+    List,
+    /// Снять расписание по идентификатору.
+    Remove { id: String },
 }
 
 #[derive(Subcommand)]
@@ -226,6 +264,28 @@ fn main() -> ExitCode {
     match cli.command.unwrap_or(Command::Chat) {
         Command::Setup => {
             if let Err(err) = setup::run_wizard() {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Command::Schedule { action } => {
+            let result = match action {
+                ScheduleAction::Add {
+                    process,
+                    every,
+                    once_in,
+                    input,
+                } => daemon::schedule_add(&resolved_config, &process, &every, &once_in, &input),
+                ScheduleAction::List => daemon::schedule_list(&resolved_config),
+                ScheduleAction::Remove { id } => daemon::schedule_remove(&resolved_config, &id),
+            };
+            if let Err(err) = result {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Command::Daemon { once, tick_cap } => {
+            if let Err(err) = daemon::run_daemon(&resolved_config, once, tick_cap) {
                 eprintln!("[berimor] {err}");
                 return ExitCode::FAILURE;
             }
