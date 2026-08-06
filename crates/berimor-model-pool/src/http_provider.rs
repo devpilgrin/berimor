@@ -92,6 +92,10 @@ impl OpenAiCompatibleProvider {
     /// Сетевой гейт: извлекает хост из `base_url` и проверяет его.
     /// Приватный endpoint без явного opt-in — ошибка ДО любого соединения.
     fn check_network_gate(&self) -> Result<(), ModelError> {
+        // Находка 3.11 аудита: userinfo (`http://user:pass@host/`)
+        // сдвигал разбор — гейт проверял "user", соединение шло на host
+        // (класс SSRF-обхода: гейт и соединение видят РАЗНЫЕ хосты).
+        // Userinfo отрезается по ПОСЛЕДНЕМу '@' до разбора порта.
         let host_port = self
             .base_url
             .split("://")
@@ -100,6 +104,7 @@ impl OpenAiCompatibleProvider {
             .split('/')
             .next()
             .unwrap_or_default();
+        let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
         let (host, port) = match host_port.rsplit_once(':') {
             Some((h, p)) => (
                 h.trim_start_matches('[').trim_end_matches(']'),
@@ -266,6 +271,20 @@ mod tests {
 
     const GOLDEN_RESPONSE: &str =
         include_str!("../../../fixtures/golden/providers/chat-completion-response.json");
+
+    /// Находка 3.11 аудита: userinfo не прячет приватный хост от гейта.
+    #[test]
+    fn userinfo_does_not_hide_private_host_from_gate() {
+        let result = OpenAiCompatibleProvider::new(
+            identity(),
+            "http://user:pass@127.0.0.1:9".into(),
+            None,
+            false, // приватный endpoint БЕЗ opt-in — гейт обязан отказать
+            None,
+        )
+        .and_then(|p| p.complete(request()));
+        assert!(result.is_err(), "гейт обязан видеть 127.0.0.1 за userinfo");
+    }
 
     /// Находка 2.14 аудита: редирект на второй хост НЕ следуется —
     /// 302 всплывает как ошибка (гейт не обходится через Location).

@@ -258,14 +258,17 @@ pub fn run(
             }
             engine::RunOutcome::AwaitingHuman { step_id, reason } => {
                 let resolved_reason = interpolate(&reason, &instance.state);
-                let _ = storage.append(Event::new(
-                    instance.id.clone(),
-                    instance.process.version,
-                    EventKind::HumanGateOpened {
-                        reason: resolved_reason.clone(),
-                    },
-                    Value::Null,
-                ));
+                crate::run::audit_append(
+                    storage.as_ref(),
+                    Event::new(
+                        instance.id.clone(),
+                        instance.process.version,
+                        EventKind::HumanGateOpened {
+                            reason: resolved_reason.clone(),
+                        },
+                        Value::Null,
+                    ),
+                );
                 if !ask_human(&step_id, &resolved_reason) {
                     println!(
                         "[berimor] остановлено на human_gate '{step_id}'; возобновить: berimor plugin install {repo} --resume {}",
@@ -273,12 +276,15 @@ pub fn run(
                     );
                     return Err(PluginInstallRunError::HumanDeclined);
                 }
-                let _ = storage.append(Event::new(
-                    instance.id.clone(),
-                    instance.process.version,
-                    EventKind::HumanGateResolved,
-                    Value::Null,
-                ));
+                crate::run::audit_append(
+                    storage.as_ref(),
+                    Event::new(
+                        instance.id.clone(),
+                        instance.process.version,
+                        EventKind::HumanGateResolved,
+                        Value::Null,
+                    ),
+                );
             }
         }
     }

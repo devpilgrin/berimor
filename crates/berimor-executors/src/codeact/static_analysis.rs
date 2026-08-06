@@ -57,7 +57,7 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, BindingIdentifier, Expression, IdentifierReference, Program,
+    Argument, BindingIdentifier, Expression, IdentifierReference, ImportDeclaration, Program,
     TSImportEqualsDeclaration,
 };
 use oxc_ast_visit::{walk::walk_program, Visit};
@@ -256,6 +256,21 @@ impl<'a> Visit<'a> for ReferenceChecker<'_> {
         // аргументом — вычисляемое имя (`call_tool(x, ...)`) не может
         // быть проверено статически по построению, тот же класс
         // честного пробела, что и `globalThis['eval']` выше.
+        // Находка 3.6 аудита: Math.random — недетерминизм внутри
+        // «детерминированного ядра» (replay по журналу теряет
+        // воспроизводимость). Math сам нужен (floor/max), запрещаем
+        // именно random на уровне member-access. Date как идентификатор
+        // не в белом списке, this.Date — закрыт запретом `this` (3.1).
+        if let Expression::StaticMemberExpression(member) = it {
+            if let Expression::Identifier(object) = &member.object {
+                if object.name == "Math" && member.property.name == "random" {
+                    self.violation = Some(StaticAnalysisError::ForbiddenConstruct(
+                        "Math.random — недетерминизм запрещён (replay должен воспроизводиться)",
+                    ));
+                    return;
+                }
+            }
+        }
         if let Expression::CallExpression(call) = it {
             if let Expression::Identifier(callee) = &call.callee {
                 if callee.name == "call_tool" {
@@ -278,6 +293,18 @@ impl<'a> Visit<'a> for ReferenceChecker<'_> {
         if self.violation.is_none() {
             self.violation = Some(StaticAnalysisError::ForbiddenConstruct(
                 "import ... = require(...) запрещён",
+            ));
+        }
+    }
+
+    // Находка 3.8 аудита: анализатор парсит как ES-модуль, гость
+    // исполняет как СКРИПТ — статический import проходил анализ и
+    // гарантированно падал в рантайме (и латентная дыра при будущем
+    // eval-модуля). Отклоняем на анализе — гостю нечего импортировать.
+    fn visit_import_declaration(&mut self, _it: &ImportDeclaration<'a>) {
+        if self.violation.is_none() {
+            self.violation = Some(StaticAnalysisError::ForbiddenConstruct(
+                "статический import запрещён (гость исполняет скрипт, не модуль)",
             ));
         }
     }
@@ -329,6 +356,28 @@ mod tests {
     /// Техдолг TD3.1: `this` на верхнем уровне гостевого рантайма ==
     /// `globalThis` — без явной проверки `this.eval(...)` обходил бы
     /// белый список целиком (`this` — не `IdentifierReference`).
+    #[test]
+    fn rejects_math_random_as_nondeterminism() {
+        // 3.6 аудита: replay по журналу обязан воспроизводиться.
+        let result = analyze("const x = Math.random();", &[]);
+        assert!(
+            matches!(result, Err(StaticAnalysisError::ForbiddenConstruct(_))),
+            "Math.random обязан отклоняться: {result:?}"
+        );
+        // Детерминированный Math — разрешён.
+        assert!(analyze("const x = Math.floor(1.7);", &[]).is_ok());
+    }
+
+    #[test]
+    fn rejects_static_import_as_module_dialect_mismatch() {
+        // 3.8 аудита: гость — скрипт, не модуль.
+        let result = analyze("import { x } from './mod.js';\nfinish(x);", &[]);
+        assert!(
+            matches!(result, Err(StaticAnalysisError::ForbiddenConstruct(_))),
+            "статический import обязан отклоняться: {result:?}"
+        );
+    }
+
     #[test]
     fn rejects_this_expression_used_to_reach_globalthis() {
         let err = analyze("this.eval('1+1')", &[]).unwrap_err();

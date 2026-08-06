@@ -245,6 +245,12 @@ fn main() -> ExitCode {
         } => {
             if let Err(err) = run::run(&resolved_config, &process, &resume, &input) {
                 eprintln!("[berimor] {err}");
+                // Находка 3.16 аудита: отказ человека на human_gate —
+                // отличимый код 2, не «сбой» (1): скрипты различают
+                // «остановлено по решению оператора» и «упало».
+                if matches!(err, run::RunError::HumanDeclined) {
+                    return ExitCode::from(2);
+                }
                 return ExitCode::FAILURE;
             }
         }

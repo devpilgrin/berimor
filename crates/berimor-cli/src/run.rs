@@ -94,6 +94,13 @@ pub fn run(
     let bundle = build_executor_bundle(config)?;
     let providers = bundle.providers();
 
+    // Находка 3.14 аудита: --resume с --input молча игнорировал вход —
+    // пользователь полагал, что данные дошли. Честная ошибка.
+    if resume.is_some() && input.is_some() {
+        return Err(RunError::BadInput(
+            "--input не применяется при --resume (вход инстанса уже зафиксирован в журнале) — уберите один из флагов".to_string(),
+        ));
+    }
     let mut instance = match resume {
         Some(id) => {
             let id = ProcessInstanceId(id.clone());
@@ -139,12 +146,10 @@ pub fn run(
     let instance_id = instance.id.clone();
     let process_version = instance.process.version;
     let on_attempt = |kind: EventKind| {
-        let _ = storage.append(Event::new(
-            instance_id.clone(),
-            process_version,
-            kind,
-            Value::Null,
-        ));
+        audit_append(
+            &storage,
+            Event::new(instance_id.clone(), process_version, kind, Value::Null),
+        );
     };
 
     let memory_context = MemoryContextBuilder {
@@ -230,14 +235,17 @@ pub fn run(
                 let resolved_reason = bundle
                     .masker
                     .mask_text(&interpolate(&reason, &instance.state));
-                let _ = storage.append(Event::new(
-                    instance.id.clone(),
-                    instance.process.version,
-                    EventKind::HumanGateOpened {
-                        reason: resolved_reason.clone(),
-                    },
-                    Value::Null,
-                ));
+                audit_append(
+                    &storage,
+                    Event::new(
+                        instance.id.clone(),
+                        instance.process.version,
+                        EventKind::HumanGateOpened {
+                            reason: resolved_reason.clone(),
+                        },
+                        Value::Null,
+                    ),
+                );
                 if !ask_human(&step_id, &resolved_reason) {
                     println!(
                         "[berimor] остановлено на human_gate '{step_id}'; возобновить: berimor run {process_path} --resume {}",
@@ -245,12 +253,15 @@ pub fn run(
                     );
                     return Err(RunError::HumanDeclined);
                 }
-                let _ = storage.append(Event::new(
-                    instance.id.clone(),
-                    instance.process.version,
-                    EventKind::HumanGateResolved,
-                    Value::Null,
-                ));
+                audit_append(
+                    &storage,
+                    Event::new(
+                        instance.id.clone(),
+                        instance.process.version,
+                        EventKind::HumanGateResolved,
+                        Value::Null,
+                    ),
+                );
                 // «Ответ возобновляет выполнение» (process-engine.md §5) —
                 // повторный run с того же current_step.
             }
@@ -361,6 +372,19 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
     } else {
         Some(McpToolDispatch::connect(&config.mcp_servers)?)
     };
+    // Находка 3.15 аудита: MCP-инструмент молча затеняет статический
+    // tool_stub с тем же именем (порядок: MCP до stubs) — предупреждение
+    // оператору, не молчаливое переопределение поведения.
+    if let Some(mcp_dispatch) = &mcp {
+        for stub in &config.tool_stubs {
+            if mcp_dispatch.has_tool(&stub.tool) {
+                eprintln!(
+                    "[berimor] ВНИМАНИЕ: MCP-инструмент '{}' затеняет статический tool_stub с тем же именем — будет вызван MCP",
+                    stub.tool
+                );
+            }
+        }
+    }
     // Диспетчер: подписанные/доверенные артефакты — инструменты первого
     // класса (слой между встроенными и MCP).
     let dispatch = CompositeToolDispatch {
@@ -548,6 +572,15 @@ fn build_local_provider(
         identity.provider,
         model_path.display()
     )))
+}
+
+/// Аудит-запись в журнал (находка 3.17 аудита): отказ append НЕ
+/// проглатывается молча — предупреждение в stderr (аудит-след,
+/// security-model §5: потеря события обязана быть видна).
+pub(crate) fn audit_append(log: &dyn EventLog, event: Event) {
+    if let Err(err) = log.append(event) {
+        eprintln!("[berimor] ВНИМАНИЕ: событие аудит-журнала потеряно: {err}");
+    }
 }
 
 /// Реальный `StepExecutor` (CLI1): маршрутизация по типу шага.
@@ -800,14 +833,17 @@ fn extract_and_store_facts(
                     "сохранённый факт {} («{}») против предложенного («{}»)",
                     conflict.existing.0, conflict.existing_object, conflict.candidate_object
                 ));
-                let _ = storage.append(Event::new(
-                    instance.id.clone(),
-                    instance.process.version,
-                    EventKind::MemoryConflict {
-                        detail: detail.clone(),
-                    },
-                    Value::Null,
-                ));
+                audit_append(
+                    storage,
+                    Event::new(
+                        instance.id.clone(),
+                        instance.process.version,
+                        EventKind::MemoryConflict {
+                            detail: detail.clone(),
+                        },
+                        Value::Null,
+                    ),
+                );
                 eprintln!("[berimor] память: конфликт фактов (запись отклонена): {detail}");
                 conflicts += 1;
             }

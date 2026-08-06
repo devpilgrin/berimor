@@ -410,6 +410,19 @@ pub fn load(explicit_path: Option<&Path>) -> Result<Config, ConfigError> {
     let local_path = explicit_path
         .map(Path::to_path_buf)
         .unwrap_or_else(default_config_path);
+    // Находка 3.10 аудита: ЯВНО указанный путь, которого нет, — ошибка,
+    // не молчаливая подмена дефолтами (опечатка в пути меняла бы
+    // security-режим незаметно: smart вместо off, потеря провайдеров).
+    // Дефолтный ./berimor.toml по-прежнему опционален.
+    if explicit_path.is_some() && !local_path.is_file() {
+        return Err(ConfigError::Read {
+            path: local_path.clone(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "явно указанный --config не существует (проверьте путь — молчаливая подмена дефолтами отключена)",
+            ),
+        });
+    }
     let local = PartialConfig::load_file(&local_path)?;
     Ok(merge(global.unwrap_or_default(), local.unwrap_or_default()))
 }
@@ -417,6 +430,17 @@ pub fn load(explicit_path: Option<&Path>) -> Result<Config, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Находка 3.10 аудита: явный --config, которого нет, — ошибка, не
+    /// молчаливые дефолты (опечатка в пути ≠ смена security-режима).
+    #[test]
+    fn explicit_missing_config_is_error_not_silent_defaults() {
+        let missing = std::path::Path::new("/nonexistent/berimor-3-10.toml");
+        let result = load(Some(missing));
+        assert!(result.is_err(), "явный несуществующий --config — ошибка");
+        // Дефолтный путь по-прежнему опционален.
+        let _ = load(None);
+    }
 
     /// E4: локальный провайдер объявляется `model_path` без `base_url` —
     /// поле URL обязано иметь дефолт, иначе конфигурация локального
@@ -464,9 +488,12 @@ base_url = "https://api.openai.com/v1"
     }
 
     #[test]
-    fn missing_file_at_default_path_falls_back_to_defaults() {
-        let config = load(Some(Path::new("/nonexistent/path/does-not-exist.toml"))).unwrap();
-        assert_eq!(config.storage_path, Config::default().storage_path);
+    fn missing_explicit_config_is_error_missing_default_falls_back() {
+        // Контракт 3.10: ЯВНЫЙ путь — обязан существовать (опечатка не
+        // должна молча менять security-режим); ДЕФОЛТНЫЙ — опционален.
+        assert!(load(Some(Path::new("/nonexistent/path/does-not-exist.toml"))).is_err());
+        // load(None) с отсутствующим ./berimor.toml — дефолты (проверено
+        // в explicit_missing_config_is_error_not_silent_defaults).
     }
 
     #[test]

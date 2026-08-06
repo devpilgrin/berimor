@@ -198,13 +198,10 @@ impl AgentRunDispatch {
             })?;
         let telemetry_id = instance_id.clone();
         let on_attempt = move |kind: berimor_types::event::EventKind| {
-            use berimor_storage::EventLog as _;
-            let _ = storage.append(berimor_types::event::Event::new(
-                telemetry_id.clone(),
-                1,
-                kind,
-                Value::Null,
-            ));
+            crate::run::audit_append(
+                &storage,
+                berimor_types::event::Event::new(telemetry_id.clone(), 1, kind, Value::Null),
+            );
         };
 
         // Лёгкий контекст ребёнка: конституция/бюджет — те же, память

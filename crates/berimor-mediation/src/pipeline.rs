@@ -30,7 +30,11 @@ use berimor_types::{
 use serde_json::Value;
 
 /// До 2 повторов на parse/schema — mediation.md §5.
-const MAX_RETRIES: u8 = 2;
+/// Скреплено с MAX_ATTEMPTS исполнителей compile-time assert'ами
+/// (находка 3.12 аудита: unreachable! в structured_llm/agent_step
+/// опирался на НЕЗАФИКСИРОВАННЫЙ инвариант «попыток ровно на одну
+/// больше, чем ретраев pipeline»).
+pub const MAX_RETRIES: u8 = 2;
 
 /// Правила `policy`, специфичные для контракта и шага — собираются
 /// вызывающим кодом (P3/будущая интеграция), не выводятся из типа

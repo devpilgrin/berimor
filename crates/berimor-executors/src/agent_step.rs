@@ -56,6 +56,12 @@ use std::collections::HashMap;
 /// (`mediation.md` §5: до 2 повторов + первая попытка).
 const MAX_ATTEMPTS: u8 = 3;
 
+// См. structured_llm.rs — та же compile-time скрепка (3.12 аудита).
+const _: () = assert!(
+    MAX_ATTEMPTS == berimor_mediation::pipeline::MAX_RETRIES + 1,
+    "MAX_ATTEMPTS обязан быть MAX_RETRIES+1 (инвариант unreachable! ниже)"
+);
+
 #[derive(Debug, thiserror::Error)]
 pub enum AgentStepError {
     #[error("неизвестный контракт '{0}' (нет в реестре E2) для финального результата AgentStep")]
@@ -344,8 +350,16 @@ impl AgentStepExecutor<'_> {
 
             match outcome {
                 MediationOutcome::Committed(commit) => {
-                    return Ok(serde_json::from_value(commit.patch.changes)
-                        .expect("AgentTurnDecision, прошедший mediate, разбирается обратно"));
+                    // 3.13 аудита: round-trip через mediate не обязан
+                    // паниковать при расхождении схемы после рефакторинга.
+                    return serde_json::from_value(commit.patch.changes).map_err(|err| {
+                        AgentStepError::Escalated {
+                            reason: format!(
+                                "AgentTurnDecision прошёл mediate, но не разбирается обратно: {err}"
+                            ),
+                            stage: MediationStage::Commit,
+                        }
+                    });
                 }
                 MediationOutcome::Retry(rejection) => {
                     retry_feedback = Some(format!(
@@ -458,8 +472,13 @@ impl AgentStepExecutor<'_> {
             ));
         }
         match outcome {
-            MediationOutcome::Committed(commit) => Ok(serde_json::from_value(commit.patch.changes)
-                .expect("AgentVerdict, прошедший mediate, разбирается обратно")),
+            MediationOutcome::Committed(commit) => serde_json::from_value(commit.patch.changes)
+                .map_err(|err| AgentStepError::Escalated {
+                    reason: format!(
+                        "AgentVerdict прошёл mediate, но не разбирается обратно: {err}"
+                    ),
+                    stage: MediationStage::Commit,
+                }),
             MediationOutcome::Retry(rejection) => Err(AgentStepError::Escalated {
                 reason: format!(
                     "вердикт не прошёл {:?}: {} (вердикт не повторяется)",

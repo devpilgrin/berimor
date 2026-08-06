@@ -328,10 +328,21 @@ fn classify_trap(
     err: wasmtime::Error,
     fallback: impl FnOnce(String) -> WasmHostError,
 ) -> WasmHostError {
+    // Находка 3.7 аудита: в retry-фидбек модели уезжал wasm-бэктрейс —
+    // нечитаемый дамп из десятков фреймов. Ошибки гостя отдаются без
+    // дампа (первая строка — суть, бэктрейс полезен только в журнале).
+    let sanitize = |message: String| -> String {
+        message
+            .split("wasm backtrace")
+            .next()
+            .unwrap_or(&message)
+            .trim()
+            .to_string()
+    };
     if err.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::OutOfFuel) {
-        return WasmHostError::FuelExhausted(err.to_string());
+        return WasmHostError::FuelExhausted(sanitize(err.to_string()));
     }
-    let message = err.to_string();
+    let message = sanitize(err.to_string());
     if message.contains("fuel") {
         WasmHostError::FuelExhausted(message)
     } else {
@@ -562,6 +573,30 @@ mod tests {
             Arc::new(AutoConfirm),
             Arc::new(berimor_secrets::Masker::new()),
         )
+    }
+
+    /// Находка 3.7 аудита: результат >1 МиБ — ЧИТАЕМАЯ ошибка гостя
+    /// (чистый exit 1 с сообщением), не Trap с wasm-бэктрейсом в
+    /// retry-фидбеке модели.
+    #[test]
+    fn oversized_result_fails_with_readable_message_not_trap_dump() {
+        let host = host(PanicIfCalledDispatch, AllowAll);
+        let result = host.run(
+            GUEST_WASM,
+            &program(
+                json!(null),
+                "const big = 'x'.repeat(2 * 1024 * 1024); finish(big)",
+            ),
+            &WasmLimits::strong(),
+            &[],
+        );
+        let err = result.expect_err("результат >1 МиБ обязан отклоняться");
+        let text = format!("{err:?}");
+        assert!(text.contains("превышает"), "читаемая причина капа: {text}");
+        assert!(
+            !text.contains("wasm backtrace") && !text.contains("Trap"),
+            "без дампа бэктрейса: {text}"
+        );
     }
 
     #[test]

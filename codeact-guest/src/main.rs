@@ -176,6 +176,28 @@ fn run(program: &str, input: &serde_json::Value) -> Result<serde_json::Value, St
                 ctx.clone(),
                 move |value: rquickjs::Value| -> rquickjs::Result<()> {
                     let ctx = value.ctx().clone();
+                    // Находка 3.7 аудита: сериализация огромного значения
+                    // выжигала fuel ДО любого капа (Trap с бэктрейсом
+                    // вместо ошибки). Длина JS-строки читается дёшево —
+                    // отсекаем гигантов ДО json_stringify. Составные
+                    // значения сериализуются под fuel как раньше, а хост
+                    // отдаёт модели чистую ошибку без дампа (wasm_host).
+                    const MAX_RESULT_CHARS: usize = 1024 * 1024;
+                    if let Some(s) = value.clone().into_string() {
+                        let text = s.to_string().unwrap_or_default();
+                        if text.len() > MAX_RESULT_CHARS {
+                            *finished_called.borrow_mut() = true;
+                            let js_message = rquickjs::String::from_str(
+                                ctx.clone(),
+                                &format!(
+                                    "результат превышает {MAX_RESULT_CHARS} байт ({}): уменьшите объём возвращаемых данных",
+                                    text.len()
+                                ),
+                            )
+                            .map_err(|e| rquickjs::Error::from(e))?;
+                            return Err(ctx.throw(js_message.into_value()));
+                        }
+                    }
                     let text = ctx
                         .json_stringify(value.clone())
                         .ok()
@@ -284,8 +306,23 @@ fn main() {
     match run(program, &input) {
         Ok(result) => {
             let text = serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string());
-            print!("{text}");
-            let _ = std::io::stdout().flush();
+            // Находка 3.7 аудита: результат >1 МиБ ронял гостя паникой в
+            // stdio::_print (panic=abort) — хост получал нечитаемый Trap
+            // с wasm-бэктрейсом, уезжавший в retry-фидбек модели. Кап с
+            // ЧИТАЕМОЙ ошибкой (чистый exit 1, не Trap) + запись без
+            // паникующих макросов.
+            const MAX_RESULT_BYTES: usize = 1024 * 1024;
+            if text.len() > MAX_RESULT_BYTES {
+                die(&format!(
+                    "результат превышает {} байт ({}): уменьшите объём возвращаемых данных",
+                    MAX_RESULT_BYTES,
+                    text.len()
+                ));
+            }
+            let mut stdout = std::io::stdout().lock();
+            if stdout.write_all(text.as_bytes()).is_err() || stdout.flush().is_err() {
+                die("запись результата в stdout не удалась");
+            }
             std::process::exit(0);
         }
         Err(message) => die(&message),
@@ -293,7 +330,8 @@ fn main() {
 }
 
 fn die(message: &str) -> ! {
-    eprint!("{message}");
-    let _ = std::io::stderr().flush();
+    let mut stderr = std::io::stderr().lock();
+    let _ = stderr.write_all(message.as_bytes());
+    let _ = stderr.flush();
     std::process::exit(1);
 }

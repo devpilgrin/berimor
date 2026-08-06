@@ -27,7 +27,7 @@ use crate::setup;
 use berimor_context_engine::memory_builder::MemoryContextBuilder;
 use berimor_executors::agent_step::AgentStepExecutor;
 use berimor_mediation::contracts::ChatReply;
-use berimor_storage::{EventLog, SqliteEventLog};
+use berimor_storage::SqliteEventLog;
 use berimor_types::contract::Contract;
 use berimor_types::event::{Event, EventKind, ProcessInstanceId};
 use serde_json::{json, Value};
@@ -269,7 +269,10 @@ pub(crate) fn execute_turn(
     ));
     let telemetry_id = instance_id.clone();
     let on_attempt = |kind: EventKind| {
-        let _ = storage.append(Event::new(telemetry_id.clone(), 1, kind, Value::Null));
+        crate::run::audit_append(
+            &storage,
+            Event::new(telemetry_id.clone(), 1, kind, Value::Null),
+        );
     };
     let memory_context = MemoryContextBuilder {
         episodic: &storage,
@@ -395,7 +398,10 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
     ));
     let telemetry_id = instance_id.clone();
     let on_attempt = |kind: EventKind| {
-        let _ = storage.append(Event::new(telemetry_id.clone(), 1, kind, Value::Null));
+        crate::run::audit_append(
+            &storage,
+            Event::new(telemetry_id.clone(), 1, kind, Value::Null),
+        );
     };
 
     let memory_context = MemoryContextBuilder {

@@ -32,6 +32,13 @@ use std::collections::HashMap;
 /// лимитирует `pipeline::mediate`; цикл здесь — исполнитель той таблицы).
 const MAX_ATTEMPTS: u8 = 3;
 
+// Находка 3.12 аудита: инвариант «последняя попытка — Escalate» верен,
+// пока попыток ровно MAX_RETRIES+1 — связка зафиксирована compile-time.
+const _: () = assert!(
+    MAX_ATTEMPTS == berimor_mediation::pipeline::MAX_RETRIES + 1,
+    "MAX_ATTEMPTS обязан быть MAX_RETRIES+1 (инвариант unreachable! ниже)"
+);
+
 /// Типстёртая ссылка на обобщённый `pipeline::mediate::<C>` конкретного
 /// контракта — реестр не может хранить обобщения, хранит мономорфизацию.
 type MediateFn = fn(
