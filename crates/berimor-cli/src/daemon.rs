@@ -162,7 +162,12 @@ pub fn run_daemon(config: &Config, once: bool, tick_cap_ms: i64) -> Result<(), S
         config.storage_path.display(),
         if once { ", один тик" } else { "" }
     );
+    // Реестр сессий (§20.22 v2): демон — долгоживущая сессия «daemon»,
+    // heartbeat — на границе тика (таймерных потоков нет по дизайну).
+    let session_id = crate::sessions::new_session_id();
+    let _ = crate::sessions::record_open(&storage, &session_id, "daemon");
     loop {
+        let _ = crate::sessions::record_heartbeat(&storage, &session_id);
         let fired = storage
             .tick(now_ms())
             .map_err(|err| format!("тик планировщика: {err}"))?;
@@ -190,6 +195,7 @@ pub fn run_daemon(config: &Config, once: bool, tick_cap_ms: i64) -> Result<(), S
             if fired.is_empty() {
                 eprintln!("[berimor] тик: due-расписаний нет");
             }
+            let _ = crate::sessions::record_closed(&storage, &session_id);
             return Ok(());
         }
         // Сон до ближайшего срабатывания, но не дольше потолка тика —

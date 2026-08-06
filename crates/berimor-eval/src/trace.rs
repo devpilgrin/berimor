@@ -78,6 +78,21 @@ fn describe(event: &Event) -> TraceEntry {
             "version_migrated",
             format!("инстанс переведён с версии {from_version} на {to_version}"),
         ),
+        EventKind::SessionOpened {
+            session_id,
+            command,
+            ..
+        } => (
+            "session_opened",
+            format!("сессия '{session_id}' открыта ({command})"),
+        ),
+        EventKind::SessionHeartbeat { session_id } => (
+            "session_heartbeat",
+            format!("heartbeat сессии '{session_id}'"),
+        ),
+        EventKind::SessionClosed { session_id } => {
+            ("session_closed", format!("сессия '{session_id}' закрыта"))
+        }
         EventKind::TrustListChanged { action, repo, .. } => (
             "trust_list_changed",
             format!("доверенный список: {action:?} '{repo}'"),

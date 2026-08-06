@@ -130,6 +130,27 @@ pub enum EventKind {
         signer_identity: String,
         capability_ceiling: Vec<String>,
     },
+    /// §20.22 v2: реестр живых сессий хоста (design-swarm-sessions.md,
+    /// шаг 1). Пишется под синтетическим `ProcessInstanceId("host-sessions")`,
+    /// как `TrustListChanged`; свёртка — в `berimor-cli::sessions`
+    /// (последнее состояние на session_id). `command` — чем запущена
+    /// сессия: "chat" | "run" | "daemon".
+    SessionOpened {
+        session_id: String,
+        pid: u32,
+        cwd: String,
+        command: String,
+    },
+    /// Heartbeat сессии: в REPL — на границе хода, в демоне — на тике.
+    /// Таймерный поток осознанно НЕ вводится (детерминизм).
+    SessionHeartbeat {
+        session_id: String,
+    },
+    /// Корректное завершение (best-effort: kill -9 события не будет —
+    /// «мёртвая» вычисляется читателем по pid/порогу, не сторожком).
+    SessionClosed {
+        session_id: String,
+    },
 }
 
 /// Действие над записью доверенного списка — см. [`EventKind::TrustListChanged`].

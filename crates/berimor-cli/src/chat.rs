@@ -359,6 +359,15 @@ pub(crate) fn cmd_chat(explicit_config: Option<&Path>) -> Result<(), RunError> {
     // диалога — не часть бандла, терять её из-за смены конфига нельзя.
     // Плюс подхват ленты прошлых сессий области (§20.15).
     let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    // Реестр сессий (§20.22 v2): open при старте, close при выходе —
+    // best-effort (журнал недоступен — чат не падает из-за реестра).
+    let session_id = crate::sessions::new_session_id();
+    let session_journal = config::load(explicit_config)
+        .ok()
+        .and_then(|c| berimor_storage::SqliteEventLog::open(&c.storage_path).ok());
+    if let Some(journal) = &session_journal {
+        let _ = crate::sessions::record_open(journal, &session_id, "chat");
+    }
     let mut history: Vec<Value> = crate::chat_history::load(&workspace);
     if !history.is_empty() {
         eprintln!(
@@ -369,8 +378,13 @@ pub(crate) fn cmd_chat(explicit_config: Option<&Path>) -> Result<(), RunError> {
     loop {
         let config =
             config::load(explicit_config).map_err(|err| RunError::BadInput(err.to_string()))?;
-        match run_repl(&config, &mut history)? {
-            SessionOutcome::Exit => return Ok(()),
+        match run_repl(&config, &mut history, session_journal.as_ref(), &session_id)? {
+            SessionOutcome::Exit => {
+                if let Some(journal) = &session_journal {
+                    let _ = crate::sessions::record_closed(journal, &session_id);
+                }
+                return Ok(());
+            }
             SessionOutcome::Reload => {
                 eprintln!("[berimor] конфигурация перечитана, рантайм пересобран");
             }
@@ -378,7 +392,12 @@ pub(crate) fn cmd_chat(explicit_config: Option<&Path>) -> Result<(), RunError> {
     }
 }
 
-fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome, RunError> {
+fn run_repl(
+    config: &Config,
+    history: &mut Vec<Value>,
+    session_journal: Option<&SqliteEventLog>,
+    session_id: &str,
+) -> Result<SessionOutcome, RunError> {
     let bundle = build_executor_bundle(config)?;
     let storage =
         SqliteEventLog::open(&config.storage_path).map_err(|err| RunError::OpenStorage {
@@ -467,6 +486,9 @@ fn run_repl(config: &Config, history: &mut Vec<Value>) -> Result<SessionOutcome,
             return Ok(SessionOutcome::Exit);
         }
         let message = line.trim();
+        if let Some(journal) = session_journal {
+            let _ = crate::sessions::record_heartbeat(journal, session_id);
+        }
         if message.is_empty() {
             continue;
         }

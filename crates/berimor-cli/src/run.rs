@@ -88,6 +88,16 @@ pub fn run(
             reason: err.to_string(),
         })?;
 
+    // Реестр сессий (§20.22 v2): прогон — короткая сессия «run».
+    // Гвард держит ПУТЬ, а не заимствование: storage уходит в движок по
+    // владению, а close при любом выходе открывает своё подключение.
+    let session_id = crate::sessions::new_session_id();
+    let _ = crate::sessions::record_open(&storage, &session_id, "run");
+    let _session_guard = SessionCloseGuard {
+        storage_path: config.storage_path.clone(),
+        session_id: session_id.clone(),
+    };
+
     // Инстанс: восстановление по журналу (CLI3) или новый (CLI1).
     // Сборка исполнителей — ДО instantiate: реестр секретов (S5) нужен
     // для маскировки входа на границе CLI (находка 1 независимого ревью).
@@ -1057,4 +1067,20 @@ fn new_instance_id(process_text: &str) -> String {
     // идентификатор обязан быть лишь уникальным и читаемым.
     let _ = process_text;
     format!("run-{ms}-{}", std::process::id())
+}
+
+/// Закрытие сессии «run» при любом выходе (в т.ч. по ошибке) — Drop,
+/// а не ручные вызовы по веткам. Подключение — своё: основное storage
+/// уходит в движок по владению.
+struct SessionCloseGuard {
+    storage_path: std::path::PathBuf,
+    session_id: String,
+}
+
+impl Drop for SessionCloseGuard {
+    fn drop(&mut self) {
+        if let Ok(journal) = SqliteEventLog::open(&self.storage_path) {
+            let _ = crate::sessions::record_closed(&journal, &self.session_id);
+        }
+    }
 }

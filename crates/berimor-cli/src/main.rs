@@ -29,6 +29,7 @@ mod plugin_runtime;
 mod presets;
 mod run;
 mod self_update;
+mod sessions;
 mod setup;
 mod skills;
 mod trust;
@@ -93,6 +94,8 @@ enum Command {
         #[command(subcommand)]
         action: ScheduleAction,
     },
+    /// Живые сессии хоста — реестр на общем журнале (§20.22 v2).
+    Sessions,
     /// Демон расписаний: исполняет due-процессы тик за тиком (§20.22).
     Daemon {
         /// Один тик и выход (для cron и ручного запуска).
@@ -307,6 +310,12 @@ fn main() -> ExitCode {
         }
         Command::Daemon { once, tick_cap } => {
             if let Err(err) = daemon::run_daemon(&resolved_config, once, tick_cap) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Command::Sessions => {
+            if let Err(err) = sessions::cmd_sessions(&resolved_config) {
                 eprintln!("[berimor] {err}");
                 return ExitCode::FAILURE;
             }
