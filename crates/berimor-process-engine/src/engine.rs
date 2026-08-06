@@ -86,6 +86,12 @@ pub enum EngineError {
     Executor(#[from] ExecutorError),
     #[error("не поддержано: {0}")]
     Unsupported(String),
+    /// Аудит 1.12: инстанс собран вручную минуя `compile` — внутренние
+    /// инварианты («шаг существует в графе», «current_step задан») не
+    /// выполнены. Раньше — паника `expect`; теперь честная ошибка.
+    /// Полная приватизация полей — при мажорной версии API.
+    #[error("инстанс собран в обход compile (инвариант нарушен): {detail}")]
+    InvalidInstance { detail: String },
     /// P7: политика `on_timeout` шага — `Fail` (`process-engine.md` §5:
     /// «падение шага»).
     #[error("human_gate '{step_id}' не дождался ответа человека вовремя")]
@@ -365,12 +371,18 @@ pub fn run(
                 // остаётся на самом parallel-шаге, следующая итерация
                 // снова спросит `next_step`: ещё есть ветви — форкнет
                 // дальше, барьер пройден — пройдёт мимо как обычный шаг.
-                let fork_step_id = instance.current_step.clone().expect(
-                    "Fork возвращается только когда current указывает на существующий parallel-шаг",
-                );
+                let fork_step_id =
+                    instance
+                        .current_step
+                        .clone()
+                        .ok_or_else(|| EngineError::InvalidInstance {
+                            detail: "current_step = None при ветвлении parallel".to_string(),
+                        })?;
                 let branch_step_id = remaining_branches
                     .first()
-                    .expect("graph::next_step не возвращает Fork с пустым списком")
+                    .ok_or_else(|| EngineError::InvalidInstance {
+                        detail: "next_step вернул Fork с пустым списком ветвей".to_string(),
+                    })?
                     .clone();
                 execute_fork_branch(storage, executor, instance, &fork_step_id, &branch_step_id)?;
                 continue;
@@ -404,7 +416,9 @@ fn execute_single_step(
         .steps
         .iter()
         .find(|s| s.id == step_id)
-        .expect("вызывающий код гарантирует существование шага в графе (compile())");
+        .ok_or_else(|| EngineError::InvalidInstance {
+            detail: format!("шаг '{step_id}' отсутствует в графе инстанса"),
+        })?;
 
     match &step.kind {
         StepKind::Sequential | StepKind::Branch { .. } | StepKind::Parallel { .. } => {
@@ -498,7 +512,9 @@ fn execute_fork_branch(
         .steps
         .iter()
         .find(|s| s.id == branch_step_id)
-        .expect("ветви parallel-шага проверены graph::compile — существуют и валидны по типу");
+        .ok_or_else(|| EngineError::InvalidInstance {
+            detail: format!("ветвь '{branch_step_id}' отсутствует в графе инстанса"),
+        })?;
 
     let patch = executor.execute(branch_step, &instance.state)?;
     let event = Event::new(
@@ -652,6 +668,43 @@ mod tests {
         instantiate(&storage, id.clone(), process.clone(), json!({"a": 1})).unwrap();
         let err = instantiate(&storage, id, process, json!({"a": 2})).unwrap_err();
         assert!(matches!(err, EngineError::InstanceExists(_)), "{err:?}");
+    }
+
+    /// Аудит 1.12 (шаг а): инстанс, собранный вручную минуя compile с
+    /// веткой на несуществующий шаг, — честная ошибка, не паника expect.
+    #[test]
+    fn hand_built_instance_with_dangling_branch_errors_not_panics() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let process = parse(
+            r#"process: hand-built
+version: 1
+steps:
+  - id: route
+    type: branch
+    on: state.flag
+    cases:
+      go: ghost-target
+limits:
+  max_steps: 10
+  timeout: 5m
+"#,
+        )
+        .unwrap();
+        // Ручная сборка минуя compile: ветка ведёт на шаг, которого нет
+        // в графе — compile бы это отклонил, поля публичны (1.12).
+        let mut instance = ProcessInstance {
+            id: ProcessInstanceId("i-1-12".into()),
+            process,
+            state: json!({"flag": "go"}),
+            current_step: None,
+            blocked: None,
+        };
+        let executor = FakeExecutor { risk: 1 };
+        let err = run(&storage, &executor, &mut instance).unwrap_err();
+        assert!(
+            matches!(err, EngineError::InvalidInstance { .. }),
+            "ожидалась InvalidInstance, не паника и не иная ошибка: {err:?}"
+        );
     }
 
     /// Находка 1.8 аудита: recover несуществующего — ошибка, не призрак.
