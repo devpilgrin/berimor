@@ -46,12 +46,17 @@ pub struct ProviderConfig {
     pub model_path: Option<PathBuf>,
     /// ИМЯ переменной окружения с API-ключом — сам ключ в файле
     /// конфигурации не хранится (security-model.md §6: «нет секретов вне
-    /// хранилища секретов»). OAuth-провайдеры подписки (ADR-0027, §20.25):
-    /// СЛЕДУЮЩИЙ ШАГ — поле `auth = "oauth"`, при котором access-токен
-    /// берётся из реестра через `oauth::access_token()` вместо api_key_env.
-    /// Сейчас OAuth-профили живут в secrets.env рядом и в Model Pool ещё
-    /// не подключены.
+    /// хранилища секретов»). Игнорируется при `auth = "oauth"`.
     pub api_key_env: Option<String>,
+    /// ADR-0027, §20.25: `"oauth"` — access-токен берётся из OAuth-профиля
+    /// реестра (`berimor login --provider ...`) через `oauth::access_token()`
+    /// с прозрачным refresh; api_key_env не читается.
+    #[serde(default)]
+    pub auth: Option<String>,
+    /// Имя OAuth-профиля в реестре ("claude"/"openai" — как у
+    /// `berimor login --provider`). None — имя самого провайдера.
+    #[serde(default)]
+    pub oauth_profile: Option<String>,
     /// Явный opt-in на приватный endpoint (сетевой гейт S3) — для
     /// локальных серверов инференса и тестовых моков.
     #[serde(default)]

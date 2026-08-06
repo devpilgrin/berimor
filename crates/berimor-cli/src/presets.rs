@@ -145,6 +145,8 @@ pub fn instantiate(
         base_url: base_url.unwrap_or_else(|| preset.base_url.to_string()),
         model_path: None,
         api_key_env: preset.key_env.map(str::to_string),
+        auth: None,
+        oauth_profile: None,
         allow_private_endpoint: preset.private,
         cost_per_1k_tokens: None,
         temperature: preset.temperature,

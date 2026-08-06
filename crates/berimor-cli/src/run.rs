@@ -508,25 +508,7 @@ pub(crate) fn build_executor_bundle_with_session(
             cost_per_1k_tokens: p.cost_per_1k_tokens,
             measured_latency_ms: None,
         });
-        let api_key = match &p.api_key_env {
-            Some(env) => {
-                let value = std::env::var(env).ok().filter(|v| !v.is_empty());
-                let key =
-                    Secret::new(value.ok_or_else(|| RunError::MissingApiKey(p.name.clone()))?);
-                if key.reveal().len() < berimor_secrets::MIN_SECRET_LEN {
-                    eprintln!(
-                        "[berimor] предупреждение: ключ провайдера '{}' короче {} символов — не регистрируется в маскировщике",
-                        p.name,
-                        berimor_secrets::MIN_SECRET_LEN
-                    );
-                }
-                // Тот же ключ — известный секрет запуска: контроль утечек
-                // (точка 4) обязан поймать его в выводе модели.
-                masker.register(Secret::new(key.reveal().to_string()));
-                Some(key)
-            }
-            None => None,
-        };
+        let api_key = resolve_provider_key(p, &mut masker)?;
         provider_clients.push((
             p.name.clone(),
             std::sync::Arc::new(
@@ -1107,5 +1089,101 @@ impl Drop for SessionCloseGuard {
         if let Ok(journal) = SqliteEventLog::open(&self.storage_path) {
             let _ = crate::sessions::record_closed(&journal, &self.session_id);
         }
+    }
+}
+
+/// Разрешение ключа провайдера (§20.25): `auth = "oauth"` — access-токен
+/// из OAuth-профиля реестра с прозрачным refresh (ADR-0027); иначе —
+/// api_key_env из окружения. Оба пути регистрируют значение в маскировщике.
+fn resolve_provider_key(
+    p: &crate::config::ProviderConfig,
+    masker: &mut berimor_secrets::Masker,
+) -> Result<Option<Secret>, RunError> {
+    if p.auth.as_deref() == Some("oauth") {
+        let profile = p.oauth_profile.clone().unwrap_or_else(|| p.name.clone());
+        let secrets_path = crate::config::secrets_env_path().ok_or_else(|| {
+            RunError::Provider(format!(
+                "oauth-провайдер '{profile}': глобальный каталог конфигурации не найден"
+            ))
+        })?;
+        let token = crate::oauth::access_token(&secrets_path, &profile).map_err(|err| {
+            RunError::Provider(format!(
+                "oauth-провайдер '{profile}': {err} — выполните `berimor login --provider {profile}`"
+            ))
+        })?;
+        masker.register(Secret::new(token.clone()));
+        return Ok(Some(Secret::new(token)));
+    }
+    let key = match &p.api_key_env {
+        Some(env) => {
+            let value = std::env::var(env).ok().filter(|v| !v.is_empty());
+            Secret::new(value.ok_or_else(|| RunError::MissingApiKey(p.name.clone()))?)
+        }
+        None => return Ok(None),
+    };
+    if key.reveal().len() < berimor_secrets::MIN_SECRET_LEN {
+        eprintln!(
+            "[berimor] предупреждение: ключ провайдера '{}' короче {} символов — не регистрируется в маскировщике",
+            p.name,
+            berimor_secrets::MIN_SECRET_LEN
+        );
+    }
+    // Тот же ключ — известный секрет запуска: контроль утечек
+    // (точка 4) обязан поймать его в выводе модели.
+    masker.register(Secret::new(key.reveal().to_string()));
+    Ok(Some(key))
+}
+
+#[cfg(test)]
+mod oauth_wiring_tests {
+    use super::*;
+
+    fn provider_with_auth(
+        auth: Option<&str>,
+        profile: Option<&str>,
+    ) -> crate::config::ProviderConfig {
+        crate::config::ProviderConfig {
+            name: "claude-sub".into(),
+            model_id: "claude-sonnet".into(),
+            tier: berimor_types::model::ModelTier::Strong,
+            base_url: "https://api.anthropic.com".into(),
+            model_path: None,
+            api_key_env: None,
+            auth: auth.map(str::to_string),
+            oauth_profile: profile.map(str::to_string),
+            allow_private_endpoint: false,
+            cost_per_1k_tokens: None,
+            temperature: None,
+        }
+    }
+
+    /// §20.25: провайдер без профиля в реестре — говорящая ошибка с
+    /// подсказкой login, не молчаливый пропуск ключа.
+    #[test]
+    fn oauth_provider_without_profile_points_to_login() {
+        let provider = provider_with_auth(Some("oauth"), Some("oauth-test-nonexistent-profile"));
+        let mut masker = berimor_secrets::Masker::new();
+        let err = resolve_provider_key(&provider, &mut masker)
+            .expect_err("профиль отсутствует — ошибка обязана быть");
+        let text = err.to_string();
+        assert!(
+            text.contains("berimor login"),
+            "ошибка обязана подсказывать login: {text}"
+        );
+    }
+
+    /// api_key_env-путь не затронут: провайдер без auth разрешается из
+    /// окружения, как раньше.
+    #[test]
+    fn env_provider_path_unchanged() {
+        let mut provider = provider_with_auth(None, None);
+        provider.api_key_env = Some("BERIMOR_TEST_KEY_ENV".into());
+        unsafe { std::env::set_var("BERIMOR_TEST_KEY_ENV", "test-key-value-123") };
+        let mut masker = berimor_secrets::Masker::new();
+        let key = resolve_provider_key(&provider, &mut masker)
+            .expect("env-путь")
+            .expect("ключ из env");
+        assert_eq!(key.reveal(), "test-key-value-123");
+        unsafe { std::env::remove_var("BERIMOR_TEST_KEY_ENV") };
     }
 }
