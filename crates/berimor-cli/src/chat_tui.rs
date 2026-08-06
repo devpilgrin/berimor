@@ -1056,7 +1056,18 @@ fn draw(frame: &mut Frame, app: &App) {
         ])
         .split(frame.area());
     draw_header(frame, app, chunks[0]);
-    draw_log(frame, app, chunks[1]);
+    // §20.26: инфо-панель справа — только при достаточной ширине
+    // (узкий терминал не теряет журнал: панель — чистый бонус).
+    if chunks[1].width >= 110 {
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(76), Constraint::Percentage(24)])
+            .split(chunks[1]);
+        draw_log(frame, app, cols[0]);
+        draw_side_panel(frame, app, cols[1]);
+    } else {
+        draw_log(frame, app, chunks[1]);
+    }
     draw_input(frame, app, chunks[2]);
     draw_hints(frame, app, chunks[3]);
     if app.slash_open {
@@ -1071,6 +1082,52 @@ fn draw(frame: &mut Frame, app: &App) {
     if let Some(prompt) = &app.confirm_prompt {
         draw_confirm(frame, prompt, app.confirm_selection);
     }
+}
+
+/// §20.26: инфо-панель сессии — данные только из App (кадр дешёвый,
+/// обращений к журналу/сети на отрисовку нет).
+fn draw_side_panel(frame: &mut Frame, app: &App, area: Rect) {
+    let provider = app.active_provider.clone().unwrap_or_else(|| {
+        app.config
+            .providers
+            .first()
+            .map(|p| format!("{}:{}", p.name, p.model_id))
+            .unwrap_or_else(|| "—".into())
+    });
+    let workspace = std::env::current_dir()
+        .map(|p| {
+            let s = p.display().to_string();
+            if s.len() > 22 {
+                format!("…{}", &s[s.len() - 21..])
+            } else {
+                s
+            }
+        })
+        .unwrap_or_else(|_| ".".into());
+    let grants = app.session_grants.lock().map(|g| g.len()).unwrap_or(0);
+    let title_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+    let lines = vec![
+        Line::from(Span::styled(" сессия", title_style)),
+        Line::from(Span::styled(
+            format!(" v{}", env!("CARGO_PKG_VERSION")),
+            dim,
+        )),
+        Line::from(""),
+        Line::from(format!(" {provider}")),
+        Line::from(Span::styled(format!(" {workspace}"), dim)),
+        Line::from(""),
+        Line::from(format!(" ходов: {}", app.conversation.len() / 2)),
+        Line::from(format!(" строк: {}", app.log.len())),
+        Line::from(format!(" скилов: {}", app.skills.len())),
+        Line::from(format!(" грантов: {grants}")),
+    ];
+    let block = Block::default()
+        .borders(Borders::LEFT)
+        .border_style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_confirm(frame: &mut Frame, prompt: &str, selection: usize) {
@@ -1462,6 +1519,73 @@ mod tests {
         assert!(names.contains(&"/model"));
         assert!(names.contains(&"/models"));
         assert!(!names.contains(&"/help"));
+    }
+
+    /// §20.26: при ширине ≥ 110 рендерится инфо-панель, при узком —
+    /// нет (журнал не теряет место).
+    #[test]
+    fn side_panel_renders_only_when_wide() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let config = Config::default();
+        let (tx, rx) = channel();
+        let app = App {
+            config,
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: Vec::new(),
+            answer_tx: None,
+            tx,
+            rx,
+            done: false,
+        };
+
+        let wide = TestBackend::new(140, 30);
+        let mut terminal = Terminal::new(wide).expect("terminal");
+        terminal.draw(|f| draw(f, &app)).expect("draw wide");
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(content.contains("сессия"), "панель при 140 колонках");
+
+        let narrow = TestBackend::new(90, 30);
+        let mut terminal = Terminal::new(narrow).expect("terminal");
+        terminal.draw(|f| draw(f, &app)).expect("draw narrow");
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(!content.contains("сессия"), "без панели при 90 колонках");
     }
 
     #[test]
