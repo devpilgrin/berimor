@@ -1084,12 +1084,16 @@ pty-пробой (методология jcode), `docs/benchmarks.md` — чес
 
 ### 20.25. OAuth-логины по подпискам (Claude/OpenAI)
 
-**Статус: 📋 запланировано (после 20.22–20.24).** PKCE-flow для
-Claude и OpenAI-подписок, refresh-токены в реестре секретов. Сначала
-дизайн-документ (поверхности: браузер-редирект, localhost-callback,
-хранение refresh). **Тесты**: мок token-endpoint'ов локальным сервером
-(PKCE state-machine, refresh-путь, истёкший access); на реальных
-аккаунтах — ручной чек-лист (помечен manual, не CI).
+**Статус: 🔶 v1 реализовано (2026-08-06).** PKCE-flow (RFC 7636) для
+Claude и OpenAI-подписок: `berimor login/logout --provider …` (+`--manual`,
+`--list`), loopback-listener с эфемерным портом и строгой проверкой state,
+токены в `secrets.env` (0600), прозрачный refresh кодом
+(`oauth::access_token`). Эндпоинты/client_id — константы в `oauth.rs` с
+пометкой MANUAL-CHECK. **Осталось**: подключение `auth = "oauth"` к
+Model Pool и ручной чек-лист на живых аккаунтах (manual, не CI).
+**Тесты**: мок token-endpoint'ов локальным сервером (PKCE state-machine,
+refresh-путь, истёкший access, отказ при невалидном state, logout) —
+22 теста в `crates/berimor-cli/src/oauth.rs`.
 
 ### 20.26. TUI-заимствования (side panel, mermaid)
 
