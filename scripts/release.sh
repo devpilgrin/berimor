@@ -46,4 +46,17 @@ git push origin main
 git push origin "v$VERSION"
 
 echo "==> запушено; release.yml соберёт и опубликует v$VERSION"
-echo "    наблюдение: gh run watch \$(gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+
+# Фолбэк (2026-08-06): с ~19:00 пуши тегов перестали порождать push-
+# события workflow (GitHub классифицирует их как «dynamic» после
+# ruleset-bypass — v0.20.0/v0.21.0 остались без запуска; причина на
+# стороне GitHub, не пайплайна). Даём триггеру 30 с, после — dispatch.
+sleep 30
+RUN_ID=$(gh run list --workflow release.yml --limit 3 --json databaseId,headBranch --jq ".[] | select(.headBranch==\"v$VERSION\") | .databaseId" | head -1)
+if [ -z "$RUN_ID" ]; then
+    echo "==> push-триггер не сработал — workflow_dispatch под v$VERSION"
+    gh workflow run release.yml -f tag="v$VERSION"
+    sleep 15
+    RUN_ID=$(gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+fi
+echo "    наблюдение: gh run watch $RUN_ID"
