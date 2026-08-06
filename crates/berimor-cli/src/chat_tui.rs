@@ -714,8 +714,21 @@ impl App {
                     provider.model_id = model.clone();
                 }
                 self.active_provider = Some(provider_name.clone());
+                // «Закрепить навсегда» (репорт 2026-08-03): model_id — в
+                // локальный ./berimor.toml (слой сильнее глобального).
+                let pin_note = match self
+                    .config
+                    .providers
+                    .iter()
+                    .find(|p| p.name == provider_name)
+                    .map(crate::setup::pin_model_to_local_config)
+                {
+                    Some(Ok(path)) => format!("; закреплено навсегда в {path}"),
+                    Some(Err(err)) => format!("; НЕ закреплено: {err}"),
+                    None => String::new(),
+                };
                 self.sys(format!(
-                    "модель сессии: {provider_name} → {model} (закреплено на сессию; навсегда — model_id в конфиге)"
+                    "модель сессии: {provider_name} → {model}{pin_note}"
                 ));
             }
             Flow::AddAskKey { .. } => {} // обрабатывается в вводе, не пикером

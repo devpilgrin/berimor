@@ -26,6 +26,64 @@ pub enum SetupError {
 /// записи и чужие правки: файл парсится, провайдеры с уже занятыми
 /// именами пропускаются (повторный запуск мастера безопасен). Возвращает
 /// имена реально добавленных.
+/// Закрепление модели навсегда (§«закрепить из /model», репорт 2026-08-03):
+/// model_id провайдера — в ЛОКАЛЬНЫЙ `./berimor.toml` (слой сильнее
+/// глобального, merge по имени — глобальную запись не трогаем). Если блок
+/// провайдера в локальном файле уже есть — заменяем строку model_id в нём,
+/// иначе дописываем блок целиком. Возвращает путь файла для сообщения.
+pub fn pin_model_to_local_config(provider: &ProviderConfig) -> Result<String, SetupError> {
+    pin_model_to(Path::new("./berimor.toml"), provider)
+}
+
+fn pin_model_to(local_path: &Path, provider: &ProviderConfig) -> Result<String, SetupError> {
+    let existing = std::fs::read_to_string(local_path).unwrap_or_default();
+    let needle = format!("name = \"{}\"", provider.name);
+    let updated = if existing.contains("[[providers]]") && existing.contains(&needle) {
+        replace_model_id_in_block(&existing, &needle, &provider.model_id)
+    } else {
+        let mut text = existing;
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&presets::render_provider_toml(provider));
+        text
+    };
+    std::fs::write(local_path, updated)?;
+    Ok(local_path.display().to_string())
+}
+
+/// Замена `model_id = "..."` в блоке [[providers]] с needle-именем.
+/// Текстовая обработка осознанно: Config — Deserialize-only, полной
+/// сериализацией мы бы стёрли комментарии и чужие правки (конвенция
+/// «рендер TOML руками», §20.12). Блок = строки после заголовка `[[...]]`
+/// до следующего заголовка.
+fn replace_model_id_in_block(text: &str, needle: &str, model_id: &str) -> String {
+    let mut out = String::new();
+    let mut block: Vec<&str> = Vec::new();
+    let flush = |block: &mut Vec<&str>, out: &mut String| {
+        let is_target = block.iter().any(|line| line.trim() == needle);
+        for line in block.drain(..) {
+            if is_target && line.trim_start().starts_with("model_id") {
+                out.push_str(&format!("model_id = \"{model_id}\"\n"));
+            } else {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    };
+    for line in text.lines() {
+        if line.trim_start().starts_with("[[") {
+            flush(&mut block, &mut out);
+            out.push_str(line);
+            out.push('\n');
+        } else {
+            block.push(line);
+        }
+    }
+    flush(&mut block, &mut out);
+    out
+}
+
 pub fn append_providers(
     global_path: &Path,
     providers: &[ProviderConfig],
@@ -218,6 +276,57 @@ fn configure_preset(preset: &ProviderPreset) -> Result<ProviderConfig, SetupErro
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_provider(name: &str, model: &str) -> ProviderConfig {
+        ProviderConfig {
+            name: name.into(),
+            model_id: model.into(),
+            tier: berimor_types::model::ModelTier::Strong,
+            base_url: "https://example.test".into(),
+            model_path: None,
+            api_key_env: Some("TEST_KEY".into()),
+            auth: None,
+            oauth_profile: None,
+            allow_private_endpoint: false,
+            cost_per_1k_tokens: None,
+            temperature: None,
+        }
+    }
+
+    #[test]
+    fn pin_model_appends_block_to_fresh_file() {
+        let dir = std::env::temp_dir().join(format!("berimor-pin-new-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("berimor.toml");
+        pin_model_to(&path, &test_provider("deepseek", "deepseek-v4-flash")).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("name = \"deepseek\""));
+        assert!(text.contains("model_id = \"deepseek-v4-flash\""));
+    }
+
+    #[test]
+    fn pin_model_replaces_only_target_block() {
+        let dir = std::env::temp_dir().join(format!("berimor-pin-repl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("berimor.toml");
+        std::fs::write(
+            &path,
+            "# комментарий оператора\n\n[[providers]]\nname = \"kimi\"\nmodel_id = \"k2\"\ntier = \"strong\"\n\n[[providers]]\nname = \"deepseek\"\nmodel_id = \"v3\"\ntier = \"strong\"\n",
+        )
+        .unwrap();
+        pin_model_to(&path, &test_provider("deepseek", "deepseek-v4-flash")).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# комментарий оператора"), "комментарии целы");
+        assert!(
+            text.contains("model_id = \"k2\""),
+            "чужой провайдер нетронут"
+        );
+        assert!(text.contains("model_id = \"deepseek-v4-flash\""));
+        assert!(
+            !text.contains("model_id = \"v3\""),
+            "старая модель заменена"
+        );
+    }
 
     #[test]
     fn append_providers_is_idempotent_and_non_destructive() {
