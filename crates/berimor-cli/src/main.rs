@@ -124,6 +124,15 @@ enum Command {
 
 #[derive(Subcommand)]
 enum PluginAction {
+    /// Установить плагин из локального каталога или git-репозитория БЕЗ
+    /// проверки подписи (явный --allow-unsigned; доверенный путь — install).
+    InstallLocal {
+        /// Путь к каталогу (бинарник + manifest.yaml) или git-URL.
+        source: String,
+        /// Осознанное согласие на установку без подписи.
+        #[arg(long)]
+        allow_unsigned: bool,
+    },
     Install {
         repo: String,
         /// Продолжить существующий инстанс установки по его
@@ -256,6 +265,15 @@ fn main() -> ExitCode {
             }
         }
         Command::Plugin { action } => match action {
+            PluginAction::InstallLocal {
+                source,
+                allow_unsigned,
+            } => {
+                if let Err(err) = plugin_install::install_local(&source, allow_unsigned) {
+                    eprintln!("[berimor] локальная установка плагина: {err}");
+                    std::process::exit(1);
+                }
+            }
             PluginAction::Install {
                 repo,
                 resume,

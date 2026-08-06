@@ -91,6 +91,80 @@ pub(crate) fn plugins_root_dir() -> PathBuf {
         .unwrap_or_else(|| std::env::temp_dir().join("berimor-plugins"))
 }
 
+/// Локальная/неподписанная установка плагина (§20.19): каталог с
+/// бинарником + manifest.yaml, или git-репозиторий такой же раскладки.
+/// Подпись не проверяется — потому и требуется ЯВНЫЙ `--allow-unsigned`
+/// (осознанное действие оператора на своей машине; доверенный конвейер
+/// удалённых плагинов — D6 с подписью, этот путь его не заменяет).
+pub fn install_local(source: &str, allow_unsigned: bool) -> Result<(), String> {
+    if !allow_unsigned {
+        return Err(
+            "установка без проверки подписи требует явного --allow-unsigned (доверенный путь: berimor plugin install <repo>)"
+                .to_string(),
+        );
+    }
+    // Источник: git-URL клонируем, путь — используем как есть.
+    let (dir, cleanup) = if source.contains("://") || source.starts_with("git@") {
+        let clone = crate::catalog::git_clone(source, None)?;
+        (clone.clone(), Some(clone))
+    } else {
+        (std::path::PathBuf::from(source), None)
+    };
+    let result = install_local_from_dir(&dir);
+    if let Some(clone) = cleanup {
+        let _ = std::fs::remove_dir_all(clone);
+    }
+    result
+}
+
+fn install_local_from_dir(dir: &std::path::Path) -> Result<(), String> {
+    let manifest_path = dir.join("manifest.yaml");
+    if !manifest_path.is_file() {
+        return Err(format!("manifest.yaml не найден в {}", dir.display()));
+    }
+    let manifest = berimor_capability::plugin::load_manifest(&manifest_path)
+        .map_err(|err| format!("манифест: {err}"))?;
+    validate_plugin_name(&manifest.name)?;
+    let binary = dir.join(&manifest.name);
+    if !binary.is_file() {
+        return Err(format!(
+            "бинарник '{}' не найден рядом с манифестом (контракт: имя бинарника = name)",
+            manifest.name
+        ));
+    }
+    let root = plugins_root_dir();
+    let installed = root.join("installed").join(&manifest.name);
+    if installed.exists() {
+        std::fs::remove_dir_all(&installed).map_err(|err| err.to_string())?;
+    }
+    copy_dir_all(dir, &installed)?;
+    // Исполняемый бит бинарника (копия из git-клона его сохраняет, из
+    // обычного каталога — выставляем явно).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let path = installed.join(&manifest.name);
+        let mut perms = std::fs::metadata(&path)
+            .map_err(|err| err.to_string())?
+            .permissions();
+        perms.set_mode(perms.mode() | 0o111);
+        std::fs::set_permissions(&path, perms).map_err(|err| err.to_string())?;
+    }
+    let manifests = root.join("manifests");
+    std::fs::create_dir_all(&manifests).map_err(|err| err.to_string())?;
+    std::fs::copy(
+        &manifest_path,
+        manifests.join(format!("{}.yaml", manifest.name)),
+    )
+    .map_err(|err| err.to_string())?;
+    eprintln!(
+        "[berimor] внимание: плагин '{}' установлен БЕЗ проверки подписи (локальный источник)",
+        manifest.name
+    );
+    println!("установлено: {}", installed.display());
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     config: &Config,

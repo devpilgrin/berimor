@@ -31,7 +31,37 @@ fn cache_dir(repo_url: &str) -> Option<PathBuf> {
     Some(cache_root()?.join(name))
 }
 
-/// Клон или обновление кэша каталога. Возвращает путь кэша.
+/// Клонирует git-репозиторий во временный каталог (depth 1; `--ref` —
+/// ветка/тег). Для установки из произвольных репозиториев (§20.19).
+/// Возвращает путь к клону (временный каталог удаляет вызывающий).
+pub(crate) fn git_clone(url: &str, git_ref: Option<&str>) -> Result<std::path::PathBuf, String> {
+    let dest = std::env::temp_dir().join(format!(
+        "berimor-clone-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    ));
+    let mut command = std::process::Command::new("git");
+    command.arg("clone").arg("--depth").arg("1").arg("--quiet");
+    if let Some(r) = git_ref {
+        command.arg("--branch").arg(r);
+    }
+    command.arg(url).arg(&dest);
+    let output = command
+        .output()
+        .map_err(|e| format!("git недоступен: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git clone {url}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(dest)
+}
+
+/// Клонирует (или обновляет) кэш каталога. Возвращает корень кэша.
 /// git — внешняя команда ОПЕРАТОРСКОГО уровня (не агента): этот модуль
 /// вызывается только CLI-командами, агентному диспетчеру недоступен.
 pub fn sync(repo_url: &str) -> Result<PathBuf, String> {
@@ -120,6 +150,24 @@ pub fn install(
     if !source.is_dir() {
         return Err(format!("'{name}' не найден в каталоге ({prefix}/)"));
     }
+    place(&source, name, dest_root)
+}
+
+/// Размещает каталог-источник в dest_root под именем (атомарно через
+/// staging + rename). Общая часть установки из каталога и из
+/// произвольного git-репозитория (§20.19).
+pub(crate) fn place(
+    source: &std::path::Path,
+    name: &str,
+    dest_root: &std::path::Path,
+) -> Result<PathBuf, String> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        return Err(format!("имя '{name}' недопустимо: ожидается [a-z0-9-]+"));
+    }
     let target = dest_root.join(name);
     let staging = dest_root.join(format!(".staging-{name}"));
     std::fs::create_dir_all(dest_root)
@@ -127,7 +175,7 @@ pub fn install(
     if staging.exists() {
         let _ = std::fs::remove_dir_all(&staging);
     }
-    copy_dir(&source, &staging).map_err(|e| format!("копирование: {e}"))?;
+    copy_dir(source, &staging).map_err(|e| format!("копирование: {e}"))?;
     if target.exists() {
         std::fs::remove_dir_all(&target)
             .map_err(|e| format!("замена {}: {e}", target.display()))?;

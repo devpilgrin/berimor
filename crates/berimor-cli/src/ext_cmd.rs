@@ -23,6 +23,17 @@ pub enum ExtAction {
         /// Свой URL каталога вместо официального.
         #[arg(long)]
         repo: Option<String>,
+        /// Установить из произвольного git-репозитория (§20.19):
+        /// ищется `<repo>/<subdir>/<маркер>`, `<repo>/skills|agents/<name>/`
+        /// или маркер в корне (репозиторий и есть расширение).
+        #[arg(long)]
+        from: Option<String>,
+        /// Подкаталог внутри --from с манифестом (по умолчанию — автопоиск).
+        #[arg(long)]
+        path: Option<String>,
+        /// Ветка/тег для --from (по умолчанию — HEAD).
+        #[arg(long = "ref")]
+        git_ref: Option<String>,
     },
     /// Удалить установленное.
     Remove {
@@ -87,7 +98,23 @@ pub fn run(kind: ExtKind, action: ExtAction) -> i32 {
             name,
             project,
             repo,
-        } => install(&kind, &name, project, repo.as_deref()),
+            from,
+            path,
+            git_ref,
+        } => {
+            if let Some(url) = &from {
+                install_from_git(
+                    &kind,
+                    &name,
+                    url,
+                    path.as_deref(),
+                    git_ref.as_deref(),
+                    project,
+                )
+            } else {
+                install(&kind, &name, project, repo.as_deref())
+            }
+        }
         ExtAction::Remove { name, project } => remove(&kind, &name, project),
     }
 }
@@ -152,6 +179,64 @@ fn kind_label_cmd(kind: &ExtKind) -> &'static str {
     }
 }
 
+/// Установка из произвольного git-репозитория (§20.19): клон →
+/// автопоиск манифеста (`--path` → `<repo>/<prefix>s/<name>/` → корень)
+/// → проверка маркера → атомарное размещение.
+fn install_from_git(
+    kind: &ExtKind,
+    name: &str,
+    url: &str,
+    subdir: Option<&str>,
+    git_ref: Option<&str>,
+    project: bool,
+) -> i32 {
+    let root = match dest_root(kind, project) {
+        Ok(root) => root,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let clone = match crate::catalog::git_clone(url, git_ref) {
+        Ok(clone) => clone,
+        Err(err) => {
+            eprintln!("клонирование не удалось: {err}");
+            return 1;
+        }
+    };
+    let result = (|| {
+        // Кандидаты в порядке приоритета.
+        let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(subdir) = subdir {
+            candidates.push(clone.join(subdir));
+        }
+        candidates.push(clone.join(kind.prefix()).join(name));
+        candidates.push(clone.clone());
+        let marker = kind.marker();
+        let source = candidates
+            .iter()
+            .find(|dir| dir.join(marker).is_file())
+            .ok_or_else(|| {
+                format!(
+                    "манифест {marker} не найден: ни в --path, ни в {}/{name}/, ни в корне репозитория",
+                    kind.prefix()
+                )
+            })?;
+        crate::catalog::place(source, name, &root)
+    })();
+    let _ = std::fs::remove_dir_all(&clone);
+    match result {
+        Ok(path) => {
+            println!("установлено из {url}: {}", path.display());
+            0
+        }
+        Err(err) => {
+            eprintln!("установка не удалась: {err}");
+            1
+        }
+    }
+}
+
 fn install(kind: &ExtKind, name: &str, project: bool, repo: Option<&str>) -> i32 {
     let repo = repo.unwrap_or_else(|| kind.default_repo());
     let root = match dest_root(kind, project) {
@@ -164,11 +249,6 @@ fn install(kind: &ExtKind, name: &str, project: bool, repo: Option<&str>) -> i32
     match crate::catalog::install(repo, kind.prefix(), name, &root) {
         Ok(path) => {
             println!("установлено: {}", path.display());
-            if matches!(kind, ExtKind::Agent) {
-                println!(
-                    "· исполнитель субагентов — следующий этап ROADMAP; определение совместимо"
-                );
-            }
             0
         }
         Err(err) => {
