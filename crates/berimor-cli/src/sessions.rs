@@ -138,6 +138,49 @@ fn now_ms() -> i64 {
 use berimor_storage::{Envelope, EnvelopeId, MailboxLog};
 
 pub const TOPIC_FILE_CHANGED: &str = "file.changed";
+/// §20.22 v2 шаг 3: сообщение между сессиями (/tell, /broadcast).
+pub const TOPIC_SESSION_MESSAGE: &str = "session.message";
+
+/// /tell: сообщение конкретной сессии (персистентный конверт — офлайн-
+/// получатель прочтёт при возвращении, это почта, не чат).
+pub fn send_message(
+    journal: &SqliteEventLog,
+    from_session: &str,
+    to_session: &str,
+    text: &str,
+) -> Result<(), String> {
+    let envelope = Envelope {
+        id: EnvelopeId(format!("msg-{from_session}-{to_session}-{}", now_ms())),
+        from: from_session.to_string(),
+        to: to_session.to_string(),
+        topic: TOPIC_SESSION_MESSAGE.to_string(),
+        payload: serde_json::json!({"text": text}),
+    };
+    journal
+        .persist_envelope(&envelope)
+        .map_err(|e| format!("почта: {e}"))
+}
+
+/// /broadcast: всем ЖИВЫМ сессиям, кроме себя. Возвращает число
+/// получателей — отправитель видит, что сообщение не ушло в пустоту.
+pub fn broadcast_message(
+    journal: &SqliteEventLog,
+    from_session: &str,
+    text: &str,
+) -> Result<usize, String> {
+    let events = journal
+        .replay(&ProcessInstanceId(SESSIONS_INSTANCE_ID.to_string()))
+        .map_err(|e| format!("журнал: {e}"))?;
+    let live: Vec<String> = fold_sessions(&events)
+        .into_iter()
+        .filter(|s| !s.closed && s.pid_alive && s.session_id != from_session)
+        .map(|s| s.session_id)
+        .collect();
+    for target in &live {
+        send_message(journal, from_session, target, text)?;
+    }
+    Ok(live.len())
+}
 
 /// Живые сессии (не closed + pid жив), наблюдавшие `path` (FileObserved),
 /// кроме самого писателя.
@@ -318,6 +361,34 @@ mod tests {
         record_open(&journal, "sess-active", "chat").expect("open a");
         record_touched_and_notify(&journal, "sess-active", "a.txt", "files.write");
         assert!(drain_envelopes(&journal, "sess-gone").is_empty());
+    }
+
+    #[test]
+    fn tell_delivers_message_to_target_only() {
+        let (_dir, journal) = temp_journal("tell");
+        record_open(&journal, "sess-a", "chat").expect("a");
+        record_open(&journal, "sess-b", "chat").expect("b");
+        send_message(&journal, "sess-a", "sess-b", "привет, B").expect("send");
+        assert!(drain_envelopes(&journal, "sess-a").is_empty());
+        let drained = drain_envelopes(&journal, "sess-b");
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].topic, TOPIC_SESSION_MESSAGE);
+        assert_eq!(drained[0].payload["text"], "привет, B");
+    }
+
+    #[test]
+    fn broadcast_reaches_live_sessions_except_sender() {
+        let (_dir, journal) = temp_journal("bcast");
+        record_open(&journal, "sess-a", "chat").expect("a");
+        record_open(&journal, "sess-b", "chat").expect("b");
+        record_open(&journal, "sess-c", "daemon").expect("c");
+        record_closed(&journal, "sess-c").expect("close c");
+        let reached = broadcast_message(&journal, "sess-a", "всем привет").expect("bcast");
+        assert_eq!(reached, 1); // только sess-b: a — отправитель, c — закрыта
+        let drained = drain_envelopes(&journal, "sess-b");
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].payload["text"], "всем привет");
+        assert!(drain_envelopes(&journal, "sess-c").is_empty());
     }
 
     #[test]

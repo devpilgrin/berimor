@@ -27,7 +27,7 @@ use crate::setup;
 use berimor_context_engine::memory_builder::MemoryContextBuilder;
 use berimor_executors::agent_step::AgentStepExecutor;
 use berimor_mediation::contracts::ChatReply;
-use berimor_storage::SqliteEventLog;
+use berimor_storage::{EventLog, SqliteEventLog};
 use berimor_types::contract::Contract;
 use berimor_types::event::{Event, EventKind, ProcessInstanceId};
 use serde_json::{json, Value};
@@ -84,6 +84,9 @@ fn print_help() {
     eprintln!("  /models add  — мастер пресетов (kimi, deepseek, openai, claude,");
     eprintln!("                 ollama, llamacpp, lmstudio) → глобальный конфиг,");
     eprintln!("                 рантайм перезагружается, история сохраняется");
+    eprintln!("  /sessions    — живые сессии хоста (реестр журнала)");
+    eprintln!("  /tell <id> <текст> — сообщение сессии (персистентная почта)");
+    eprintln!("  /broadcast <текст> — сообщение всем живым сессиям");
     eprintln!("  /exit, /quit — завершить (Ctrl+D тоже)");
     eprintln!("[berimor] всё остальное — сообщение агенту.");
 }
@@ -503,6 +506,12 @@ fn run_repl(
                         envelope.payload["by_session"].as_str().unwrap_or("?"),
                         envelope.payload["op"].as_str().unwrap_or("?"),
                     );
+                } else if envelope.topic == crate::sessions::TOPIC_SESSION_MESSAGE {
+                    eprintln!(
+                        "[berimor] ✉ {}: {}",
+                        envelope.from,
+                        envelope.payload["text"].as_str().unwrap_or("?")
+                    );
                 } else {
                     eprintln!(
                         "[berimor] сообщение от {} ({})",
@@ -518,6 +527,68 @@ fn run_repl(
         // Ход после разбора команд/триггеров: (сообщение, потолок).
         // Slash-команды — служебный канал, модели не уходят.
         let turn: (String, Option<Vec<String>>) = if let Some(command) = message.strip_prefix('/') {
+            // §20.22 v2 шаг 3: /tell и /broadcast — команды с аргументами,
+            // разбираются до точного match по имени.
+            if let Some(rest) = command.strip_prefix("tell ") {
+                let Some((target, text)) = rest.split_once(' ') else {
+                    eprintln!("[berimor] /tell <сессия> <текст> — /sessions для списка");
+                    continue;
+                };
+                match session_journal {
+                    Some(journal) => {
+                        match crate::sessions::send_message(journal, session_id, target, text) {
+                            Ok(()) => eprintln!("[berimor] ✉ → {target}"),
+                            Err(err) => eprintln!("[berimor] {err}"),
+                        }
+                    }
+                    None => eprintln!("[berimor] почта недоступна: журнал не открыт"),
+                }
+                continue;
+            }
+            if let Some(text) = command.strip_prefix("broadcast ") {
+                match session_journal {
+                    Some(journal) => {
+                        match crate::sessions::broadcast_message(journal, session_id, text) {
+                            Ok(0) => eprintln!("[berimor] живых сессий-получателей нет"),
+                            Ok(n) => eprintln!("[berimor] ✉ → {n} сессиям"),
+                            Err(err) => eprintln!("[berimor] {err}"),
+                        }
+                    }
+                    None => eprintln!("[berimor] почта недоступна: журнал не открыт"),
+                }
+                continue;
+            }
+            if command == "sessions" {
+                if let Some(journal) = session_journal {
+                    let events = journal
+                        .replay(&berimor_types::event::ProcessInstanceId(
+                            crate::sessions::SESSIONS_INSTANCE_ID.to_string(),
+                        ))
+                        .unwrap_or_default();
+                    let sessions = crate::sessions::fold_sessions(&events);
+                    let live: Vec<_> = sessions
+                        .iter()
+                        .filter(|s| !s.closed && s.pid_alive)
+                        .collect();
+                    if live.is_empty() {
+                        eprintln!("[berimor] живых сессий нет");
+                    }
+                    for s in live {
+                        let marker = if s.session_id == session_id {
+                            " (вы)"
+                        } else {
+                            ""
+                        };
+                        eprintln!(
+                            "  {} | {} | pid {} | {}{}",
+                            s.session_id, s.command, s.pid, s.cwd, marker
+                        );
+                    }
+                } else {
+                    eprintln!("[berimor] реестр недоступен: журнал не открыт");
+                }
+                continue;
+            }
             match command {
                 "exit" | "quit" => {
                     eprintln!("[berimor] сессия завершена");
