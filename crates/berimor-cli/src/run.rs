@@ -227,7 +227,13 @@ pub fn run(
                 // Записной путь памяти (memory-model.md §2/§4, opt-in):
                 // извлечение фактов из финального состояния.
                 if config.memory.fact_extraction {
-                    extract_and_store_facts(&llm, &storage, &instance, bundle.masker.as_ref());
+                    extract_facts_with_similarity(
+                        &llm,
+                        &storage,
+                        &instance,
+                        bundle.masker.as_ref(),
+                        config.memory.embeddings,
+                    );
                 }
                 return Ok(());
             }
@@ -711,15 +717,86 @@ impl ConfirmationHandler for TerminalConfirmer {
 /// контрактный путь, что у шагов — retry, policy, маскировка журнала),
 /// конфликт с существующим фактом — событием человеку, не молчаливой
 /// перезаписью (§2, I2).
+/// Точка выбора источника близости для записного пути (ROADMAP §20.23):
+/// `[memory] embeddings = true` И сборка с `--features embeddings` —
+/// `VectorSimilarity` с реальным эмбеддером (fastembed,
+/// multilingual-e5-small); иначе — `NoSimilarity` (дедупликация только по
+/// точному хэшу, поведение до §20.23). Без скомпилированного feature
+/// флаг конфигурации — no-op (бинарник пользователя не несёт ONNX
+/// Runtime, притворяться, что эмбеддинги есть, нельзя).
+#[cfg(not(feature = "embeddings"))]
+fn extract_facts_with_similarity(
+    llm: &StructuredLlm,
+    storage: &SqliteEventLog,
+    instance: &berimor_process_engine::ProcessInstance,
+    masker: &berimor_secrets::Masker,
+    use_embeddings: bool,
+) {
+    if use_embeddings {
+        eprintln!(
+            "[berimor] память: [memory] embeddings = true проигнорирован — бинарник собран без --features embeddings"
+        );
+    }
+    extract_and_store_facts(
+        llm,
+        storage,
+        instance,
+        masker,
+        &berimor_memory::semantic::NoSimilarity,
+        None,
+    );
+}
+
+/// См. cfg(not(embeddings))-вариант выше. Эмбеддер создаётся лениво
+/// (конструктор не качает модель), поэтому построить его можно здесь, не
+/// зная заранее, будут ли факты вовсе. Ошибка инференса внутри `embed_fn`
+/// — пустой вектор: на записи он трактуется как «эмбеддинга нет» (факт
+/// всё равно пишется), в `VectorSimilarity` — ошибкой размерности в
+/// sqlite-vec наверх как `SimilarityError` (видимый сбой, не молчаливая
+/// «непохожесть», находка 4.7 аудита).
+#[cfg(feature = "embeddings")]
+fn extract_facts_with_similarity(
+    llm: &StructuredLlm,
+    storage: &SqliteEventLog,
+    instance: &berimor_process_engine::ProcessInstance,
+    masker: &berimor_secrets::Masker,
+    use_embeddings: bool,
+) {
+    use berimor_memory::semantic::{NoSimilarity, VectorSimilarity};
+
+    if !use_embeddings {
+        return extract_and_store_facts(llm, storage, instance, masker, &NoSimilarity, None);
+    }
+    let embedder = berimor_memory::embeddings::FastEmbedder::new();
+    let embed_fn = |text: &str| embedder.embed(text).unwrap_or_default();
+    let similarity = VectorSimilarity {
+        store: storage,
+        embed: &embed_fn,
+    };
+    extract_and_store_facts(llm, storage, instance, masker, &similarity, Some(&embed_fn));
+}
+
+/// Эмбеддер для записи вектора нового факта — шов той же формы, что у
+/// `semantic::VectorSimilarity::embed`.
+type EmbedFn<'a> = dyn Fn(&str) -> Vec<f32> + 'a;
+
+/// Конвейер «модель предлагает факты → Mediation → дедупликация/конфликт
+/// → запись» поверх уже выбранного источника близости (`similarity` —
+/// `NoSimilarity` или `VectorSimilarity`, выбор делает
+/// [`extract_facts_with_similarity`]). `embed_for_write` — тот же эмбеддер
+/// для записи эмбеддинга нового факта в sqlite-vec (None — факт пишется
+/// без вектора, `upsert_fact` не стирает уже сохранённый).
 fn extract_and_store_facts(
     llm: &StructuredLlm,
     storage: &SqliteEventLog,
     instance: &berimor_process_engine::ProcessInstance,
     masker: &berimor_secrets::Masker,
+    similarity: &dyn berimor_memory::semantic::SimilaritySource,
+    embed_for_write: Option<&EmbedFn<'_>>,
 ) {
     use berimor_mediation::contracts::FactProposalBatch;
     use berimor_memory::semantic::{
-        self, fact_hash, FactId, NoSimilarity, Resolution, StoredFact, DEFAULT_SIMILARITY_THRESHOLD,
+        self, fact_hash, FactId, Resolution, StoredFact, DEFAULT_SIMILARITY_THRESHOLD,
     };
     use berimor_storage::{FactRecord, SemanticStore};
     use berimor_types::contract::Contract;
@@ -779,7 +856,7 @@ fn extract_and_store_facts(
         let resolution = match semantic::resolve(
             proposal,
             &existing,
-            &NoSimilarity,
+            similarity,
             DEFAULT_SIMILARITY_THRESHOLD,
         ) {
             Ok(resolution) => resolution,
@@ -811,7 +888,20 @@ fn extract_and_store_facts(
                     source: fact.source.clone(),
                     trusted_channel: fact.trusted_channel,
                 };
-                if let Err(err) = storage.upsert_fact(&record, None) {
+                // §20.23: при включённых эмбеддингах новый факт пишется
+                // сразу с вектором (тот же текст, что склеивает
+                // VectorSimilarity) — иначе близкое совпадение по нему
+                // невозможно до реиндексации. Пустой вектор (сбой
+                // инференса) = «эмбеддинга нет», факт всё равно пишется.
+                let embedding = embed_for_write
+                    .map(|embed| {
+                        embed(&format!(
+                            "{} {} {}",
+                            proposal.subject, proposal.predicate, proposal.object
+                        ))
+                    })
+                    .filter(|v| !v.is_empty());
+                if let Err(err) = storage.upsert_fact(&record, embedding.as_deref()) {
                     eprintln!("[berimor] память: не удалось записать факт ({err})");
                     continue;
                 }

@@ -46,3 +46,7 @@ crossterm = "0.29"
 # Локальный инференс GGUF через llama.cpp (ROADMAP E4, ADR-0024) —
 # opt-in: сборка C++ ядра занимает минуты.
 local-inference = ["berimor-model-pool/local-inference"]
+# Семантическая близость памяти на эмбеддингах (ROADMAP §20.23) —
+# opt-in: fastembed (ONNX Runtime) + скачивание модели ~0.5 ГБ при первом
+# использовании. Включает `[memory] embeddings = true` в конфигурации.
+embeddings = ["berimor-memory/embeddings"]

@@ -28,6 +28,7 @@
 ## Model Pool
 
 - [0010](0010-model-tier-assignment.md) — присвоение класса модели — код по офлайн-оценке, не самооценка
+- [0027](0027-oauth-subscription-login-pkce.md) — OAuth-логины по подпискам (PKCE) вместо только-API-ключей
 - [0011](0011-model-provider-selection-cost-governance.md) — выбор провайдера и бюджет стоимости/латентности
 
 ## Развёртывание

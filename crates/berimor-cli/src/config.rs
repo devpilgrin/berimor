@@ -100,6 +100,15 @@ pub struct MemoryConfig {
     /// память это доверенная граница, включается осознанно.
     #[serde(default)]
     pub fact_extraction: bool,
+    /// Семантическая близость фактов на эмбеддингах (ROADMAP §20.23):
+    /// при `true` И сборке с `--features embeddings` дедупликация
+    /// использует `VectorSimilarity` с fastembed
+    /// (intfloat/multilingual-e5-small, 384-dim) вместо `NoSimilarity`,
+    /// а новые факты сохраняются с эмбеддингом для sqlite-vec. Default
+    /// `false`: поведение прежнее — дедупликация только по точному хэшу,
+    /// модель не скачивается.
+    #[serde(default)]
+    pub embeddings: bool,
 }
 
 impl Default for MemoryConfig {
@@ -109,6 +118,7 @@ impl Default for MemoryConfig {
             session_search_limit: 5,
             entity_graph: false,
             fact_extraction: false,
+            embeddings: false,
         }
     }
 }
@@ -485,6 +495,20 @@ base_url = "https://api.openai.com/v1"
         assert_eq!(config.storage_path, PathBuf::from("./berimor.db"));
         assert_eq!(config.confirmation_mode, ConfirmationMode::Smart);
         assert_eq!(config.update_channel, UpdateChannel::Stable);
+        // §20.23: эмбеддинги — opt-in и по конфигурации, и по feature.
+        assert!(!config.memory.embeddings);
+    }
+
+    /// §20.23: `[memory] embeddings = true` разбирается из TOML;
+    /// отсутствие поля — прежнее поведение (false), обратная
+    /// совместимость конфигов без этого ключа.
+    #[test]
+    fn memory_embeddings_flag_parses_and_defaults_off() {
+        let on: Config =
+            toml::from_str("[memory]\nembeddings = true\nfact_extraction = true\n").unwrap();
+        assert!(on.memory.embeddings);
+        let off: Config = toml::from_str("[memory]\nfact_extraction = true\n").unwrap();
+        assert!(!off.memory.embeddings);
     }
 
     #[test]

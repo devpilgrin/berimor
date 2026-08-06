@@ -4,6 +4,8 @@
 //! контракт Mediation; чтение — только через `berimor-context-engine`.
 //! Модель не решает, что помнить и что вспомнить (инвариант I1).
 
+#[cfg(feature = "embeddings")]
+pub mod embeddings;
 pub mod entity_graph;
 pub mod episodic;
 pub mod procedural;

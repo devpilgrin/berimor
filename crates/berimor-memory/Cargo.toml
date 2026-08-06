@@ -15,3 +15,18 @@ serde_json = { workspace = true }
 serde_norway = "0.9.42"
 sha2 = "0.11.0"
 thiserror = { workspace = true }
+# Провайдер эмбеддингов (ROADMAP §20.23) — только под feature `embeddings`:
+# ONNX Runtime + модель утяжеляют бинарник и не должны попадать в сборку
+# без явного opt-in. rustls — как у reqwest в berimor-cli (единый TLS-стек,
+# без OpenSSL). image-models выключены — нужен только текст.
+dirs = { version = "6", optional = true }
+fastembed = { version = "=5.17.4", optional = true, default-features = false, features = [
+    "hf-hub-rustls-tls",
+    "ort-download-binaries-rustls-tls",
+] }
+
+[features]
+# Реальный эмбеддинг-провайдер для семантической памяти (VectorSimilarity):
+# fastembed (ONNX Runtime, CPU) + intfloat/multilingual-e5-small (384-dim).
+# Default OFF — бинарник пользователя без флага не растёт.
+embeddings = ["dep:fastembed", "dep:dirs"]
