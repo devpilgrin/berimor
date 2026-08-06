@@ -1,0 +1,189 @@
+<div align="center">
+
+<img src="docs/assets/logo.png" alt="Berimor" width="640">
+
+**The model thinks. The code decides.**
+
+[Русский](README.md) · **[English](README.en.md)** · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
+
+</div>
+
+A universal LLM agent with a deterministic core: task routing, process branching, context selection, and execution admission are decided by code — the model performs narrow, verifiable steps. Works with local and cloud models, weak and strong ones.
+
+[![GitHub release](https://img.shields.io/github/v/release/devpilgrin/berimor?logo=github&label=release)](https://github.com/devpilgrin/berimor/releases/latest)
+[![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
+[![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-719%20green-brightgreen)](#project-infrastructure)
+
+![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
+![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
+![QuickJS](https://img.shields.io/badge/guest-QuickJS-F7DF1E?logo=javascript&logoColor=black)
+![SQLite](https://img.shields.io/badge/storage-SQLite%20%2B%20FTS5%20%2B%20vec-003B57?logo=sqlite&logoColor=white)
+![tokio](https://img.shields.io/badge/async-tokio-0B7B8A)
+![MCP](https://img.shields.io/badge/protocol-MCP-5B5BD6)
+![ratatui](https://img.shields.io/badge/TUI-ratatui-E95420)
+![sigstore](https://img.shields.io/badge/supply--chain-sigstore%20keyless-2E8B57)
+![oxc](https://img.shields.io/badge/static%20analysis-oxc__parser-black)
+
+---
+
+## Why it exists
+
+Most "AI agents" are built the same way: the model is given a set of tools and asked to decide for itself what to do. Fine for a demo. Unreliable in real work: the model forgets steps, invents facts, veers off course — and a dangerous command slips into the terminal after a reflexive "y".
+
+Berimor is built on the opposite assumption: **the model cannot be trusted with orchestration — it can be trusted with execution.** The task is decomposed into steps in advance or steered by a deterministic loop; everything the model outputs passes strict validation before it can be relied upon; everything that can cause harm goes through a gate that cannot be cancelled by pressing Enter.
+
+| | Typical agentic CLI | Berimor |
+|---|---|---|
+| Who decides what to do next | The model (hope for its sound judgement) | Code (process graph, deterministic loop) |
+| Failure mid-task | "Restart and pray" | Event journal: resume exactly at the point of interruption |
+| Dangerous action | A confirmation that fatigue turns into YOLO | Deny statics: what is forbidden is never even asked about |
+| Weak/local model | "Buy a more expensive model" | Mediation: retry with error explanation → escalation to a human |
+| Extensions | A plugin gets everything | A subagent/plugin gets a subset of the parent's rights — enforced by code |
+| Reproducibility | None | Full: journal → replay → state at any point in time |
+
+## What makes it different
+
+**1. Decisions are deterministic code, not text in a prompt.**
+Branching, loops, timeouts, parallel branches with a join barrier, version migration of a running process — all of this is the Process Engine, not the hope that the model remembers its instructions. Weak models cannot be trusted with context selection and routing — so code does that.
+
+**2. Security is structure, not user discipline.**
+The deny table of destructive operations cannot be overridden by a confirmation. The filesystem jail never leaves the working directory. The network gate blocks access to private ranges (including NAT64/6to4/Teredo disguises and bypasses via redirects and URL userinfo). Secrets are masked at every leak point — but the admission gate sees the real values: masking does not blind validation.
+
+**3. A free-running loop — under supervision.**
+A "reason → act → observe" mode for tasks that cannot be decomposed into steps in advance. Every action inside it passes the same capability gate as a process step — freedom of reasoning does not mean freedom from rules. Optional: self-critique and a "propose — execute — verify" strategy.
+
+**4. Model-generated code runs in a real sandbox.**
+For "merge these 12 tables and find anomalies", the model writes a JavaScript program. It passes static analysis with a real parser (identifier allowlist — `eval`/`Function`/`Math.random` are rejected before execution), then runs under QuickJS inside WebAssembly (Wasmtime) with fuel, a memory limit, and a tool-call ceiling. WASI comes with an empty capability set: no files, no network, not even potentially. The single host function goes through the same gate.
+
+**5. Memory as an engineering system, not a buffer.**
+Working memory compacts when the budget overflows. Episodic — full-text search (FTS5). Semantic — fact deduplication; conflicts are never silently overwritten; a storage failure is indistinguishable from "no facts" and never creates spurious duplicates. An entity graph — relationships between facts, persistent. Skills — reusable recipes for solving similar tasks, readable files.
+
+**6. An extension ecosystem with a rights ceiling.**
+- **Skills** (SKILL.md) — expert roles for chat: triggering is done by code (not the model); the tool ceiling is enforced by the dispatcher's filter.
+- **Subagents** (agent.yaml) — a nested agent loop with its own budget and journal; the child's rights = the intersection with the parent's rights; they cannot expand. Nested spawning requires explicit `allow_spawn: true`; depth is limited by code.
+- **Plugins** — isolated processes with an ACL manifest and keyless sigstore signing: installation from a trusted list with TOFU confirmation, like SSH.
+
+All of this installs with a single command — from a catalogue or **any git repository**: `berimor skill install code-review-ru --from https://github.com/...`.
+
+## Project infrastructure
+
+**Rust workspace with one crate per component** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. The guest WASM module (`codeact-guest/`) lives as a separate crate and is committed as a ready-made artifact — normal builds are not slowed down.
+
+**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (719 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
+
+**Grown-up supply chain.** Cross-platform releases (Linux x64/arm64, macOS arm64, Windows x64) with keyless cosign/sigstore signing — the private key exists nowhere. Verification: `berimor verify <archive>`. npm publication with provenance, SBOM (CycloneDX) in the pipeline, self-update (`berimor self-update`) implemented on Process Engine primitives — the same journal and failure recovery as ordinary processes, not an ad-hoc script.
+
+**Architecture is documented before the code.** `docs/arch/` — a self-sufficient specification implementable on any stack; `docs/ADR/` — a decision journal with rejected alternatives; `docs/ROADMAP.md` — the task queue with the executor-model class assigned to each.
+
+## Installation
+
+### Option 1: npm (easiest)
+
+```sh
+npm install -g berimor
+berimor --version
+```
+
+The installer detects your platform automatically, downloads the signed binary from the latest GitHub release, and verifies the SHA-256 before unpacking. The package is published with provenance (build attestation tied to the CI workflow).
+
+### Option 2: prebuilt binary from GitHub
+
+Current versions are on the [releases](https://github.com/devpilgrin/berimor/releases/latest) page. Below are the commands for downloading a specific version (replace `v0.19.0` with the one you need if a newer release is out).
+
+**Linux** (x64 or arm64):
+
+```sh
+VERSION=v0.19.0
+ARCH=x64   # or arm64
+curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-linux-${ARCH}.tar.gz"
+tar -xzf "berimor-${VERSION}-linux-${ARCH}.tar.gz"
+chmod +x berimor
+sudo mv berimor /usr/local/bin/
+berimor --version
+```
+
+**macOS** (Apple Silicon only — M1/M2/M3 and newer; Intel builds are not published yet, use Option 3 below for Intel Macs):
+
+```sh
+VERSION=v0.19.0
+curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-darwin-arm64.tar.gz"
+tar -xzf "berimor-${VERSION}-darwin-arm64.tar.gz"
+xattr -d com.apple.quarantine berimor   # the binary is not signed by Apple yet — otherwise Gatekeeper will refuse to run it
+chmod +x berimor
+sudo mv berimor /usr/local/bin/
+berimor --version
+```
+
+**Windows** (x64), PowerShell:
+
+```powershell
+$Version = "v0.19.0"
+Invoke-WebRequest -Uri "https://github.com/devpilgrin/berimor/releases/download/$Version/berimor-$Version-win32-x64.zip" -OutFile berimor.zip
+Expand-Archive -Path berimor.zip -DestinationPath .\
+.\berimor.exe --version
+```
+
+The binary is not signed yet — Windows SmartScreen may show a "Windows protected your PC" warning: "More info" → "Run anyway". To call `berimor` from any folder, move `berimor.exe` into a directory already on `PATH`, or add the current folder to `PATH` yourself.
+
+Every archive is accompanied by a `<archive>.sigstore.json` file — a keyless cosign/sigstore signature bound to the identity of the CI workflow that built the release (ADR-0026). Verify with: `berimor verify <archive>` — the command is already in the downloaded binary (it installs a fresh sigstore trusted root over the network on first invocation). This is a signature independent of Apple/Microsoft — it does not lift the Gatekeeper/SmartScreen warnings above; those relate to a separate step that has not been done yet.
+
+### Option 3: build from source (any OS)
+
+You only need [Rust](https://rustup.rs/) (stable):
+
+```sh
+git clone https://github.com/devpilgrin/berimor.git
+cd berimor
+cargo build --release -p berimor-cli
+./target/release/berimor --version
+```
+
+On Windows the last command is `.\target\release\berimor.exe --version`.
+
+## Quick start
+
+```sh
+berimor          # = berimor chat: interactive conversation with the agent
+```
+
+On first launch, the wizard will offer to connect models from presets (Kimi, DeepSeek, OpenAI, Claude via OpenRouter, local models via Ollama/llama.cpp/LM Studio) — pick numbers or names, paste the API key (it lands in `~/.config/berimor/secrets.env` with "owner-only" permissions, not in the config). Later, do the same with `berimor setup` or directly in chat with the `/models add` command.
+
+Useful chat commands: `/help`, `/models`, `/skills`, `/config`, `/exit`.
+
+Deterministic processes (a declarative YAML plan with strict contracts — the primary "production" mode): `berimor run <process.yaml>`. Examples of processes and configurations are in [`fixtures/golden/processes/`](fixtures/golden/processes/) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Extensions with a single command:
+
+```sh
+berimor skill install code-review-ru                                    # from the catalogue
+berimor skill install my-skill --from https://github.com/user/repo      # from any git
+berimor agent install researcher
+berimor plugin install devpilgrin/berimor-plugin-hello                  # signed plugin
+berimor plugin install-local ./my-plugin --allow-unsigned               # local, consciously
+```
+
+## How the project is organized
+
+| Layer | Directory | Contents |
+|---|---|---|
+| Agent core | `crates/` | Rust workspace — one crate per component: Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage |
+| CodeAct sandbox | `codeact-guest/` | QuickJS guest for wasm32-wasip1 — a separate crate, committed as a ready-made artifact |
+| Bootstrap | `bootstrap/` | npm installer/updater package (TypeScript), see "Installation" above |
+| Architecture | `docs/arch/` | self-sufficient specification — principles, components, diagrams (`docs/arch/views/`). See `docs/arch/README.md` |
+| Decisions | `docs/ADR/` | architecture decision journal: context, alternatives, consequences. See `docs/ADR/README.md` |
+| Development plan | `docs/ROADMAP.md` | task queue by phases, decomposition into subtasks, complexity, executor-model class |
+| Audit | `docs/audit-2026-07-31.md` | independent security audit — all findings closed or consciously documented |
+| Test data | `fixtures/golden/` | golden sets: examples of processes, contracts, malicious inputs |
+| Research | `docs/rnd/` | supporting layer: sources and analysis of existing agentic frameworks. See `docs/rnd/README.md` |
+
+`crates/` and `bootstrap/` are the agent itself — code written from the queue in `docs/ROADMAP.md`. `docs/arch/` is the layer of pure decisions behind it: it does not mention specific projects and products (except `docs/arch/deployment.md` and `docs/arch/stack.md`, where that is a deliberate exception), and presents the architecture so that it can be implemented on any stack. `docs/ADR/` records why each decision was made, including rejected alternatives. `docs/rnd/` is the supporting layer of sources that the design relied on; it is not part of the agent.
+
+## License
+
+Apache License 2.0 — see [`LICENSE`](LICENSE).
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`docs/ROADMAP.md`](docs/ROADMAP.md) to pick a task.

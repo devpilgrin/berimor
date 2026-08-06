@@ -1,6 +1,12 @@
-# Berimor
+<div align="center">
+
+<img src="docs/assets/logo.png" alt="Berimor" width="640">
 
 **Модель думает. Код решает.**
+
+**[Русский](README.md)** · [English](README.en.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
+
+</div>
 
 Универсальный агент для LLM с детерминированным ядром: маршрутизацию задач, ветвление процесса, отбор контекста и допуск к выполнению решает код — модель исполняет узкие, проверяемые шаги. Работает с локальными и облачными моделями, слабыми и сильными.
 
