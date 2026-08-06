@@ -9,6 +9,11 @@ on:
   # пушей подряд не породили запусков, CodeQL при этом шёл) и проверка
   # веток без PR.
   workflow_dispatch:
+  # Полная матрица — по расписанию (консолидация CI, 2026-08-05):
+  # каждый пуш — только ubuntu (быстрый сигнал), платформенная
+  # специфика ловится weekly-прогоном и релизной матрицей release.yml.
+  schedule:
+    - cron: "0 3 * * 1" 
 
 # Только чтение — ни одна из джоб этого workflow не пишет в репозиторий
 # (fmt/clippy/test/build), в отличие от release.yml, где publish отдельно
@@ -22,7 +27,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Консолидация CI (2026-08-05, решение пользователя): пуши/PR —
+        # только ubuntu (часовые пояса не жгут); полная матрица — по
+        # расписанию (weekly) и в релизном пайплайне.
+        os: ${{ github.event_name == 'schedule' && fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') || fromJSON('["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5

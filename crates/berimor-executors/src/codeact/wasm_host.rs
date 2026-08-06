@@ -206,6 +206,11 @@ pub struct WasmHost {
     mode: ConfirmationMode,
     confirmer: Arc<dyn ConfirmationHandler + Send + Sync>,
     masker: Arc<berimor_secrets::Masker>,
+    /// 3.18 аудита: Engine+Module компилировались на КАЖДЫЙ run()
+    /// (~60-80 мс на пустом месте — байткод гостя один и тот же).
+    /// Кэш: компиляция при первом run, дальше — только Store на вызов
+    /// (лимиты/состояние по-прежнему изолированы per-run).
+    compiled: std::sync::OnceLock<Result<(Engine, Module), String>>,
 }
 
 impl WasmHost {
@@ -222,6 +227,7 @@ impl WasmHost {
             mode,
             confirmer,
             masker,
+            compiled: std::sync::OnceLock::new(),
         }
     }
 
@@ -241,13 +247,22 @@ impl WasmHost {
         limits: &WasmLimits,
         allowed_tools: &[String],
     ) -> Result<Value, WasmHostError> {
-        let mut config = Config::new();
-        config.consume_fuel(true);
-        let engine = Engine::new(&config).map_err(|err| WasmHostError::Compile(err.to_string()))?;
-        let module =
-            Module::new(&engine, wasm).map_err(|err| WasmHostError::Compile(err.to_string()))?;
+        // 3.18 аудита: компиляция — один раз на хост (кэш), wasm
+        // подаётся первым вызовом; последующие run() платят только за
+        // Store. Ошибка компиляции кэшируется вместе с успехом и
+        // воспроизводится детерминированно.
+        let compiled = self.compiled.get_or_init(|| {
+            let mut config = Config::new();
+            config.consume_fuel(true);
+            Engine::new(&config)
+                .and_then(|engine| Module::new(&engine, wasm).map(|module| (engine, module)))
+                .map_err(|err| err.to_string())
+        });
+        let (engine, module) = compiled
+            .as_ref()
+            .map_err(|err| WasmHostError::Compile(err.clone()))?;
 
-        let mut linker: Linker<HostState> = Linker::new(&engine);
+        let mut linker: Linker<HostState> = Linker::new(engine);
         p1::add_to_linker_sync(&mut linker, |state: &mut HostState| &mut state.wasi)
             .map_err(|err| WasmHostError::Instantiate(err.to_string()))?;
         linker
@@ -273,7 +288,7 @@ impl WasmHost {
             .build();
 
         let mut store = Store::new(
-            &engine,
+            engine,
             HostState {
                 wasi,
                 limits: store_limits,
@@ -290,10 +305,10 @@ impl WasmHost {
         store.limiter(|state| &mut state.limits);
         store
             .set_fuel(limits.fuel)
-            .map_err(|err| WasmHostError::Compile(err.to_string()))?;
+            .map_err(|err| WasmHostError::Instantiate(format!("set_fuel: {err}")))?;
 
         let instance = linker
-            .instantiate(&mut store, &module)
+            .instantiate(&mut store, module)
             .map_err(|err| classify_trap(err, WasmHostError::Instantiate))?;
         let start = instance
             .get_typed_func::<(), ()>(&mut store, "_start")

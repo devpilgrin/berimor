@@ -820,8 +820,12 @@ impl MailboxLog for SqliteEventLog {
     fn persist_envelope(&self, envelope: &Envelope) -> Result<(), StorageError> {
         let conn = self.lock()?;
         let payload_json = serde_json::to_string(&envelope.payload)?;
-        conn.execute(
-            "INSERT INTO envelopes (id, from_actor, to_actor, topic, payload, delivered, ts_ms)
+        // Находка 4.8 аудита: повторная публикация того же конверта
+        // (ретрай после транзиентной ошибки) падала по PK. Постановка —
+        // идемпотентна по id: INSERT OR IGNORE (конверт неизменяем,
+        // «тот же id — другой payload» отклоняется проверкой ниже).
+        let changed = conn.execute(
+            "INSERT OR IGNORE INTO envelopes (id, from_actor, to_actor, topic, payload, delivered, ts_ms)
              VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
             params![
                 envelope.id.0,
@@ -832,6 +836,21 @@ impl MailboxLog for SqliteEventLog {
                 now_ms()
             ],
         )?;
+        if changed == 0 {
+            // Уже существует — обязан быть ТЕМ ЖЕ конвертом.
+            let existing: String = conn.query_row(
+                "SELECT payload FROM envelopes WHERE id = ?1",
+                params![envelope.id.0],
+                |row| row.get(0),
+            )?;
+            let existing_payload: serde_json::Value = serde_json::from_str(&existing)?;
+            if existing_payload != envelope.payload {
+                return Err(StorageError::InvalidData(format!(
+                    "конверт '{}' уже существует с другим содержимым",
+                    envelope.id.0
+                )));
+            }
+        }
         Ok(())
     }
 

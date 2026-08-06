@@ -146,9 +146,21 @@ impl StoredFact {
 /// эмбеддинги/`sqlite-vec` (MEM4); здесь только граница интерфейса —
 /// дедупликация не знает и не должна знать, как считается близость.
 pub trait SimilaritySource {
-    /// Значение в `[0.0, 1.0]`; `1.0` — совпадающий смысл.
-    fn similarity(&self, candidate: &FactProposal, existing: &StoredFact) -> f32;
+    /// Значение в `[0.0, 1.0]`; `1.0` — совпадающий смысл. Ошибка —
+    /// отдельно (находка 4.7 аудита: сбой хранилища, проглоченный в
+    /// `0.0`, неотличим от «факты непохожи» → молчаливые ложные New).
+    fn similarity(
+        &self,
+        candidate: &FactProposal,
+        existing: &StoredFact,
+    ) -> Result<f32, SimilarityError>;
 }
+
+/// Сбой источника близости (хранилище/эмбеддинги) — не «нулевая
+/// близость», сигнал о поломке (4.7 аудита).
+#[derive(Debug, thiserror::Error)]
+#[error("источник близости недоступен: {0}")]
+pub struct SimilarityError(pub String);
 
 /// Похожести не существует (`similarity` всегда `0.0`) — для вызывающего
 /// кода, которому пока негде взять эмбеддинги (до MEM4). Дедупликация
@@ -157,8 +169,12 @@ pub trait SimilaritySource {
 pub struct NoSimilarity;
 
 impl SimilaritySource for NoSimilarity {
-    fn similarity(&self, _candidate: &FactProposal, _existing: &StoredFact) -> f32 {
-        0.0
+    fn similarity(
+        &self,
+        _candidate: &FactProposal,
+        _existing: &StoredFact,
+    ) -> Result<f32, SimilarityError> {
+        Ok(0.0)
     }
 }
 
@@ -183,17 +199,23 @@ pub struct VectorSimilarity<'a> {
 }
 
 impl SimilaritySource for VectorSimilarity<'_> {
-    fn similarity(&self, candidate: &FactProposal, existing: &StoredFact) -> f32 {
+    fn similarity(
+        &self,
+        candidate: &FactProposal,
+        existing: &StoredFact,
+    ) -> Result<f32, SimilarityError> {
         let text = format!(
             "{} {} {}",
             candidate.subject, candidate.predicate, candidate.object
         );
         let embedding = (self.embed)(&text);
-        self.store
+        // 4.7: сбой хранилища — ошибкой наверх, не «0.0» (иначе
+        // повреждённое хранилище порождало бы ложные дубликаты-New).
+        Ok(self
+            .store
             .cosine_similarity(&existing.id.0, &embedding)
-            .ok()
-            .flatten()
-            .unwrap_or(0.0)
+            .map_err(|err| SimilarityError(err.to_string()))?
+            .unwrap_or(0.0))
     }
 }
 
@@ -230,13 +252,16 @@ fn dedup_near(
     existing: &[StoredFact],
     similarity: &dyn SimilaritySource,
     threshold: f32,
-) -> Option<(FactId, f32)> {
-    existing
-        .iter()
-        .map(|f| (f, similarity.similarity(candidate, f)))
-        .filter(|(_, score)| *score >= threshold)
-        .max_by(|(_, a), (_, b)| a.total_cmp(b))
-        .map(|(f, score)| (f.id.clone(), score))
+) -> Result<Option<(FactId, f32)>, SimilarityError> {
+    // 4.7 аудита: ошибки источника близости — ошибкой наверх, не «0.0».
+    let mut best: Option<(&StoredFact, f32)> = None;
+    for fact in existing {
+        let score = similarity.similarity(candidate, fact)?;
+        if score >= threshold && best.as_ref().is_none_or(|(_, current)| score > *current) {
+            best = Some((fact, score));
+        }
+    }
+    Ok(best.map(|(f, score)| (f.id.clone(), score)))
 }
 
 /// Решает судьбу предложенного факта относительно уже существующих —
@@ -253,17 +278,19 @@ pub fn dedup(
     existing: &[StoredFact],
     similarity: &dyn SimilaritySource,
     threshold: f32,
-) -> DedupOutcome {
+) -> Result<DedupOutcome, SimilarityError> {
     if let Some(id) = dedup_exact(candidate, existing) {
-        return DedupOutcome::Duplicate { existing: id };
+        return Ok(DedupOutcome::Duplicate { existing: id });
     }
-    match dedup_near(candidate, existing, similarity, threshold) {
-        Some((id, score)) => DedupOutcome::Merge {
-            existing: id,
-            similarity: score,
+    Ok(
+        match dedup_near(candidate, existing, similarity, threshold)? {
+            Some((id, score)) => DedupOutcome::Merge {
+                existing: id,
+                similarity: score,
+            },
+            None => DedupOutcome::New,
         },
-        None => DedupOutcome::New,
-    }
+    )
 }
 
 /// Факт, структурно противоречащий кандидату (§2: «Противоречие нового
@@ -335,20 +362,22 @@ pub fn resolve(
     existing: &[StoredFact],
     similarity: &dyn SimilaritySource,
     threshold: f32,
-) -> Resolution {
+) -> Result<Resolution, SimilarityError> {
     if let Some(id) = dedup_exact(candidate, existing) {
-        return Resolution::Duplicate { existing: id };
+        return Ok(Resolution::Duplicate { existing: id });
     }
     if let Some(conflict) = detect_conflict(candidate, existing) {
-        return Resolution::Conflict(conflict);
+        return Ok(Resolution::Conflict(conflict));
     }
-    match dedup_near(candidate, existing, similarity, threshold) {
-        Some((id, score)) => Resolution::Merge {
-            existing: id,
-            similarity: score,
+    Ok(
+        match dedup_near(candidate, existing, similarity, threshold)? {
+            Some((id, score)) => Resolution::Merge {
+                existing: id,
+                similarity: score,
+            },
+            None => Resolution::New,
         },
-        None => Resolution::New,
-    }
+    )
 }
 
 /// Слияние уверенности: максимум из двух независимых наблюдений одного
@@ -392,15 +421,19 @@ mod tests {
 
     struct FixedSimilarity(f32);
     impl SimilaritySource for FixedSimilarity {
-        fn similarity(&self, _candidate: &FactProposal, _existing: &StoredFact) -> f32 {
-            self.0
+        fn similarity(
+            &self,
+            _candidate: &FactProposal,
+            _existing: &StoredFact,
+        ) -> Result<f32, SimilarityError> {
+            Ok(self.0)
         }
     }
 
     #[test]
     fn empty_existing_facts_always_yields_new() {
         let candidate = proposal("клиент c-1", "предпочитает_канал", "email", 0.8);
-        let outcome = dedup(&candidate, &[], &NoSimilarity, DEFAULT_SIMILARITY_THRESHOLD);
+        let outcome = dedup(&candidate, &[], &NoSimilarity, DEFAULT_SIMILARITY_THRESHOLD).unwrap();
         assert_eq!(outcome, DedupOutcome::New);
     }
 
@@ -417,7 +450,7 @@ mod tests {
 
         // FixedSimilarity(0.0) доказывает: точное совпадение находится
         // безусловно, не через similarity.
-        let outcome = dedup(&candidate, &existing, &FixedSimilarity(0.0), 0.9);
+        let outcome = dedup(&candidate, &existing, &FixedSimilarity(0.0), 0.9).unwrap();
 
         assert_eq!(
             outcome,
@@ -443,7 +476,8 @@ mod tests {
             &existing,
             &NoSimilarity,
             DEFAULT_SIMILARITY_THRESHOLD,
-        );
+        )
+        .unwrap();
 
         assert_eq!(
             outcome,
@@ -464,16 +498,20 @@ mod tests {
         // f-2 «более похож» по сценарию теста — max_by обязан выбрать его.
         struct ByFactId;
         impl SimilaritySource for ByFactId {
-            fn similarity(&self, _candidate: &FactProposal, existing: &StoredFact) -> f32 {
+            fn similarity(
+                &self,
+                _candidate: &FactProposal,
+                existing: &StoredFact,
+            ) -> Result<f32, SimilarityError> {
                 if existing.id == FactId("f-2".into()) {
-                    0.95
+                    Ok(0.95)
                 } else {
-                    0.91
+                    Ok(0.91)
                 }
             }
         }
 
-        let outcome = dedup(&candidate, &existing, &ByFactId, 0.9);
+        let outcome = dedup(&candidate, &existing, &ByFactId, 0.9).unwrap();
 
         assert_eq!(
             outcome,
@@ -489,7 +527,7 @@ mod tests {
         let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.5)];
         let candidate = proposal("клиент c-1", "любит", "чай", 0.7);
 
-        let outcome = dedup(&candidate, &existing, &FixedSimilarity(0.5), 0.9);
+        let outcome = dedup(&candidate, &existing, &FixedSimilarity(0.5), 0.9).unwrap();
 
         assert_eq!(outcome, DedupOutcome::New);
     }
@@ -499,7 +537,7 @@ mod tests {
         let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.5)];
         let candidate = proposal("клиент c-1", "проживает", "Москва-сити", 0.7);
 
-        let outcome = dedup(&candidate, &existing, &FixedSimilarity(0.9), 0.9);
+        let outcome = dedup(&candidate, &existing, &FixedSimilarity(0.9), 0.9).unwrap();
 
         assert!(matches!(outcome, DedupOutcome::Merge { .. }));
     }
@@ -592,7 +630,7 @@ mod tests {
         // FixedSimilarity(1.0) доказывает: будь порядок «similarity раньше
         // конфликта», это ошибочно стало бы Merge — resolve обязан
         // отдать Conflict первым.
-        let outcome = resolve(&candidate, &existing, &FixedSimilarity(1.0), 0.9);
+        let outcome = resolve(&candidate, &existing, &FixedSimilarity(1.0), 0.9).unwrap();
 
         assert_eq!(
             outcome,
@@ -610,7 +648,7 @@ mod tests {
 
         let exact = proposal("клиент c-1", "живёт_в", "Москва", 0.9);
         assert_eq!(
-            resolve(&exact, &existing, &NoSimilarity, 0.9),
+            resolve(&exact, &existing, &NoSimilarity, 0.9).unwrap(),
             Resolution::Duplicate {
                 existing: FactId("f-1".into())
             }
@@ -625,7 +663,8 @@ mod tests {
                 &existing,
                 &FixedSimilarity(0.95),
                 0.9
-            ),
+            )
+            .unwrap(),
             Resolution::Merge {
                 existing: FactId("f-1".into()),
                 similarity: 0.95
@@ -638,7 +677,7 @@ mod tests {
         let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6)];
         let candidate = proposal("клиент c-1", "любит", "чай", 0.7);
 
-        let outcome = resolve(&candidate, &existing, &FixedSimilarity(0.1), 0.9);
+        let outcome = resolve(&candidate, &existing, &FixedSimilarity(0.1), 0.9).unwrap();
 
         assert_eq!(outcome, Resolution::New);
     }
@@ -679,7 +718,7 @@ mod tests {
         let existing = [stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6)];
         let candidate = proposal("клиент c-1", "проживает", "г. Москва", 0.7);
 
-        let outcome = resolve(&candidate, &existing, &similarity, 0.9);
+        let outcome = resolve(&candidate, &existing, &similarity, 0.9).unwrap();
 
         assert_eq!(
             outcome,
@@ -703,6 +742,6 @@ mod tests {
         let candidate = proposal("клиент c-1", "живёт_в", "Москва", 0.7);
         let unknown = stored("f-missing", "клиент c-1", "живёт_в", "Москва", 0.6);
 
-        assert_eq!(similarity.similarity(&candidate, &unknown), 0.0);
+        assert_eq!(similarity.similarity(&candidate, &unknown).unwrap(), 0.0);
     }
 }

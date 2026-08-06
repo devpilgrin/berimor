@@ -41,6 +41,8 @@ pub enum GraphError {
     EmptyProcess,
     #[error("дублирующийся id шага: '{0}'")]
     DuplicateStepId(String),
+    #[error("id шага '{0}' зарезервирован под служебный неймспейс состояния (state.{0}.*)")]
+    ReservedStepId(String),
     #[error("шаг с id '{0}' не найден в процессе")]
     UnknownStep(String),
     #[error("branch-шаг '{step_id}' ссылается на несуществующий шаг '{target}'")]
@@ -80,6 +82,13 @@ pub fn compile(process: &Process) -> Result<(), GraphError> {
     for step in &process.steps {
         if !seen.insert(step.id.as_str()) {
             return Err(GraphError::DuplicateStepId(step.id.clone()));
+        }
+        // Находка 1.6 аудита: шаг с id 'parallel' своим патчем стирает
+        // ВЕСЬ неймспейс барьера `state.parallel.*` вместе с результатами
+        // выполненных ветвей — id зарезервирован под служебное
+        // пространство, проверка здесь, не в рантайме.
+        if step.id == "parallel" {
+            return Err(GraphError::ReservedStepId(step.id.clone()));
         }
     }
 
@@ -334,6 +343,17 @@ mod tests {
     #[test]
     fn compile_accepts_golden_fixture() {
         assert!(compile(&golden()).is_ok());
+    }
+
+    #[test]
+    fn compile_rejects_step_id_reserved_for_barrier_namespace() {
+        // 1.6 аудита: id 'parallel' стирал бы state.parallel.* своим патчем.
+        let mut process = golden();
+        process.steps[0].id = "parallel".into();
+        assert!(matches!(
+            compile(&process),
+            Err(GraphError::ReservedStepId(_))
+        ));
     }
 
     #[test]

@@ -14,6 +14,9 @@ pub struct AgentDef {
     pub tools: Vec<String>,
     pub max_turns: u32,
     pub max_wall_seconds: u64,
+    /// Право порождать субагентов самому (контракт berimor-agents;
+    /// по умолчанию — запрещено, fail-closed).
+    pub allow_spawn: bool,
     /// Тело prompt.md — системный контекст субагента (если есть рядом).
     pub prompt: String,
 }
@@ -27,6 +30,7 @@ impl Default for AgentDef {
             tools: Vec::new(),
             max_turns: 12,
             max_wall_seconds: 300,
+            allow_spawn: false,
             prompt: String::new(),
         }
     }
@@ -75,6 +79,7 @@ pub fn parse(text: &str) -> Result<AgentDef, String> {
             "model_tier" => def.model_tier = Some(value.to_string()),
             "tools" => section = Some("tools"),
             "budget" => section = Some("budget"),
+            "allow_spawn" => def.allow_spawn = value == "true",
             _ => {}
         }
     }
@@ -157,6 +162,7 @@ budget:
   max_wall_seconds: 300
 jail: inherit
 returns: summary
+allow_spawn: true
 ";
 
     #[test]
@@ -166,6 +172,7 @@ returns: summary
         assert_eq!(def.tools, vec!["files.read", "http.fetch"]);
         assert_eq!(def.max_turns, 20);
         assert_eq!(def.max_wall_seconds, 300);
+        assert!(def.allow_spawn);
     }
 
     #[test]

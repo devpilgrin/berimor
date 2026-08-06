@@ -71,6 +71,19 @@ pub fn run_golden_set(
     process: &Process,
     scenarios: &[GoldenScenario],
 ) -> EvalReport {
+    // Находка 4.9 аудита: id инстанса — «{процесс}::{сценарий}» — без
+    // проверки уникальности имён два сценария сливали метрики в один
+    // журнал. С 1.7 повторный instantiate — ошибка (громко, но поздно);
+    // здесь — ранняя проверка с понятным сообщением ДО прогона.
+    let mut seen = std::collections::HashSet::new();
+    for scenario in scenarios {
+        assert!(
+            seen.insert(scenario.name.as_str()),
+            "golden-набор '{}': дублирующееся имя сценария '{}' — метрики сценариев не должны смешиваться",
+            process.name,
+            scenario.name
+        );
+    }
     let scenarios: Vec<ScenarioOutcome> = scenarios
         .iter()
         .map(|scenario| run_scenario(storage, process, scenario))

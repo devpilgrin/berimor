@@ -195,7 +195,8 @@ impl<'de> Deserialize<'de> for Step {
 /// `timeout` и `token_budget` в декларации — человеко-читаемые
 /// (`timeout: 10m`, `token_budget: 100k`, дословно из примера
 /// `process-engine.md` §2), поэтому у обоих полей свой разбор строки с
-/// суффиксом — см. [`parse_duration_seconds`]/[`parse_count`] в `parser.rs`.
+/// суффиксом — см. [`parse_duration_seconds`]/[`parse_count`] в
+/// `berimor_types::parser_support` (1.14 аудита: ссылка вела в parser.rs).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessLimits {

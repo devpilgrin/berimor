@@ -7,8 +7,9 @@
 //! - бюджет времени — [`DeadlineProvider`]/[`DeadlineDispatch`]: после
 //!   дедлайна КАЖДЫЙ вызов модели и инструмента завершается ошибкой —
 //!   цикл умирает штатным путём, без потоков и unsafe;
-//! - вложенность: глубина > 0 — отказ (allow_spawn из agent.yaml —
-//!   следующий этап; по умолчанию субагент не порождает);
+//! - вложенность: субагент порождает только с `allow_spawn: true` в
+//!   своём agent.yaml (по умолчанию запрещено); абсолютный потолок
+//!   глубины — 2 (родитель → ребёнок → внук), код, не модель;
 //! - гейт и подтверждения — те же, что у родителя: мутирующие действия
 //!   ребёнка спрашивают через тот же модал, deny-статика и jail общие;
 //! - журнал: телеметрия ребёнка — вложенным инстансом
@@ -23,7 +24,6 @@ use berimor_types::model::{
     CompletionRequest, CompletionResponse, ModelError, ModelTierRequirement,
 };
 use serde_json::{json, Value};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -82,8 +82,14 @@ pub(crate) struct AgentRunContext {
     pub mode: berimor_types::capability::ConfirmationMode,
     pub storage_path: std::path::PathBuf,
     pub builtin_names: Vec<String>,
-    pub depth: Arc<AtomicUsize>,
+    /// Стек флагов allow_spawn исполняющихся агентов: вершина — права
+    /// ТЕКУЩЕГО (порождающего) агента; длина стека = глубина вложенности.
+    pub spawn_stack: Arc<std::sync::Mutex<Vec<bool>>>,
 }
+
+/// Абсолютный потолок глубины вложенности (0 = чат, 1 = ребёнок,
+/// 2 = внук): выше — отказ независимо от флагов (код, не модель).
+const MAX_SPAWN_DEPTH: usize = 2;
 
 /// Диспетчер-обёртка: `agents.run` исполняет вложенным циклом, остальное
 /// делегирует основной цепочке (встроенные → MCP → заглушки).
@@ -116,18 +122,31 @@ impl AgentRunDispatch {
                 reason: "аргумент task обязателен".into(),
             })?;
 
-        // Вложенность запрещена (allow_spawn — следующий этап).
-        if self.ctx.depth.fetch_add(1, Ordering::SeqCst) > 0 {
-            self.ctx.depth.fetch_sub(1, Ordering::SeqCst);
-            return Err(DispatchError {
-                tool: "agents.run".into(),
-                reason: "субагент не порождает субагентов (allow_spawn по умолчанию запрещён)"
-                    .into(),
-            });
+        // Вложенность: вершина стека — права порождающего агента;
+        // глубина ограничена абсолютным потолком.
+        {
+            let stack = self
+                .ctx
+                .spawn_stack
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if stack.len() >= MAX_SPAWN_DEPTH {
+                return Err(DispatchError {
+                    tool: "agents.run".into(),
+                    reason: format!(
+                        "потолок вложенности субагентов ({MAX_SPAWN_DEPTH}) — дальнейшее порождение запрещено"
+                    ),
+                });
+            }
+            if !stack.is_empty() && !stack.last().copied().unwrap_or(false) {
+                return Err(DispatchError {
+                    tool: "agents.run".into(),
+                    reason: "порождающий субагент не имеет allow_spawn: true в своём agent.yaml"
+                        .into(),
+                });
+            }
         }
-        let result = self.run_agent_inner(name, task);
-        self.ctx.depth.fetch_sub(1, Ordering::SeqCst);
-        result
+        self.run_agent_inner(name, task)
     }
 
     fn run_agent_inner(&self, name: &str, task: &str) -> Result<Value, DispatchError> {
@@ -147,6 +166,28 @@ impl AgentRunDispatch {
                 ),
             })?;
 
+        // Права ребёнка — в стек на время исполнения (его собственные
+        // порождения будут проверяться по ЕГО флагу).
+        self.ctx
+            .spawn_stack
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(def.allow_spawn);
+        let outcome = self.run_agent_scoped(name, task, def);
+        self.ctx
+            .spawn_stack
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pop();
+        outcome
+    }
+
+    fn run_agent_scoped(
+        &self,
+        name: &str,
+        task: &str,
+        def: &crate::agents::AgentDef,
+    ) -> Result<Value, DispatchError> {
         // Потолок: agent.tools ∩ права родителя (встроенные имена).
         let ceiling = crate::agents::ceiling(def, &self.ctx.builtin_names);
         let deadline = Instant::now() + Duration::from_secs(def.max_wall_seconds);
@@ -207,8 +248,12 @@ impl AgentRunDispatch {
         // Лёгкий контекст ребёнка: конституция/бюджет — те же, память
         // родителя не копируется (поручение автономно).
         let memory = berimor_context_engine::SimpleContextBuilder;
+        // Внутренний диспетчер ребёнка — САМ AgentRunDispatch (не его
+        // inner): agents.run ребёнка обязан пройти проверку вложенности
+        // (allow_spawn/глубина), а не уйти в builtin как неизвестный
+        // инструмент — найдено e2e вложенного порождения.
         let dispatch = DeadlineDispatch {
-            inner: self.inner.as_ref(),
+            inner: self,
             allowed: ceiling,
             deadline,
         };

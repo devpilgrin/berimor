@@ -114,6 +114,14 @@ pub enum EngineError {
     /// `config::load` — невалидный вход есть ошибка, не тихий дефолт).
     #[error("вход процесса содержит зарезервированный служебный ключ верхнего уровня '{0}'")]
     ReservedStateKey(String),
+    /// Находка 1.7 аудита: повторный instantiate с тем же id пересидировал
+    /// бы состояние последним входом.
+    #[error("инстанс '{0}' уже существует (журнал не пуст) — instantiate повторно недопустим")]
+    InstanceExists(String),
+    /// Находка 1.8 аудита: recover несуществующего давал пустой «призрак»
+    /// без Instantiated в журнале.
+    #[error("инстанс '{0}' не найден в журнале")]
+    InstanceNotFound(String),
     /// Техдолг TD1.4: инстанс заблокирован (`ProcessInstance.blocked`,
     /// см. doc-комментарий поля) — обычно после `resume_after_human_gate_timeout`
     /// с политикой `Fail`/`Escalate`, никогда не пройдя легитимного
@@ -146,6 +154,13 @@ pub fn instantiate(
         if map.contains_key("parallel") {
             return Err(EngineError::ReservedStateKey("parallel".to_string()));
         }
+    }
+    // Находка 1.7 аудита: повторный instantiate с тем же id дописывал
+    // второй Instantiated — fold пересидировал состояние ПОСЛЕДНИМ
+    // входом (первый терялся молча). Идентификатор инстанса — как
+    // первичный ключ: занятый — ошибка, а не догадка о намерениях.
+    if !storage.replay(&id)?.is_empty() {
+        return Err(EngineError::InstanceExists(id.0.clone()));
     }
     storage.append(Event::new(
         id.clone(),
@@ -185,6 +200,13 @@ pub fn recover(
     graph::compile(&process)?;
     let events = storage.replay(&id)?;
 
+    // Находка 1.8 аудита: recover несуществующего инстанса возвращал
+    // Ok с пустым «призраком» — первый StepApplied попадал в журнал
+    // без Instantiated (ровно тот дефект, ради исправления которого
+    // Instantiated вводился). Пустой журнал = инстанса нет.
+    if events.is_empty() {
+        return Err(EngineError::InstanceNotFound(id.0.clone()));
+    }
     if let Some(last) = events.last() {
         if last.process_version != process.version {
             return Err(EngineError::VersionMismatch {
@@ -619,6 +641,27 @@ mod tests {
 
     const GOLDEN_FIXTURE: &str =
         include_str!("../../../fixtures/golden/processes/card-delivery-support.yaml");
+
+    /// Находка 1.7 аудита: повторный instantiate — ошибка, вход первого
+    /// инстанса не пересидируется.
+    #[test]
+    fn instantiate_twice_with_same_id_is_rejected() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let process = parse(GOLDEN_FIXTURE).unwrap();
+        let id = ProcessInstanceId("i-1-7".into());
+        instantiate(&storage, id.clone(), process.clone(), json!({"a": 1})).unwrap();
+        let err = instantiate(&storage, id, process, json!({"a": 2})).unwrap_err();
+        assert!(matches!(err, EngineError::InstanceExists(_)), "{err:?}");
+    }
+
+    /// Находка 1.8 аудита: recover несуществующего — ошибка, не призрак.
+    #[test]
+    fn recover_nonexistent_instance_is_error_not_ghost() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let process = parse(GOLDEN_FIXTURE).unwrap();
+        let err = recover(&storage, process, ProcessInstanceId("ghost".into())).unwrap_err();
+        assert!(matches!(err, EngineError::InstanceNotFound(_)), "{err:?}");
+    }
 
     /// Фейковый исполнитель — E1-E9/M1-M7 ещё не реализованы (см. doc-комментарий
     /// модуля). Возвращает заранее заданные патчи по id шага, чтобы прогнать

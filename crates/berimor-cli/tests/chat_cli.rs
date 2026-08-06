@@ -306,6 +306,90 @@ fn subagent_tool_ceiling_rejects_out_of_scope_tool() {
 }
 
 #[test]
+fn subagent_spawn_allowed_with_flag_executes_nested() {
+    // allow_spawn: true — ребёнок порождает внука; цепочка mock-ответов
+    // позиционна: выравнивание до финального ответа возможно, только
+    // если внук РЕАЛЬНО исполнился (иначе тела съезжают на ход раньше).
+    let dir = std::env::temp_dir().join(format!("berimor-e2e-spawn-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let url = sequential_mock(vec![
+        tool_turn(
+            "agents.run",
+            json!({"name": "scout", "task": "разведай через внука"}),
+        ),
+        tool_turn("agents.run", json!({"name": "nested", "task": "сходи"})),
+        finish_turn("Доклад внука."),
+        finish_turn("передаю: внук доложил"),
+        finish_turn("Итог получен, сэр."),
+    ]);
+    for (agent, yaml) in [
+        ("scout", "name: scout\nallow_spawn: true\ntools:\n  - files.list\n  - agents.run\nbudget:\n  max_turns: 6\n"),
+        ("nested", "name: nested\ntools:\n  - files.list\nbudget:\n  max_turns: 4\n"),
+    ] {
+        let agent_dir = dir.join(format!(".berimor/agents/{agent}"));
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(agent_dir.join("agent.yaml"), yaml).unwrap();
+    }
+    let config_path = write_config(&dir, "spawnok", &url);
+
+    let output = run_chat(&dir, &config_path, "поручи скауту\n/exit\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Итог получен"),
+        "цепочка вложенного порождения дошла до финала: {stdout}"
+    );
+}
+
+#[test]
+fn subagent_spawn_without_flag_refused_and_depth_capped() {
+    // (а) без allow_spawn — отказ; (б) глубина > 2 — отказ даже с флагом.
+    let dir = std::env::temp_dir().join(format!("berimor-e2e-nospawn-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let url = sequential_mock(vec![
+        tool_turn(
+            "agents.run",
+            json!({"name": "scout", "task": "породить внука"}),
+        ),
+        tool_turn("agents.run", json!({"name": "nested", "task": "сходи"})),
+        // Отказ (нет флага) — scout завершает честно.
+        finish_turn("Порождение отклонено: нет allow_spawn."),
+        finish_turn("Скаут доложил об отказе."),
+    ]);
+    for (agent, yaml) in [
+        (
+            "scout",
+            "name: scout\ntools:\n  - agents.run\nbudget:\n  max_turns: 6\n",
+        ),
+        (
+            "nested",
+            "name: nested\ntools:\n  - files.list\nbudget:\n  max_turns: 4\n",
+        ),
+    ] {
+        let agent_dir = dir.join(format!(".berimor/agents/{agent}"));
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(agent_dir.join("agent.yaml"), yaml).unwrap();
+    }
+    let config_path = write_config(&dir, "nospawn", &url);
+
+    let output = run_chat(&dir, &config_path, "поручи скауту\n/exit\n");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Скаут доложил об отказе"),
+        "цепочка с отказом порождения: {stdout}"
+    );
+}
+
+#[test]
 fn chat_survives_gate_denial_turn_terminal_session_alive() {
     // Отказ гейта (deny-статика) ТЕРМИНАЛЕН для хода (осознанный дизайн),
     // но НЕ для сессии: следующее сообщение обрабатывается штатно.

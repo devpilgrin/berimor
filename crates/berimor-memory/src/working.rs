@@ -22,9 +22,10 @@ pub struct HistoryEntry {
     pub text: String,
 }
 
-/// Суммарный объём истории в символах — то же измерение, что и бюджет
-/// класса модели (`berimor_context_engine::budget_chars`, C3), с которым
-/// сравнивается результат.
+/// Суммарный объём истории — то же измерение, что и бюджет класса
+/// модели (`berimor_context_engine::budget_chars`, C3), с которым
+/// сравнивается результат. 4.6 аудита: БАЙТЫ (`str::len`), не символы —
+/// см. контракт в `berimor_context_engine::total_chars`.
 pub fn total_chars(entries: &[HistoryEntry]) -> usize {
     entries.iter().map(|e| e.text.len()).sum()
 }

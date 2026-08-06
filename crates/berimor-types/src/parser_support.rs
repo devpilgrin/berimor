@@ -74,7 +74,12 @@ where
     D: serde::Deserializer<'de>,
 {
     match NumberOrText::deserialize(deserializer)? {
-        NumberOrText::Number(n) => Ok(n),
+        // Находка 1.13 аудита: голое число молча трактовалось как секунды
+        // вопреки контракту модуля («суффикс обязателен») — неоднозначная
+        // величина (600 — секунды? миллисекунды?) отклоняется явно.
+        NumberOrText::Number(n) => Err(serde::de::Error::custom(format!(
+            "длительность без единицы измерения ({n}): укажите суффикс — {n}s, или в минутах/часах (10m, 1h)"
+        ))),
         NumberOrText::Text(s) => parse_duration_seconds(&s).map_err(serde::de::Error::custom),
     }
 }

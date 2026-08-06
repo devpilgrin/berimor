@@ -525,7 +525,7 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
                     .iter()
                     .map(|(n, _)| n.clone())
                     .collect(),
-                depth: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                spawn_stack: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             },
         ));
 
@@ -774,12 +774,21 @@ fn extract_and_store_facts(
     let mut merged = 0usize;
     let mut conflicts = 0usize;
     for proposal in &batch.facts {
-        match semantic::resolve(
+        // 4.7 аудита: resolve возвращает Result — сбой источника близости
+        // виден, а не «факты непохожи».
+        let resolution = match semantic::resolve(
             proposal,
             &existing,
             &NoSimilarity,
             DEFAULT_SIMILARITY_THRESHOLD,
         ) {
+            Ok(resolution) => resolution,
+            Err(err) => {
+                eprintln!("[berimor] память: источник близости недоступен ({err}), факт пропущен");
+                continue;
+            }
+        };
+        match resolution {
             Resolution::Duplicate { .. } => {}
             Resolution::New => {
                 // Id — от маскированных полей (как hash внутри
