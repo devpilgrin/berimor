@@ -85,8 +85,19 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
     })?;
     let bundle = build_executor_bundle(config)?;
     let providers = bundle.providers();
+    // Находка 4.5 аудита: Session-слой eval искал по ЭФЕМЕРНОМУ журналу
+    // стенда — находил события соседних сценариев того же прогона и
+    // самоотсылку, но никогда реальные прошлые сессии. Разведено:
+    // события сценариев — эфемерный журнал (чистые метрики, выше), а
+    // Session-поиск — РЕАЛЬНЫЙ журнал прогонов (только чтение контекста;
+    // отсутствие файла = пустая история, не ошибка).
+    let real_journal = SqliteEventLog::open(&config.storage_path).ok();
+    let episodic: &dyn berimor_storage::EpisodicSearch = match &real_journal {
+        Some(journal) => journal,
+        None => &storage,
+    };
     let memory_context = MemoryContextBuilder {
-        episodic: &storage,
+        episodic,
         skills: &bundle.skills,
         session_search_limit: config.memory.session_search_limit,
         entity_graph: config

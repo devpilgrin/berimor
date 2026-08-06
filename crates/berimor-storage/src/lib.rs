@@ -36,6 +36,10 @@ pub enum StorageError {
     Unavailable(String),
     #[error("нарушение целостности журнала: {0}")]
     Corrupt(String),
+    /// Отказ записи невозможных данных (fail-closed на границе
+    /// хранилища — аудит 4.4: валидация не только на верхнем слое).
+    #[error("недопустимые данные: {0}")]
+    InvalidData(String),
 }
 
 impl From<rusqlite::Error> for StorageError {
@@ -909,6 +913,18 @@ pub trait ScheduleStore {
 
 impl ScheduleStore for SqliteEventLog {
     fn upsert_schedule(&self, schedule: &Schedule) -> Result<(), StorageError> {
+        // Находка 4.4 аудита: валидация была только на верхнем слое
+        // (Scheduler), прямой вызывающий получал невозможное расписание —
+        // interval <= 0 продвигает время назад/на месте = вечное
+        // срабатывание на каждом тике. Fail-closed на записи.
+        if let Some(interval) = schedule.interval_ms {
+            if interval <= 0 {
+                return Err(StorageError::InvalidData(format!(
+                    "расписание '{}': interval_ms обязан быть > 0 (получено {interval})",
+                    schedule.id.0
+                )));
+            }
+        }
         let conn = self.lock()?;
         let payload_json = serde_json::to_string(&schedule.payload)?;
         conn.execute(
@@ -957,9 +973,16 @@ impl ScheduleStore for SqliteEventLog {
         for (id, next_fire_ms, interval_ms, payload_json) in due {
             match interval_ms {
                 Some(interval) => {
+                    // Находка 4.4 аудита: продвижение на ОДИН интервал —
+                    // после простоя система «догоняла» пропущенные тики
+                    // штормом срабатываний. Пропущенные пропускаются:
+                    // скачок к первому времени СТРОГО в будущем
+                    // (пропуски не накапливаются — догонять прошлое
+                    // периодических задач вреднее, чем пропустить).
+                    let missed = (now_ms - next_fire_ms) / interval + 1;
                     tx.execute(
                         "UPDATE schedules SET next_fire_ms = next_fire_ms + ?2 WHERE id = ?1",
-                        params![id, interval],
+                        params![id, interval * missed],
                     )?;
                 }
                 None => {
@@ -1498,6 +1521,42 @@ mod tests {
             interval_ms: Some(interval_ms),
             payload: json!({"kind": "recurring"}),
         }
+    }
+
+    /// Находка 4.4 аудита: interval <= 0 — отказ на записи (раньше
+    /// прямой upsert принимал невозможное расписание — вечное
+    /// срабатывание на каждом тике).
+    #[test]
+    fn upsert_rejects_non_positive_interval() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        let bad = Schedule {
+            id: ScheduleId("s-bad".into()),
+            next_fire_ms: 1000,
+            interval_ms: Some(0),
+            payload: json!(null),
+        };
+        let err = log.upsert_schedule(&bad).unwrap_err();
+        assert!(
+            matches!(err, StorageError::InvalidData(_)),
+            "interval=0 обязан отклоняться: {err:?}"
+        );
+        // Одноразовое (None) — валидно по-прежнему.
+        assert!(log.upsert_schedule(&one_shot("s-ok", 1000)).is_ok());
+    }
+
+    /// Находка 4.4 аудита: после простоя — один скачок в будущее, не
+    /// шторм догоняющих срабатываний.
+    #[test]
+    fn tick_after_downtime_skips_missed_fires_to_future() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_schedule(&recurring("s-rec", 1000, 100)).unwrap();
+        // Простой в 10 интервалов: срабатывание ОДНО, следующее время —
+        // строго в будущем, второй тик того же момента пуст.
+        let fired = log.tick(2000).unwrap();
+        assert_eq!(fired.len(), 1, "одно срабатывание, не шторм");
+        assert!(log.tick(2000).unwrap().is_empty(), "догона нет");
+        let due_later = log.due(2100).unwrap();
+        assert_eq!(due_later.len(), 1, "следующее время — в будущем");
     }
 
     #[test]
