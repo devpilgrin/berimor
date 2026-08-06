@@ -93,6 +93,18 @@ fn describe(event: &Event) -> TraceEntry {
         EventKind::SessionClosed { session_id } => {
             ("session_closed", format!("сессия '{session_id}' закрыта"))
         }
+        EventKind::FileTouched {
+            session_id,
+            path,
+            op,
+        } => (
+            "file_touched",
+            format!("сессия '{session_id}' изменила {path} ({op})"),
+        ),
+        EventKind::FileObserved { session_id, path } => (
+            "file_observed",
+            format!("сессия '{session_id}' прочитала {path}"),
+        ),
         EventKind::TrustListChanged { action, repo, .. } => (
             "trust_list_changed",
             format!("доверенный список: {action:?} '{repo}'"),

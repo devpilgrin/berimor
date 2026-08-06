@@ -133,6 +133,86 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+// ---- §20.22 v2 шаг 2: уведомления о файлах -------------------------------
+
+use berimor_storage::{Envelope, EnvelopeId, MailboxLog};
+
+pub const TOPIC_FILE_CHANGED: &str = "file.changed";
+
+/// Живые сессии (не closed + pid жив), наблюдавшие `path` (FileObserved),
+/// кроме самого писателя.
+pub fn sessions_observing(
+    journal: &SqliteEventLog,
+    path: &str,
+    exclude_session: &str,
+) -> Vec<String> {
+    let events = journal
+        .replay(&ProcessInstanceId(SESSIONS_INSTANCE_ID.to_string()))
+        .unwrap_or_default();
+    let sessions = fold_sessions(&events);
+    let mut observers = Vec::new();
+    for event in &events {
+        if let EventKind::FileObserved {
+            session_id,
+            path: p,
+        } = &event.kind
+        {
+            if p == path
+                && session_id != exclude_session
+                && !observers.contains(session_id)
+                && sessions
+                    .iter()
+                    .any(|s| &s.session_id == session_id && !s.closed && s.pid_alive)
+            {
+                observers.push(session_id.clone());
+            }
+        }
+    }
+    observers
+}
+
+/// FileTouched + конверты наблюдателям — одна точка из диспетчера.
+pub fn record_touched_and_notify(journal: &SqliteEventLog, session_id: &str, path: &str, op: &str) {
+    let _ = journal.append(journal_event(EventKind::FileTouched {
+        session_id: session_id.to_string(),
+        path: path.to_string(),
+        op: op.to_string(),
+    }));
+    for observer in sessions_observing(journal, path, session_id) {
+        let envelope = Envelope {
+            id: EnvelopeId(format!(
+                "filechg-{session_id}-{observer}-{}-{path}",
+                now_ms()
+            )),
+            from: session_id.to_string(),
+            to: observer,
+            topic: TOPIC_FILE_CHANGED.to_string(),
+            payload: serde_json::json!({"path": path, "by_session": session_id, "op": op}),
+        };
+        let _ = journal.persist_envelope(&envelope);
+    }
+}
+
+/// FileObserved с дедупликацией «один путь за сессию» — читается журнал;
+/// вызывающий кэширует в HashSet, здесь — честная проверка для тестов и
+/// холодного старта диспетчера.
+pub fn record_observed(journal: &SqliteEventLog, session_id: &str, path: &str) {
+    let _ = journal.append(journal_event(EventKind::FileObserved {
+        session_id: session_id.to_string(),
+        path: path.to_string(),
+    }));
+}
+
+/// Дренаж входящих конвертов сессии: забрать недоставленные и пометить
+/// доставленными (доставка = показ пользователю вызывающим).
+pub fn drain_envelopes(journal: &SqliteEventLog, session_id: &str) -> Vec<Envelope> {
+    let envelopes = journal.undelivered_for(session_id).unwrap_or_default();
+    for envelope in &envelopes {
+        let _ = journal.mark_delivered(&envelope.id);
+    }
+    envelopes
+}
+
 /// `berimor sessions` — живые сессии хоста (не закрытые + pid жив).
 pub fn cmd_sessions(config: &crate::config::Config) -> Result<(), String> {
     let journal = SqliteEventLog::open(&config.storage_path).map_err(|e| format!("журнал: {e}"))?;
@@ -202,6 +282,42 @@ mod tests {
         assert!(!a.closed && a.command == "chat");
         assert!(a.last_ts_ms >= a.opened_ts_ms);
         assert!(b.closed && b.command == "daemon");
+    }
+
+    #[test]
+    fn observer_gets_envelope_on_touch_and_drains_once() {
+        let (_dir, journal) = temp_journal("notify");
+        record_open(&journal, "sess-reader", "chat").expect("open r");
+        record_open(&journal, "sess-writer", "chat").expect("open w");
+        record_observed(&journal, "sess-reader", "src/main.rs");
+        record_touched_and_notify(&journal, "sess-writer", "src/main.rs", "files.write");
+        let drained = drain_envelopes(&journal, "sess-reader");
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].topic, TOPIC_FILE_CHANGED);
+        assert_eq!(drained[0].from, "sess-writer");
+        assert_eq!(drained[0].payload["path"], "src/main.rs");
+        // Повторный дренаж — пусто (mark_delivered).
+        assert!(drain_envelopes(&journal, "sess-reader").is_empty());
+    }
+
+    #[test]
+    fn writer_is_not_notified_about_own_touch() {
+        let (_dir, journal) = temp_journal("self");
+        record_open(&journal, "sess-solo", "chat").expect("open");
+        record_observed(&journal, "sess-solo", "README.md");
+        record_touched_and_notify(&journal, "sess-solo", "README.md", "files.write");
+        assert!(drain_envelopes(&journal, "sess-solo").is_empty());
+    }
+
+    #[test]
+    fn closed_session_is_not_notified() {
+        let (_dir, journal) = temp_journal("closed");
+        record_open(&journal, "sess-gone", "chat").expect("open");
+        record_observed(&journal, "sess-gone", "a.txt");
+        record_closed(&journal, "sess-gone").expect("close");
+        record_open(&journal, "sess-active", "chat").expect("open a");
+        record_touched_and_notify(&journal, "sess-active", "a.txt", "files.write");
+        assert!(drain_envelopes(&journal, "sess-gone").is_empty());
     }
 
     #[test]

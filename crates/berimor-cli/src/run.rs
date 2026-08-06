@@ -101,7 +101,18 @@ pub fn run(
     // Инстанс: восстановление по журналу (CLI3) или новый (CLI1).
     // Сборка исполнителей — ДО instantiate: реестр секретов (S5) нужен
     // для маскировки входа на границе CLI (находка 1 независимого ревью).
-    let bundle = build_executor_bundle(config)?;
+    let bundle = build_executor_bundle_with_session(
+        config,
+        Some((
+            std::sync::Arc::new(SqliteEventLog::open(&config.storage_path).map_err(|err| {
+                RunError::OpenStorage {
+                    path: config.storage_path.clone(),
+                    reason: err.to_string(),
+                }
+            })?),
+            session_id.clone(),
+        )),
+    )?;
     let providers = bundle.providers();
 
     // Находка 3.14 аудита: --resume с --input молча игнорировал вход —
@@ -325,6 +336,16 @@ impl ExecutorBundle {
 }
 
 pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, RunError> {
+    build_executor_bundle_with_session(config, None)
+}
+
+/// Сборка бандла с опциональным сессионным контекстом (§20.22 v2):
+/// Some((journal, session_id)) — builtin-диспетчер журналирует
+/// FileTouched/FileObserved; None — поведение как раньше.
+pub(crate) fn build_executor_bundle_with_session(
+    config: &Config,
+    session: Option<(std::sync::Arc<SqliteEventLog>, String)>,
+) -> Result<ExecutorBundle, RunError> {
     let workspace_root = std::env::current_dir()
         .and_then(|p| p.canonicalize())
         .unwrap_or_else(|_| PathBuf::from("."));
@@ -403,8 +424,12 @@ pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, R
     }
     // Диспетчер: подписанные/доверенные артефакты — инструменты первого
     // класса (слой между встроенными и MCP).
+    let builtin = crate::builtin_dispatch::BuiltinToolDispatch::new(workspace_root.clone());
+    if let Some((journal, session_id)) = session {
+        builtin.set_session(journal, session_id);
+    }
     let dispatch = CompositeToolDispatch {
-        builtin: crate::builtin_dispatch::BuiltinToolDispatch::new(workspace_root.clone()),
+        builtin,
         plugin: (!plugin_runtime.is_empty()).then_some(plugin_runtime),
         mcp,
         static_stubs,

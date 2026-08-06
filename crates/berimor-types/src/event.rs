@@ -151,6 +151,20 @@ pub enum EventKind {
     SessionClosed {
         session_id: String,
     },
+    /// §20.22 v2 шаг 2: сессия ИЗМЕНИЛА файл (files.write и родственные).
+    /// Тот же синтетический инстанс host-sessions. `op` — имя инструмента.
+    FileTouched {
+        session_id: String,
+        path: String,
+        op: String,
+    },
+    /// Сессия ПРОЧИТАЛА файл (наблюдает за ним). Дедупликация «один путь
+    /// одна запись за сессию» — на писателе (HashSet в диспетчере),
+    /// журнал не раздувается.
+    FileObserved {
+        session_id: String,
+        path: String,
+    },
 }
 
 /// Действие над записью доверенного списка — см. [`EventKind::TrustListChanged`].

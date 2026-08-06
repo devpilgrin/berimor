@@ -71,6 +71,18 @@ pub fn builtin_policies() -> Vec<(String, ToolPolicy)> {
 pub struct BuiltinToolDispatch {
     workspace_root: PathBuf,
     terminal_timeout: Duration,
+    /// §20.22 v2 шаг 2: контекст сессии для FileTouched/FileObserved —
+    /// прикрепляется ПОСЛЕ конструкции (chat/run собирают бандл до того,
+    /// как известен session_id). None — события не журналируются (тесты
+    /// инструментов, внешние вызовы).
+    session: std::sync::Mutex<Option<SessionCtx>>,
+}
+
+struct SessionCtx {
+    journal: std::sync::Arc<berimor_storage::SqliteEventLog>,
+    session_id: String,
+    /// Дедупликация FileObserved: один путь — одна запись за сессию.
+    observed: std::collections::HashSet<String>,
 }
 
 impl BuiltinToolDispatch {
@@ -78,6 +90,42 @@ impl BuiltinToolDispatch {
         Self {
             workspace_root,
             terminal_timeout: TERMINAL_TIMEOUT,
+            session: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// Прикрепить сессионный контекст (§20.22 v2) — после сборки бандла.
+    pub fn set_session(
+        &self,
+        journal: std::sync::Arc<berimor_storage::SqliteEventLog>,
+        session_id: String,
+    ) {
+        if let Ok(mut guard) = self.session.lock() {
+            *guard = Some(SessionCtx {
+                journal,
+                session_id,
+                observed: std::collections::HashSet::new(),
+            });
+        }
+    }
+
+    /// FileObserved с дедупликацией (лучшее усилие — журнал недоступен
+    /// не роняет инструмент).
+    fn note_observed(&self, path: &str) {
+        if let Ok(mut guard) = self.session.lock() {
+            if let Some(ctx) = guard.as_mut() {
+                if ctx.observed.insert(path.to_string()) {
+                    crate::sessions::record_observed(&ctx.journal, &ctx.session_id, path);
+                }
+            }
+        }
+    }
+
+    fn note_touched(&self, path: &str, op: &str) {
+        if let Ok(guard) = self.session.lock() {
+            if let Some(ctx) = guard.as_ref() {
+                crate::sessions::record_touched_and_notify(&ctx.journal, &ctx.session_id, path, op);
+            }
         }
     }
 
@@ -90,6 +138,7 @@ impl BuiltinToolDispatch {
         Self {
             workspace_root,
             terminal_timeout: timeout,
+            session: std::sync::Mutex::new(None),
         }
     }
 
@@ -152,6 +201,7 @@ impl ToolDispatch for BuiltinToolDispatch {
                 })?;
                 let (content, truncated) = Self::read_string_capped(file, CONTENT_CAP)
                     .map_err(|e| Self::err(tool, format!("не удалось прочитать: {e}")))?;
+                self.note_observed(raw);
                 Ok(json!({
                     "path": raw,
                     "content": content,
@@ -181,6 +231,7 @@ impl ToolDispatch for BuiltinToolDispatch {
                         format!("не удалось записать '{}': {e}", path.display()),
                     )
                 })?;
+                self.note_touched(raw, tool);
                 Ok(json!({
                     "path": raw,
                     "bytes": content.len(),

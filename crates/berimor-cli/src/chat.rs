@@ -362,9 +362,11 @@ pub(crate) fn cmd_chat(explicit_config: Option<&Path>) -> Result<(), RunError> {
     // Реестр сессий (§20.22 v2): open при старте, close при выходе —
     // best-effort (журнал недоступен — чат не падает из-за реестра).
     let session_id = crate::sessions::new_session_id();
-    let session_journal = config::load(explicit_config)
-        .ok()
-        .and_then(|c| berimor_storage::SqliteEventLog::open(&c.storage_path).ok());
+    let session_journal: Option<std::sync::Arc<berimor_storage::SqliteEventLog>> =
+        config::load(explicit_config)
+            .ok()
+            .and_then(|c| berimor_storage::SqliteEventLog::open(&c.storage_path).ok())
+            .map(std::sync::Arc::new);
     if let Some(journal) = &session_journal {
         let _ = crate::sessions::record_open(journal, &session_id, "chat");
     }
@@ -395,10 +397,13 @@ pub(crate) fn cmd_chat(explicit_config: Option<&Path>) -> Result<(), RunError> {
 fn run_repl(
     config: &Config,
     history: &mut Vec<Value>,
-    session_journal: Option<&SqliteEventLog>,
+    session_journal: Option<&std::sync::Arc<SqliteEventLog>>,
     session_id: &str,
 ) -> Result<SessionOutcome, RunError> {
-    let bundle = build_executor_bundle(config)?;
+    let bundle = crate::run::build_executor_bundle_with_session(
+        config,
+        session_journal.map(|j| (j.clone(), session_id.to_string())),
+    )?;
     let storage =
         SqliteEventLog::open(&config.storage_path).map_err(|err| RunError::OpenStorage {
             path: config.storage_path.clone(),
@@ -488,6 +493,23 @@ fn run_repl(
         let message = line.trim();
         if let Some(journal) = session_journal {
             let _ = crate::sessions::record_heartbeat(journal, session_id);
+            // §20.22 v2 шаг 2: входящие уведомления (file.changed и др.) —
+            // показ на границе хода, без фоновых потоков (дизайн swarm).
+            for envelope in crate::sessions::drain_envelopes(journal, session_id) {
+                if envelope.topic == crate::sessions::TOPIC_FILE_CHANGED {
+                    eprintln!(
+                        "[berimor] ⚠ {} изменён сессией {} ({})",
+                        envelope.payload["path"].as_str().unwrap_or("?"),
+                        envelope.payload["by_session"].as_str().unwrap_or("?"),
+                        envelope.payload["op"].as_str().unwrap_or("?"),
+                    );
+                } else {
+                    eprintln!(
+                        "[berimor] сообщение от {} ({})",
+                        envelope.from, envelope.topic
+                    );
+                }
+            }
         }
         if message.is_empty() {
             continue;
