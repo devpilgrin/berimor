@@ -29,6 +29,8 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 #[test]
 #[ignore = "скачивает ~0.5 ГБ весов модели; запуск: --include-ignored"]
 fn multilingual_e5_small_scores_paraphrases_high_and_unrelated_low() {
+    // Дефолт (BGE-M3 после калибровки 2026-08-06: разрыв 0.275 против
+    // 0.003 у e5-small и 0.045 у e5-base — таблица в ROADMAP §20.23).
     let embedder = FastEmbedder::new();
 
     // Перифразы: русский ↔ русский и русский ↔ английский.
@@ -67,18 +69,20 @@ fn multilingual_e5_small_scores_paraphrases_high_and_unrelated_low() {
     }
 
     for (i, (a, b)) in paraphrase_pairs.iter().enumerate() {
-        let score = cosine(&dims[i * 4], &dims[i * 4 + 1]);
+        let score = cosine(&dims[i * 2], &dims[i * 2 + 1]);
+        eprintln!("PARA {i}: {score:.4} «{a}» ↔ «{b}»");
         assert!(
-            score > 0.8,
-            "перифразы «{a}» ↔ «{b}» дали косинус {score:.3} (ожидалось > 0.8)"
+            score > berimor_memory::embeddings::BGE_M3_MERGE_THRESHOLD,
+            "перифразы «{a}» ↔ «{b}» дали косинус {score:.3} (обязано превышать калиброванный порог слияния)"
         );
     }
     let base = paraphrase_pairs.len() * 2;
     for (i, (a, b)) in unrelated_pairs.iter().enumerate() {
         let score = cosine(&dims[base + i * 2], &dims[base + i * 2 + 1]);
+        eprintln!("UNREL {i}: {score:.4} «{a}» ↔ «{b}»");
         assert!(
-            score < 0.5,
-            "несвязанные «{a}» ↔ «{b}» дали косинус {score:.3} (ожидалось < 0.5)"
+            score < berimor_memory::embeddings::BGE_M3_MERGE_THRESHOLD,
+            "несвязанные «{a}» ↔ «{b}» дали косинус {score:.3} (обязано быть ниже калиброванного порога слияния)"
         );
     }
 }

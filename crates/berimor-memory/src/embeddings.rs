@@ -3,11 +3,13 @@
 //!
 //! Доступен только под feature `embeddings` (opt-in: ONNX Runtime и веса
 //! модели не должны попадать в бинарник без явного флага). Модель —
-//! `intfloat/multilingual-e5-small` ([`EmbeddingModel::MultilingualE5Small`]
-//! в fastembed): мультиязычная (русский/английский в одном векторном
-//! пространстве), 384-мерная, CPU-инференс через ONNX Runtime.
+//! `BAAI/bge-m3` ([`EmbeddingModel::BGEM3`] в fastembed): мультиязычная
+//! (русский/английский в одном векторном пространстве), 1024-мерная,
+//! CPU-инференс через ONNX Runtime. Выбор — калибровкой на живых моделях
+//! 2026-08-06 (см. константу [`BGE_M3_MERGE_THRESHOLD`]): e5-small/base
+//! отклонены за неразличимостью перифразы и шума на коротких фактах.
 //!
-//! Инициализация ЛЕНИВАЯ: конструктор не качает ~0.5 ГБ весов и не грузит
+//! Инициализация ЛЕНИВАЯ: конструктор не качает ~2 ГБ весов и не грузит
 //! ONNX-сессию — только первый вызов [`FastEmbedder::embed`]. Это важно для
 //! записного пути `berimor run`: эмбеддинги нужны лишь когда реально
 //! извлеклись факты, а не на каждый запуск с включённой опцией.
@@ -16,10 +18,22 @@ use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-/// Размерность вектора multilingual-e5-small — константа контракта:
-/// `sqlite-vec` таблица фактов создаётся под фиксированную размерность,
-/// смена модели = смена этой константы и реиндексация.
-pub const EMBEDDING_DIM: usize = 384;
+/// Размерность вектора BGE-M3 (dense) — константа контракта.
+///
+/// Калибровка 2026-08-06 на живых моделях (ROADMAP §20.23, прогон
+/// `tests/embeddings_real.rs`, не из карточек): e5-small и e5-base
+/// отклонены — на коротких фактах их пространства анизотропны,
+/// кросс-язычная перифраза неотличима от шума (разрыв 0.003 и 0.045).
+/// BGE-M3 даёт разрыв 0.275: перифразы 0.835–0.957, несвязанные 0.560.
+pub const EMBEDDING_DIM: usize = 1024;
+
+/// Калиброванный порог слияния для BGE-M3 (та же калибровка):
+/// минимум перифраз 0.835, максимум несвязанных 0.560 — порог посередине
+/// с наклоном в безопасную сторону (недо-слияние лучше ложного):
+/// конфликт-детекция структурная (subject+predicate) и не зависит от
+/// этого порога. НЕ путать с `semantic::DEFAULT_SIMILARITY_THRESHOLD`
+/// (0.9 — абстрактный контракт источника близости, не модель).
+pub const BGE_M3_MERGE_THRESHOLD: f32 = 0.75;
 
 /// Кэш весов модели — платформенный каталог данных пользователя плюс
 /// `berimor/embeddings` (та же конвенция, что `plugin_install::
@@ -40,6 +54,8 @@ pub fn default_cache_dir() -> PathBuf {
 /// однопоточный), а про соответствие сигнатуре шва.
 pub struct FastEmbedder {
     cache_dir: PathBuf,
+    model_kind: EmbeddingModel,
+    dim: usize,
     model: Mutex<Option<TextEmbedding>>,
 }
 
@@ -50,12 +66,28 @@ impl FastEmbedder {
         Self::with_cache_dir(default_cache_dir())
     }
 
+    /// Эмбеддер с явным выбором модели и размерности — для калибровки
+    /// (прогон реальных пар) и нестандартных профилей. Размерность — в
+    /// сам текст вектора не зашита (хранилище держит embedding текстом,
+    /// см. berimor-storage DDL), но sqlite-vec запросы обязаны получать
+    /// согласованную размерность — она часть контракта вызова.
+    pub fn with_model(model_kind: EmbeddingModel, dim: usize) -> Self {
+        Self {
+            cache_dir: default_cache_dir(),
+            model_kind,
+            dim,
+            model: Mutex::new(None),
+        }
+    }
+
     /// Эмбеддер с явным каталогом кэша — для тестов и нестандартных
     /// установок (тот же контракт `with_cache_dir`, что у
     /// `verify.rs::build_verifier` для sigstore-кэша).
     pub fn with_cache_dir(cache_dir: PathBuf) -> Self {
         Self {
             cache_dir,
+            model_kind: EmbeddingModel::BGEM3,
+            dim: EMBEDDING_DIM,
             model: Mutex::new(None),
         }
     }
@@ -71,7 +103,7 @@ impl FastEmbedder {
             .lock()
             .map_err(|err| format!("мьютекс эмбеддера отравлен: {err}"))?;
         if guard.is_none() {
-            let options = TextInitOptions::new(EmbeddingModel::MultilingualE5Small)
+            let options = TextInitOptions::new(self.model_kind.clone())
                 .with_cache_dir(self.cache_dir.clone())
                 .with_show_download_progress(false);
             let model = TextEmbedding::try_new(options)
@@ -81,13 +113,19 @@ impl FastEmbedder {
         let model = guard
             .as_mut()
             .expect("модель только что инициализирована выше");
+        // Контракт e5-моделей (intfloat): префикс ОБЯЗАТЕЛЕН — fastembed
+        // его НЕ добавляет (doc-пример lib.rs передаёт «passage: …»
+        // вручную). Без префикса вектора коллапсируют к центру и ЛЮБЫЕ
+        // пары выглядят похожими (прогон реальной модели 2026-08-06:
+        // несвязанная пара дала 0.815). Наша задача — симметричная
+        // дедупликация фактов, обе стороны — документы: «passage: ».
         let mut embeddings = model
-            .embed([text], None)
+            .embed([format!("passage: {text}")], None)
             .map_err(|err| format!("инференс эмбеддинга: {err}"))?;
         let embedding = embeddings
             .pop()
             .ok_or_else(|| "fastembed вернул пустой пакет эмбеддингов".to_string())?;
-        if embedding.len() != EMBEDDING_DIM {
+        if embedding.len() != self.dim {
             return Err(format!(
                 "неожиданная размерность эмбеддинга: {} (ожидалась {EMBEDDING_DIM})",
                 embedding.len()
@@ -129,9 +167,9 @@ mod tests {
     }
 
     /// Контракт размерности зафиксирован — смена модели не должна пройти
-    /// незамеченной (sqlite-vec таблица под 384).
+    /// незамеченной (контракт `EMBEDDING_DIM`).
     #[test]
-    fn embedding_dim_matches_multilingual_e5_small() {
-        assert_eq!(EMBEDDING_DIM, 384);
+    fn embedding_dim_matches_bge_m3_dense() {
+        assert_eq!(EMBEDDING_DIM, 1024);
     }
 }
