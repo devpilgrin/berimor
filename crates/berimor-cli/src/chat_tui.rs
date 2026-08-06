@@ -22,7 +22,9 @@ use crate::config::{self, Config, ProviderConfig};
 use crate::presets::{self, ProviderPreset};
 use crate::run::RunError;
 use crate::setup;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -330,6 +332,7 @@ impl TerminalGuard {
         enable_raw_mode()?;
         let mut stdout = std::io::stdout();
         stdout.execute(EnterAlternateScreen)?;
+        stdout.execute(EnableMouseCapture)?;
         let backend = ratatui::backend::CrosstermBackend::new(stdout);
         Ok(Self(Terminal::new(backend)?))
     }
@@ -338,6 +341,7 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
+        let _ = std::io::stdout().execute(DisableMouseCapture);
         let _ = self.0.backend_mut().execute(LeaveAlternateScreen);
         let _ = self.0.show_cursor();
     }
@@ -392,8 +396,10 @@ fn event_loop(
         }
 
         if event::poll(Duration::from_millis(80)).map_err(|e| RunError::BadInput(e.to_string()))? {
-            if let Event::Key(key) = event::read().map_err(|e| RunError::BadInput(e.to_string()))? {
-                handle_key(app, key);
+            match event::read().map_err(|e| RunError::BadInput(e.to_string()))? {
+                Event::Key(key) => handle_key(app, key),
+                Event::Mouse(mouse) => handle_mouse(app, mouse.kind),
+                _ => {}
             }
         } else if app.busy {
             app.spinner_frame += 1; // тик спиннера по таймауту poll
@@ -1058,6 +1064,27 @@ fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// Мышь (мышь в TUI, remember-кандидат): колесо — прокрутка журнала,
+/// шаг меньше PageUp/Down (3 строки против 10). Семантика scroll как у
+/// клавиатуры: u16::MAX — «прижат к низу» (maybe_follow при рендере).
+fn handle_mouse(app: &mut App, kind: crossterm::event::MouseEventKind) {
+    use crossterm::event::MouseEventKind;
+    match kind {
+        MouseEventKind::ScrollUp => {
+            app.follow_tail = false;
+            app.scroll = app.scroll.saturating_sub(3).min(u16::MAX - 1);
+            if app.scroll == u16::MAX {
+                app.scroll = 0;
+            }
+        }
+        MouseEventKind::ScrollDown => {
+            app.scroll = app.scroll.saturating_add(3);
+            app.follow_tail = false;
+        }
+        _ => {}
+    }
+}
+
 fn draw(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1536,6 +1563,52 @@ mod tests {
 
     /// §20.26: при ширине ≥ 110 рендерится инфо-панель, при узком —
     /// нет (журнал не теряет место).
+    /// Мышь: колесо крутит журнал с той же семантикой, что PageUp/Down.
+    #[test]
+    fn mouse_wheel_scrolls_log() {
+        use crossterm::event::MouseEventKind;
+        let config = Config::default();
+        let (tx, rx) = channel();
+        let mut app = App {
+            config,
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 100,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: Vec::new(),
+            answer_tx: None,
+            tx,
+            rx,
+            done: false,
+        };
+        handle_mouse(&mut app, MouseEventKind::ScrollUp);
+        assert_eq!(app.scroll, 97);
+        assert!(!app.follow_tail);
+        handle_mouse(&mut app, MouseEventKind::ScrollDown);
+        handle_mouse(&mut app, MouseEventKind::ScrollDown);
+        assert_eq!(app.scroll, 103);
+    }
+
     #[test]
     fn side_panel_renders_only_when_wide() {
         use ratatui::backend::TestBackend;
