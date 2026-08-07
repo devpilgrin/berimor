@@ -196,7 +196,8 @@ pub fn run(
             let recovered = engine::recover(storage.as_ref(), process, id)?;
             println!(
                 "[berimor] восстановлен инстанс plugin-install {} (шаг: {:?})",
-                recovered.id.0, recovered.current_step
+                recovered.id().0,
+                recovered.current_step()
             );
             recovered
         }
@@ -216,7 +217,10 @@ pub fn run(
             }});
             let id = ProcessInstanceId(new_plugin_install_instance_id());
             let instance = engine::instantiate(storage.as_ref(), id, process, input)?;
-            println!("[berimor] создан инстанс plugin-install {}", instance.id.0);
+            println!(
+                "[berimor] создан инстанс plugin-install {}",
+                instance.id().0
+            );
             instance
         }
     };
@@ -252,39 +256,22 @@ pub fn run(
                 println!("[berimor] установка плагина завершена");
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&instance.state).expect("состояние сериализуемо")
+                    serde_json::to_string_pretty(instance.state()).expect("состояние сериализуемо")
                 );
                 return Ok(());
             }
             engine::RunOutcome::AwaitingHuman { step_id, reason } => {
-                let resolved_reason = interpolate(&reason, &instance.state);
-                crate::run::audit_append(
-                    storage.as_ref(),
-                    Event::new(
-                        instance.id.clone(),
-                        instance.process.version,
-                        EventKind::HumanGateOpened {
-                            reason: resolved_reason.clone(),
-                        },
-                        Value::Null,
-                    ),
-                );
+                let resolved_reason = interpolate(&reason, instance.state());
+                // 1.15: Opened/Resolved журналирует движок, здесь — только
+                // вопрос человеку (интерполированная причина — показ).
                 if !ask_human(&step_id, &resolved_reason) {
                     println!(
                         "[berimor] остановлено на human_gate '{step_id}'; возобновить: berimor plugin install {repo} --resume {}",
-                        instance.id.0
+                        instance.id().0
                     );
                     return Err(PluginInstallRunError::HumanDeclined);
                 }
-                crate::run::audit_append(
-                    storage.as_ref(),
-                    Event::new(
-                        instance.id.clone(),
-                        instance.process.version,
-                        EventKind::HumanGateResolved,
-                        Value::Null,
-                    ),
-                );
+                // Resolved запишет движок при повторном входе в run (1.15).
             }
         }
     }

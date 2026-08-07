@@ -33,6 +33,7 @@ mod sessions;
 mod setup;
 mod skills;
 mod trust;
+mod tui_mermaid;
 mod verify;
 
 #[derive(Parser)]

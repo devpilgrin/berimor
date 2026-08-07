@@ -352,6 +352,19 @@ pub(crate) fn execute_turn(
         .map_err(|err| bundle.masker.mask_text(&err.to_string()))
 }
 
+/// §20.22 v3: system-заметка модели об изменении наблюдаемого файла.
+fn file_changed_note(envelope: &berimor_storage::Envelope) -> Value {
+    json!({
+        "role": "system",
+        "content": format!(
+            "[уведомление] Файл {}, который вы читали, изменён другой сессией ({} через {}). Если он важен для текущей задачи — перечитайте через files.read.",
+            envelope.payload["path"].as_str().unwrap_or("?"),
+            envelope.payload["by_session"].as_str().unwrap_or("?"),
+            envelope.payload["op"].as_str().unwrap_or("?"),
+        )
+    })
+}
+
 pub(crate) fn cmd_chat(explicit_config: Option<&Path>) -> Result<(), RunError> {
     // Полноэкранный TUI — только на настоящем терминале (§20.14);
     // пайпы/скрипты/e2e — построчный REPL ниже (его поведение не менялось).
@@ -506,6 +519,12 @@ fn run_repl(
                         envelope.payload["by_session"].as_str().unwrap_or("?"),
                         envelope.payload["op"].as_str().unwrap_or("?"),
                     );
+                    // §20.22 v3: модель узнаёт об изменении, а не только
+                    // человек (jcode swarm: «агент B, файл переписан»).
+                    // Перечитать — решает модель через обычный gated
+                    // files.read; сырой diff не инъектируется (граница
+                    // доверия контента).
+                    history.push(file_changed_note(&envelope));
                 } else if envelope.topic == crate::sessions::TOPIC_SESSION_MESSAGE {
                     eprintln!(
                         "[berimor] ✉ {}: {}",
@@ -742,5 +761,28 @@ fn run_repl(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod swarm_note_tests {
+    use super::*;
+
+    /// §20.22 v3: заметка модели несёт путь/сессию/операцию и роль system.
+    #[test]
+    fn file_changed_note_carries_context() {
+        let envelope = berimor_storage::Envelope {
+            id: berimor_storage::EnvelopeId("e-1".into()),
+            from: "sess-b".into(),
+            to: "sess-a".into(),
+            topic: crate::sessions::TOPIC_FILE_CHANGED.into(),
+            payload: json!({"path": "src/main.rs", "by_session": "sess-b", "op": "files.write"}),
+        };
+        let note = file_changed_note(&envelope);
+        assert_eq!(note["role"], "system");
+        let content = note["content"].as_str().unwrap();
+        assert!(content.contains("src/main.rs"));
+        assert!(content.contains("sess-b"));
+        assert!(content.contains("files.read"));
     }
 }

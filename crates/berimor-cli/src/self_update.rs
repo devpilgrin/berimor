@@ -44,9 +44,9 @@ use berimor_process_engine::{
     engine::{self, ExecutorError},
     parser,
 };
-use berimor_storage::{EventLog, SqliteEventLog};
+use berimor_storage::SqliteEventLog;
 use berimor_types::capability::ConfirmationMode;
-use berimor_types::event::{Event, EventKind, ProcessInstanceId};
+use berimor_types::event::ProcessInstanceId;
 use berimor_types::step::{Patch, Step, StepKind};
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
@@ -118,7 +118,8 @@ pub fn run(config: &Config, resume: &Option<String>) -> Result<(), SelfUpdateRun
             let recovered = engine::recover(&storage, process, id)?;
             println!(
                 "[berimor] восстановлен инстанс self-update {} (шаг: {:?})",
-                recovered.id.0, recovered.current_step
+                recovered.id().0,
+                recovered.current_step()
             );
             recovered
         }
@@ -129,7 +130,7 @@ pub fn run(config: &Config, resume: &Option<String>) -> Result<(), SelfUpdateRun
             }});
             let id = ProcessInstanceId(new_self_update_instance_id());
             let instance = engine::instantiate(&storage, id, process, input)?;
-            println!("[berimor] создан инстанс self-update {}", instance.id.0);
+            println!("[berimor] создан инстанс self-update {}", instance.id().0);
             instance
         }
     };
@@ -166,33 +167,22 @@ pub fn run(config: &Config, resume: &Option<String>) -> Result<(), SelfUpdateRun
                 println!("[berimor] self-update завершён");
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&instance.state).expect("состояние сериализуемо")
+                    serde_json::to_string_pretty(instance.state()).expect("состояние сериализуемо")
                 );
                 return Ok(());
             }
             engine::RunOutcome::AwaitingHuman { step_id, reason } => {
-                let resolved_reason = interpolate(&reason, &instance.state);
-                let _ = storage.append(Event::new(
-                    instance.id.clone(),
-                    instance.process.version,
-                    EventKind::HumanGateOpened {
-                        reason: resolved_reason.clone(),
-                    },
-                    Value::Null,
-                ));
+                let resolved_reason = interpolate(&reason, instance.state());
+                // 1.15: Opened/Resolved журналирует движок, здесь — только
+                // вопрос человеку (интерполированная причина — показ).
                 if !ask_human(&step_id, &resolved_reason) {
                     println!(
                         "[berimor] остановлено на human_gate '{step_id}'; возобновить: berimor self-update --resume {}",
-                        instance.id.0
+                        instance.id().0
                     );
                     return Err(SelfUpdateRunError::HumanDeclined);
                 }
-                let _ = storage.append(Event::new(
-                    instance.id.clone(),
-                    instance.process.version,
-                    EventKind::HumanGateResolved,
-                    Value::Null,
-                ));
+                // Resolved запишет движок при повторном входе в run (1.15).
             }
         }
     }
@@ -1340,7 +1330,7 @@ mod tests {
 
         let outcome = engine::run(&storage, &executor, &mut instance).unwrap();
         assert_eq!(outcome, engine::RunOutcome::Finished);
-        assert_eq!(instance.state["check_version"]["is_newer"], false);
+        assert_eq!(instance.state()["check_version"]["is_newer"], false);
 
         handle.join().unwrap();
     }

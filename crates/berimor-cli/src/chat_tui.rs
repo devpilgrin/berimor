@@ -1268,16 +1268,34 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Markdown-lite → ratatui Lines: fenced-блоки (dim), заголовки (cyan),
-/// **полужирный**, `код` (yellow).
+/// **полужирный**, `код` (yellow). Блоки ```mermaid при успешном разборе
+/// отрисовываются диаграммой (ROADMAP §20.26), при ошибке — как обычный
+/// preformatted-блок (фолбэк незаметен для пользователя).
 fn md_lines(text: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut in_code = false;
+    let mut code_lang = String::new();
+    let mut mermaid_buf: Vec<String> = Vec::new();
     for raw in text.lines() {
         if raw.trim_start().starts_with("```") {
+            if in_code {
+                // Закрытие fenced-блока: накопленный mermaid — в отрисовку.
+                if code_lang == "mermaid" {
+                    lines.extend(mermaid_lines(&mermaid_buf.join("\n")));
+                    mermaid_buf.clear();
+                }
+                code_lang.clear();
+            } else {
+                code_lang = raw.trim_start()[3..].trim().to_lowercase();
+            }
             in_code = !in_code;
             continue;
         }
         if in_code {
+            if code_lang == "mermaid" {
+                mermaid_buf.push(raw.to_string());
+                continue;
+            }
             lines.push(Line::from(Span::styled(
                 format!("  {raw}"),
                 Style::default().fg(Color::DarkGray),
@@ -1295,7 +1313,36 @@ fn md_lines(text: &str) -> Vec<Line<'static>> {
         }
         lines.push(inline_spans(raw));
     }
+    // Незакрытый fence: не теряем накопленный mermaid-блок.
+    if in_code && code_lang == "mermaid" && !mermaid_buf.is_empty() {
+        lines.extend(mermaid_lines(&mermaid_buf.join("\n")));
+    }
     lines
+}
+
+/// Mermaid-fence → строки диаграммы; при ошибке разбора — исходный текст
+/// блока как есть (тот же dim-стиль, что и у обычных fenced-блоков).
+fn mermaid_lines(source: &str) -> Vec<Line<'static>> {
+    match crate::tui_mermaid::render_source(source) {
+        Ok(rendered) => rendered
+            .into_iter()
+            .map(|l| {
+                Line::from(Span::styled(
+                    format!("  {l}"),
+                    Style::default().fg(Color::DarkGray),
+                ))
+            })
+            .collect(),
+        Err(_) => source
+            .lines()
+            .map(|l| {
+                Line::from(Span::styled(
+                    format!("  {l}"),
+                    Style::default().fg(Color::DarkGray),
+                ))
+            })
+            .collect(),
+    }
 }
 
 fn inline_spans(text: &str) -> Line<'static> {
@@ -1699,6 +1746,48 @@ mod tests {
         assert!(plain.contains("Заголовок"));
         assert!(plain.contains("code"));
         assert!(!plain.contains("```"));
+    }
+
+    /// ROADMAP §20.26: ```mermaid fence в ответе модели отрисовывается
+    /// диаграммой; при ошибке разбора — сырой блок без изменений.
+    #[test]
+    fn md_lines_renders_mermaid_fence() {
+        let lines = md_lines("текст\n```mermaid\ngraph LR\nA[Старт] --> B[Финиш]\n```\nпосле");
+        let plain: String = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.to_string())
+                    .collect::<String>()
+            })
+            .collect();
+        assert!(plain.contains('▶'), "диаграмма отрисована: {plain}");
+        assert!(plain.contains("Старт"), "метка узла: {plain}");
+        assert!(!plain.contains("graph LR"), "сырой исходник скрыт: {plain}");
+        assert!(
+            plain.contains("после"),
+            "текст после блока на месте: {plain}"
+        );
+    }
+
+    #[test]
+    fn md_lines_mermaid_fallback_keeps_raw_block() {
+        // Битый mermaid: пользователь видит исходник, как раньше.
+        let lines = md_lines("```mermaid\nэто не диаграмма\n```");
+        let plain: String = lines
+            .iter()
+            .map(|l| {
+                l.spans
+                    .iter()
+                    .map(|s| s.content.to_string())
+                    .collect::<String>()
+            })
+            .collect();
+        assert!(
+            plain.contains("это не диаграмма"),
+            "фолбэк на исходник: {plain}"
+        );
     }
 
     /// /skills в TUI: ветка run_command выводит установленные скиллы.

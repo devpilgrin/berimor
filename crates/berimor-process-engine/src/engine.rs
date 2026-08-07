@@ -26,11 +26,15 @@ use std::time::{Duration, Instant};
 /// (ADR-0012).
 #[derive(Debug, Clone)]
 pub struct ProcessInstance {
-    pub id: ProcessInstanceId,
-    pub process: Process,
-    pub state: Value,
+    /// Аудит 1.12б (2026-08-06): поля приватны — ручная сборка литералом
+    /// минуя валидацию больше невозможна. Единственный конструктор —
+    /// [`ProcessInstance::new`], валидирующий граф через
+    /// [`graph::compile`]. Доступ — через акцессоры.
+    id: ProcessInstanceId,
+    process: Process,
+    state: Value,
     /// `None` — инстанс ещё не сделал ни шага (сразу после `instantiate`).
-    pub current_step: Option<String>,
+    current_step: Option<String>,
     /// Техдолг TD1.4 (`docs/audit-2026-07-31.md`): раньше `current_step`
     /// после `resume_after_human_gate_timeout` (политики `Fail`/
     /// `Escalate`) оставался как есть, а `run()` не проверял ничего —
@@ -41,7 +45,52 @@ pub struct ProcessInstance {
     /// — блокировка постоянна до следующего `recover()` с ЖУРНАЛОМ, в
     /// котором это событие перестало быть последним (то есть до нового,
     /// пока не спроектированного механизма разрешения эскалации).
-    pub blocked: Option<String>,
+    blocked: Option<String>,
+}
+
+impl ProcessInstance {
+    /// Единственная ручная сборка инстанса (1.12б): граф валидируется
+    /// `compile` — несогласованный процесс (висячая ветка и т.п.)
+    /// отклоняется ошибкой здесь, а не паникой/ошибкой глубоко в цикле.
+    /// Нормальные пути создания — `instantiate`/`recover`.
+    pub fn new(
+        id: ProcessInstanceId,
+        process: Process,
+        state: Value,
+        current_step: Option<String>,
+        blocked: Option<String>,
+    ) -> Result<Self, EngineError> {
+        graph::compile(&process)?;
+        Ok(Self {
+            id,
+            process,
+            state,
+            current_step,
+            blocked,
+        })
+    }
+
+    pub fn id(&self) -> &ProcessInstanceId {
+        &self.id
+    }
+    pub fn process(&self) -> &Process {
+        &self.process
+    }
+    pub fn state(&self) -> &Value {
+        &self.state
+    }
+    pub fn state_mut(&mut self) -> &mut Value {
+        &mut self.state
+    }
+    pub fn current_step(&self) -> Option<&str> {
+        self.current_step.as_deref()
+    }
+    pub fn set_current_step(&mut self, step: Option<String>) {
+        self.current_step = step;
+    }
+    pub fn blocked(&self) -> Option<&str> {
+        self.blocked.as_deref()
+    }
 }
 
 /// Единственная точка, где движок передаёт исполнение наружу — только для
@@ -323,6 +372,27 @@ pub fn migrate_version(
 /// отбора провайдера на каждом шаге (ADR-0011); проброс из
 /// `ProcessLimits` в `StepExecutor` — дело конкретной реализации трейта
 /// (`berimor-cli::CliExecutor`), не движка.
+/// Аудит 1.15 (перенос в движок, 2026-08-06): последнее гейт-событие
+/// инстанса — незакрытый `HumanGateOpened`? Писатель событий гейта —
+/// ДВИЖОК (единственный): `Opened` пишется при остановке на гейте,
+/// `Resolved` — при повторном входе в `run` (возобновление = ответ
+/// человека «да»; при отказе `run` не вызывается, пары не искажаются).
+fn last_gate_unresolved(
+    storage: &dyn EventLog,
+    instance: &ProcessInstance,
+) -> Result<bool, EngineError> {
+    let events = storage.replay(&instance.id)?;
+    let mut unresolved = false;
+    for event in &events {
+        match &event.kind {
+            EventKind::HumanGateOpened { .. } => unresolved = true,
+            EventKind::HumanGateResolved => unresolved = false,
+            _ => {}
+        }
+    }
+    Ok(unresolved)
+}
+
 pub fn run(
     storage: &dyn EventLog,
     executor: &dyn StepExecutor,
@@ -335,6 +405,27 @@ pub fn run(
             step_id: instance.current_step.clone().unwrap_or_default(),
             reason: reason.clone(),
         });
+    }
+
+    // 1.15: повторный вход в run при инстансе, остановленном НА гейте
+    // (current_step указывает на human_gate — его ставит точка паузы;
+    // при --resume recover восстанавливает последний ПРИМЕНЁННЫЙ шаг,
+    // поэтому свежий resume сюда не попадает и человек будет спрошен
+    // заново) + незакрытый Opened в журнале = человек ответил «да» —
+    // движок смыкает пару. При отказе run не вызывается — Resolved не
+    // пишется, пара не искажается.
+    let paused_at_gate = instance
+        .current_step
+        .as_deref()
+        .and_then(|id| instance.process.steps.iter().find(|s| s.id == id))
+        .is_some_and(|step| matches!(step.kind, StepKind::HumanGate { .. }));
+    if paused_at_gate && last_gate_unresolved(storage, instance)? {
+        storage.append(Event::new(
+            instance.id.clone(),
+            instance.process.version,
+            EventKind::HumanGateResolved,
+            serde_json::Value::Null,
+        ))?;
     }
 
     let mut steps_this_run: u32 = 0;
@@ -441,6 +532,19 @@ fn execute_single_step(
         } => {
             let reason = reason_template.clone();
             instance.current_step = Some(step_id.to_string());
+            // 1.15: Opened пишет движок, один раз на остановку (при
+            // повторной остановке на том же гейте без ответа человека —
+            // не дублируется: пара остаётся сомкнутой).
+            if !last_gate_unresolved(storage, instance)? {
+                storage.append(Event::new(
+                    instance.id.clone(),
+                    instance.process.version,
+                    EventKind::HumanGateOpened {
+                        reason: reason.clone(),
+                    },
+                    serde_json::Value::Null,
+                ))?;
+            }
             return Ok(Some(RunOutcome::AwaitingHuman {
                 step_id: step_id.to_string(),
                 // Резолвинг {{state...}} в шаблоне — забота Context
@@ -670,11 +774,66 @@ mod tests {
         assert!(matches!(err, EngineError::InstanceExists(_)), "{err:?}");
     }
 
+    /// Аудит 1.15 (перенос в движок): Opened пишется движком один раз на
+    /// остановку; повторный run (ответ человека) смыкает пару Resolved.
+    #[test]
+    fn gate_events_written_by_engine_once_and_closed_on_resume() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let process = parse(
+            r#"process: gate-115
+version: 1
+steps:
+  - id: ask
+    type: human_gate
+    reason: "подтвердите действие"
+  - id: done
+    type: tool
+    tool: t
+limits:
+  max_steps: 10
+  timeout: 5m
+"#,
+        )
+        .unwrap();
+        let id = ProcessInstanceId("i-1-15".into());
+        let mut instance = instantiate(&storage, id.clone(), process.clone(), json!({})).unwrap();
+        let executor = FakeExecutor { risk: 1 };
+        // Первая остановка — ровно один Opened, Resolved ещё нет.
+        let paused = run(&storage, &executor, &mut instance).unwrap();
+        assert!(matches!(paused, RunOutcome::AwaitingHuman { .. }));
+        let events = storage.replay(&id).unwrap();
+        let opened = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::HumanGateOpened { .. }))
+            .count();
+        let resolved = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::HumanGateResolved))
+            .count();
+        assert_eq!(opened, 1, "ровно один Opened: {events:?}");
+        assert_eq!(resolved, 0, "Resolved до ответа человека: {events:?}");
+        // Ответ «да» = следующий run → движок пишет Resolved при входе и
+        // идёт дальше (продолжение упадёт на неизвестном инструменте
+        // FakeExecutor'у — нам важно событие, не исход).
+        let _ = run(&storage, &executor, &mut instance);
+        let events = storage.replay(&id).unwrap();
+        let opened = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::HumanGateOpened { .. }))
+            .count();
+        let resolved = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::HumanGateResolved))
+            .count();
+        assert_eq!(opened, 1, "второго Opened нет: {events:?}");
+        assert_eq!(resolved, 1, "ровно один Resolved: {events:?}");
+    }
+
     /// Аудит 1.12 (шаг а): инстанс, собранный вручную минуя compile с
     /// веткой на несуществующий шаг, — честная ошибка, не паника expect.
     #[test]
     fn hand_built_instance_with_dangling_branch_errors_not_panics() {
-        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let _storage = SqliteEventLog::open_in_memory().unwrap();
         let process = parse(
             r#"process: hand-built
 version: 1
@@ -691,19 +850,18 @@ limits:
         )
         .unwrap();
         // Ручная сборка минуя compile: ветка ведёт на шаг, которого нет
-        // в графе — compile бы это отклонил, поля публичны (1.12).
-        let mut instance = ProcessInstance {
-            id: ProcessInstanceId("i-1-12".into()),
+        // в графе — compile бы это отклонил.
+        let err = ProcessInstance::new(
+            ProcessInstanceId("i-1-12".into()),
             process,
-            state: json!({"flag": "go"}),
-            current_step: None,
-            blocked: None,
-        };
-        let executor = FakeExecutor { risk: 1 };
-        let err = run(&storage, &executor, &mut instance).unwrap_err();
+            json!({"flag": "go"}),
+            None,
+            None,
+        )
+        .unwrap_err();
         assert!(
-            matches!(err, EngineError::InvalidInstance { .. }),
-            "ожидалась InvalidInstance, не паника и не иная ошибка: {err:?}"
+            matches!(err, EngineError::Graph(_)),
+            "1.12б: new() отклоняет несогласованный граф на сборке: {err:?}"
         );
     }
 

@@ -128,7 +128,8 @@ pub fn run(
             let recovered = engine::recover(&storage, process, id)?;
             println!(
                 "[berimor] восстановлен инстанс {} (шаг: {:?})",
-                recovered.id.0, recovered.current_step
+                recovered.id().0,
+                recovered.current_step()
             );
             recovered
         }
@@ -148,7 +149,7 @@ pub fn run(
             let input_json = bundle.masker.mask_value(&input_json);
             let id = ProcessInstanceId(new_instance_id(&process_text));
             let instance = engine::instantiate(&storage, id, process, input_json)?;
-            println!("[berimor] создан инстанс {}", instance.id.0);
+            println!("[berimor] создан инстанс {}", instance.id().0);
             instance
         }
     };
@@ -159,13 +160,13 @@ pub fn run(
     // рядом с журналом; flock снимается ядром при смерти процесса.
     let locks_dir = std::path::PathBuf::from(format!("{}.locks", config.storage_path.display()));
     let _instance_lease =
-        berimor_process_engine::instance_lock::try_acquire_file_lease(&locks_dir, &instance.id)
+        berimor_process_engine::instance_lock::try_acquire_file_lease(&locks_dir, instance.id())
             .map_err(|err| RunError::InstanceLease(err.to_string()))?;
 
     // Телеметрия Mediation (M7) — события в тот же журнал; свёртка их
     // игнорирует, аудит-след их видит (security-model.md §5).
-    let instance_id = instance.id.clone();
-    let process_version = instance.process.version;
+    let instance_id = instance.id().clone();
+    let process_version = instance.process().version;
     let on_attempt = |kind: EventKind| {
         audit_append(
             &storage,
@@ -232,7 +233,7 @@ pub fn run(
         llm: &llm,
         agent_step: &agent_step,
         codeact: &codeact,
-        latency_budget_ms: instance.process.limits.latency_budget_ms,
+        latency_budget_ms: instance.process().limits.latency_budget_ms,
         masker: bundle.masker.as_ref(),
     };
 
@@ -243,7 +244,7 @@ pub fn run(
                 println!("[berimor] процесс завершён");
                 println!(
                     "{}",
-                    serde_json::to_string_pretty(&instance.state).expect("состояние сериализуемо")
+                    serde_json::to_string_pretty(instance.state()).expect("состояние сериализуемо")
                 );
                 // Записной путь памяти (memory-model.md §2/§4, opt-in):
                 // извлечение фактов из финального состояния.
@@ -261,40 +262,21 @@ pub fn run(
             engine::RunOutcome::AwaitingHuman { step_id, reason } => {
                 let resolved_reason = bundle
                     .masker
-                    .mask_text(&interpolate(&reason, &instance.state));
-                // 1.15: при --resume после остановки на гейте второй
-                // Opened не пишем — пара остаётся сомкнутой.
-                if !has_unresolved_gate_opened(&storage, &instance.id) {
-                    audit_append(
-                        &storage,
-                        Event::new(
-                            instance.id.clone(),
-                            instance.process.version,
-                            EventKind::HumanGateOpened {
-                                reason: resolved_reason.clone(),
-                            },
-                            Value::Null,
-                        ),
-                    );
-                }
+                    .mask_text(&interpolate(&reason, instance.state()));
+                // 1.15 (перенос в движок): Opened/Resolved журналирует
+                // engine::run — CLI только спрашивает человека. Причина в
+                // событии движка — шаблон (интерполяция — слой контекста);
+                // человеку показываем интерполированную, как и раньше.
                 if !ask_human(&step_id, &resolved_reason) {
                     println!(
                         "[berimor] остановлено на human_gate '{step_id}'; возобновить: berimor run {process_path} --resume {}",
-                        instance.id.0
+                        instance.id().0
                     );
                     return Err(RunError::HumanDeclined);
                 }
-                audit_append(
-                    &storage,
-                    Event::new(
-                        instance.id.clone(),
-                        instance.process.version,
-                        EventKind::HumanGateResolved,
-                        Value::Null,
-                    ),
-                );
                 // «Ответ возобновляет выполнение» (process-engine.md §5) —
-                // повторный run с того же current_step.
+                // повторный run с того же current_step; Resolved запишет
+                // движок при входе (1.15).
             }
         }
     }
@@ -826,7 +808,7 @@ fn extract_and_store_facts(
         "extract_facts",
         FactProposalBatch::NAME,
         ModelTierRequirement::Weak,
-        &instance.state,
+        instance.state(),
         None,
     ) {
         Ok(patch) => patch,
@@ -956,8 +938,8 @@ fn extract_and_store_facts(
                 audit_append(
                     storage,
                     Event::new(
-                        instance.id.clone(),
-                        instance.process.version,
+                        instance.id().clone(),
+                        instance.process().version,
                         EventKind::MemoryConflict {
                             detail: detail.clone(),
                         },
@@ -1096,28 +1078,7 @@ impl Drop for SessionCloseGuard {
     }
 }
 
-/// Аудит 1.15 (дешёвая мера): у инстанса уже есть НЕЗАКРЫТЫЙ
-/// HumanGateOpened (последнее гейт-событие — Opened, не Resolved) —
-/// например, `--resume` после остановки на гейте: повторный Opened не
-/// пишем, пары Opened/Resolved в online_metrics не искажаются.
-/// Полный перенос журналирования гейта в движок — дизайн-задача,
-/// задокументирована в ROADMAP рядом с 1.15.
-fn has_unresolved_gate_opened(storage: &SqliteEventLog, instance_id: &ProcessInstanceId) -> bool {
-    let Ok(events) = storage.replay(instance_id) else {
-        return false; // журнал нечитаем — не блокируем запись
-    };
-    let mut opened_unresolved = false;
-    for event in &events {
-        match &event.kind {
-            EventKind::HumanGateOpened { .. } => opened_unresolved = true,
-            EventKind::HumanGateResolved => opened_unresolved = false,
-            _ => {}
-        }
-    }
-    opened_unresolved
-}
-
-/// Разрешение ключа провайдера (§20.25): `auth = "oauth"` — access-токен
+/// Разрешение ключа провайдера
 /// из OAuth-профиля реестра с прозрачным refresh (ADR-0027); иначе —
 /// api_key_env из окружения. Оба пути регистрируют значение в маскировщике.
 fn resolve_provider_key(
@@ -1210,58 +1171,5 @@ mod oauth_wiring_tests {
             .expect("ключ из env");
         assert_eq!(key.reveal(), "test-key-value-123");
         unsafe { std::env::remove_var("BERIMOR_TEST_KEY_ENV") };
-    }
-}
-
-#[cfg(test)]
-mod gate_dedup_tests {
-    use super::*;
-
-    fn gate_journal(events: &[EventKind]) -> SqliteEventLog {
-        let journal = SqliteEventLog::open_in_memory().unwrap();
-        for kind in events {
-            journal
-                .append(Event::new(
-                    ProcessInstanceId("i-gate".into()),
-                    1,
-                    kind.clone(),
-                    Value::Null,
-                ))
-                .unwrap();
-        }
-        journal
-    }
-
-    /// 1.15: незакрытый Opened — дедупликация активна (resume не пишет второй).
-    #[test]
-    fn unresolved_opened_is_detected() {
-        let journal = gate_journal(&[EventKind::HumanGateOpened {
-            reason: "подтвердите".into(),
-        }]);
-        assert!(has_unresolved_gate_opened(
-            &journal,
-            &ProcessInstanceId("i-gate".into())
-        ));
-    }
-
-    /// Сомкнутая пара — дедупликации нет (новая остановка пишет Opened).
-    #[test]
-    fn resolved_pair_is_not_unresolved() {
-        let journal = gate_journal(&[
-            EventKind::HumanGateOpened {
-                reason: "первый".into(),
-            },
-            EventKind::HumanGateResolved,
-        ]);
-        assert!(!has_unresolved_gate_opened(
-            &journal,
-            &ProcessInstanceId("i-gate".into())
-        ));
-        // И пустой журнал — тоже нет.
-        let empty = gate_journal(&[]);
-        assert!(!has_unresolved_gate_opened(
-            &empty,
-            &ProcessInstanceId("i-gate".into())
-        ));
     }
 }
