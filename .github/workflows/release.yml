@@ -237,10 +237,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # --ignore-scripts: dist/ ещё не собран на свежем чекауте —
-          # postinstall (`node dist/postinstall.js`) упал бы на
-          # отсутствующем файле (тот же порядок, что ci.yml's bootstrap
-          # job и bootstrap/README.md уже требуют для локальной разработки).
+          # --ignore-scripts: гигиена на свежем чекауте (dist/ ещё не
+          # собран); install-скриптов у пакета нет вовсе (убраны 0.24.1 —
+          # класс замечаний Socket.dev закрыт структурно, не документацией).
           npm ci --ignore-scripts
           npm sbom --sbom-format cyclonedx > "../release-assets/bootstrap-${TAG#v}.cdx.json"
 
@@ -335,9 +334,8 @@ jobs:
         run: |
           set -euo pipefail
           npm pkg set version="${TAG#v}"
-          # --ignore-scripts: тот же порядок, что и у шага SBOM выше —
-          # dist/ ещё не собран здесь, postinstall упал бы (pre-existing
-          # пробел D3, найден и исправлен по ходу D7, не новый регресс).
+          # --ignore-scripts: тот же порядок, что и у шага SBOM выше
+          # (гигиена; install-скриптов нет с 0.24.1).
           npm ci --ignore-scripts
           npm run build
           npm publish --access public --provenance

@@ -28,12 +28,12 @@ npm test    # node:test, встроенный в Node ≥20 — новых dev-�
 
 ## Локальная разработка
 
-`postinstall` запускает `dist/postinstall.js`, поэтому при первом клоне репозитория нужна сборка до `npm install` от зависимостей:
+Life-cycle скриптов у пакета нет (postinstall убран в 0.24.1 — класс
+замечаний Socket.dev закрыт структурно). При первом клоне достаточно:
 
 ```sh
-npm install --ignore-scripts
+npm install
 npm run build
-npm install   # теперь postinstall находит dist/ и проходит
 ```
 
-В опубликованном пакете `dist/` уже собран и входит в тарбол — этот порядок нужен только локально, до первого `npm run build`.
+В опубликованном пакете `dist/` уже собран и входит в тарбол.
