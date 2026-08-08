@@ -110,14 +110,41 @@ pub struct MemoryConfig {
     #[serde(default)]
     pub fact_extraction: bool,
     /// Семантическая близость фактов на эмбеддингах (ROADMAP §20.23):
-    /// при `true` И сборке с `--features embeddings` дедупликация
-    /// использует `VectorSimilarity` с fastembed
-    /// (intfloat/multilingual-e5-small, 384-dim) вместо `NoSimilarity`,
-    /// а новые факты сохраняются с эмбеддингом для sqlite-vec. Default
-    /// `false`: поведение прежнее — дедупликация только по точному хэшу,
+    /// при `true` И сборке с `--features embeddings` — на записи:
+    /// дедупликация использует `VectorSimilarity` с fastembed
+    /// (`BAAI/bge-m3`, 1024-мерный), новые факты сохраняются с
+    /// эмбеддингом для sqlite-vec; на чтении (prompt-next-wave.md задача
+    /// 1): слой `Facts` контекста ищет релевантные факты через
+    /// `SemanticStore::hybrid_search`. Default `false`: поведение прежнее
+    /// — дедупликация только по точному хэшу, слой Facts отсутствует,
     /// модель не скачивается.
     #[serde(default)]
     pub embeddings: bool,
+    /// Верхняя граница числа фактов в слое `Facts` за один запрос
+    /// (аналог `session_search_limit`).
+    pub facts_search_limit: usize,
+}
+
+/// `berimor serve` (prompt-next-wave.md задача 2): HTTP-сервис поверх
+/// существующих операций CLI. Токен — ИМЯ переменной окружения, не
+/// значение (тот же принцип, что `ProviderConfig::api_key_env`,
+/// `security-model.md` §6: секреты не хранятся в файле конфигурации).
+/// `token_env: None` — `berimor serve` отказывается стартовать (I2:
+/// исполнение процессов по сети не бывает анонимным по умолчанию).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ServeConfig {
+    pub port: u16,
+    pub token_env: Option<String>,
+}
+
+impl Default for ServeConfig {
+    fn default() -> Self {
+        Self {
+            port: 8787,
+            token_env: None,
+        }
+    }
 }
 
 impl Default for MemoryConfig {
@@ -128,6 +155,7 @@ impl Default for MemoryConfig {
             entity_graph: false,
             fact_extraction: false,
             embeddings: false,
+            facts_search_limit: 5,
         }
     }
 }
@@ -174,6 +202,8 @@ pub struct Config {
     /// `.berimor-allow` в корне области (пишет модал «для проекта»).
     #[serde(default)]
     pub auto_confirm: Vec<String>,
+    #[serde(default)]
+    pub serve: ServeConfig,
 }
 
 impl Default for Config {
@@ -188,6 +218,7 @@ impl Default for Config {
             mcp_servers: Vec::new(),
             secret_envs: Vec::new(),
             auto_confirm: Vec::new(),
+            serve: ServeConfig::default(),
         }
     }
 }
@@ -233,6 +264,7 @@ pub struct PartialConfig {
     pub secret_envs: Vec<String>,
     #[serde(default)]
     pub auto_confirm: Vec<String>,
+    pub serve: Option<ServeConfig>,
 }
 
 impl PartialConfig {
@@ -342,6 +374,7 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
         mcp_servers: merge_named(global.mcp_servers, local.mcp_servers, |s| s.name.clone()),
         secret_envs,
         auto_confirm,
+        serve: local.serve.or(global.serve).unwrap_or(defaults.serve),
     }
 }
 

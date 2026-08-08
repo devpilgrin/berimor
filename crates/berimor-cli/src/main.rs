@@ -15,6 +15,7 @@ mod agents;
 mod builtin_dispatch;
 mod catalog;
 mod chat;
+mod chat_compaction;
 mod chat_history;
 mod chat_tui;
 mod chat_ui;
@@ -22,6 +23,7 @@ mod config;
 mod daemon;
 mod ext_cmd;
 mod mcp_dispatch;
+mod memory;
 mod oauth;
 mod observe;
 mod plugin_install;
@@ -29,6 +31,7 @@ mod plugin_runtime;
 mod presets;
 mod run;
 mod self_update;
+mod serve;
 mod sessions;
 mod setup;
 mod skills;
@@ -97,6 +100,21 @@ enum Command {
     },
     /// Живые сессии хоста — реестр на общем журнале (§20.22 v2).
     Sessions,
+    /// HTTP-сервис поверх run/schedule/sessions (prompt-next-wave.md
+    /// задача 2). Требует `[serve] token_env` в конфиге — без него не
+    /// стартует (I2, не анонимный доступ к исполнению процессов).
+    Serve {
+        /// Переопределить порт из конфига.
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    /// Память: консолидация семантических дублей (prompt-next-wave.md
+    /// задача 3). Требует `[memory] embeddings = true` и сборки с
+    /// `--features embeddings`.
+    Memory {
+        #[command(subcommand)]
+        action: MemoryAction,
+    },
     /// Демон расписаний: исполняет due-процессы тик за тиком (§20.22).
     Daemon {
         /// Один тик и выход (для cron и ручного запуска).
@@ -160,6 +178,14 @@ enum Command {
         /// Директория с `process.yaml` и `<сценарий>.json` файлами входа.
         golden_dir: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum MemoryAction {
+    /// Найти и слить семантически близкие дубли фактов (порог 0.75).
+    /// Ничего не удаляется молча — каждое слияние журналируется
+    /// событием `FactsConsolidated` (`berimor trace`).
+    Consolidate,
 }
 
 #[derive(Subcommand)]
@@ -321,6 +347,20 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
+        Command::Serve { port } => {
+            if let Err(err) = serve::run(&resolved_config, port) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Command::Memory { action } => match action {
+            MemoryAction::Consolidate => {
+                if let Err(err) = memory::consolidate(&resolved_config) {
+                    eprintln!("[berimor] {err}");
+                    return ExitCode::FAILURE;
+                }
+            }
+        },
         Command::Chat => {
             // Chat грузит конфиг сам — и перегружает после /models add
             // (§20.12): resolved_config выше не используется.

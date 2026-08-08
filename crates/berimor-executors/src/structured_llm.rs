@@ -13,7 +13,7 @@
 use berimor_context_engine::ContextBuilder;
 use berimor_mediation::{
     commit::CommitOutcome,
-    contracts::{ChatReply, ClassificationOut, FactProposalBatch, SupportReply},
+    contracts::{ChatReply, ClassificationOut, FactProposalBatch, HistorySummary, SupportReply},
     pipeline::{self, PolicyRules},
     policy,
 };
@@ -178,6 +178,28 @@ pub fn contract_registry() -> &'static [ContractAdapter] {
             policy_rules: PolicyRules::default,
             mediate: |step_id, raw, state, tier, rules, attempt, trace| {
                 pipeline::mediate_traced::<ChatReply>(
+                    step_id, raw, state, tier, rules, attempt, trace,
+                )
+            },
+        },
+        // Компакция ленты чата (prompt-next-wave.md задача 4): одна
+        // суммаризация на срез старых ходов, не связана с текущим `goal`
+        // хода — ссылок на состояние не объявляет.
+        ContractAdapter {
+            name: HistorySummary::NAME,
+            schema_version: HistorySummary::SCHEMA_VERSION,
+            json_schema: || {
+                serde_json::to_value(schemars::schema_for!(HistorySummary))
+                    .expect("схема derive-типа всегда сериализуема")
+            },
+            example: || {
+                serde_json::json!({
+                    "summary": "Пользователь просил создать файл конфигурации и починить тест; оба действия выполнены."
+                })
+            },
+            policy_rules: PolicyRules::default,
+            mediate: |step_id, raw, state, tier, rules, attempt, trace| {
+                pipeline::mediate_traced::<HistorySummary>(
                     step_id, raw, state, tier, rules, attempt, trace,
                 )
             },

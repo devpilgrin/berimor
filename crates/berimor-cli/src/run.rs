@@ -11,7 +11,7 @@
 use crate::config::Config;
 use crate::mcp_dispatch::{CompositeToolDispatch, McpToolDispatch};
 use berimor_capability::confirm::{StandardCapability, ToolPolicy};
-use berimor_context_engine::memory_builder::MemoryContextBuilder;
+use berimor_context_engine::memory_builder::{FactsSource, MemoryContextBuilder};
 use berimor_executors::{
     agent_step::AgentStepExecutor,
     codeact::{CodeActExecutor, WasmHost},
@@ -174,6 +174,10 @@ pub fn run(
         );
     };
 
+    // prompt-next-wave.md задача 1: замыкание должно жить не короче
+    // memory_context, поэтому строится ДО и в том же стековом кадре, не
+    // внутри выражения ниже.
+    let facts_embed = facts_embed_fn(config.memory.embeddings);
     let memory_context = MemoryContextBuilder {
         episodic: &storage,
         skills: &bundle.skills,
@@ -182,6 +186,11 @@ pub fn run(
             .memory
             .entity_graph
             .then_some(&storage as &dyn berimor_storage::EntityGraphStore),
+        facts: facts_embed.as_deref().map(|embed| FactsSource {
+            store: &storage,
+            embed,
+            limit: config.memory.facts_search_limit,
+        }),
         // HIGH ревью §20.5: контент слоя маскируется тем же реестром,
         // что вывод инструментов и подтверждения.
         masker: Some(bundle.masker.as_ref()),
@@ -782,6 +791,42 @@ fn extract_facts_with_similarity(
 /// Эмбеддер для записи вектора нового факта — шов той же формы, что у
 /// `semantic::VectorSimilarity::embed`.
 type EmbedFn<'a> = dyn Fn(&str) -> Vec<f32> + 'a;
+
+/// Владеющий (boxed) эмбеддер для ЧТЕНИЯ — см. [`facts_embed_fn`].
+type OwnedReadEmbedFn = Box<dyn Fn(&str) -> Result<Vec<f32>, String>>;
+
+/// Эмбеддер для ЧТЕНИЯ (слой `Facts`, prompt-next-wave.md задача 1) —
+/// в отличие от [`EmbedFn`] (запись), возвращает `Result`: ошибка здесь
+/// обязана дойти до `facts_layer` как ВИДИМАЯ (не молчаливый пустой
+/// вектор) — оператор с `[memory] embeddings = true` должен узнать, что
+/// слой фактически не читается, а не решить, что фактов просто нет.
+///
+/// Замыкание владеет эмбеддером (`move`), а не заимствует его — иначе
+/// нельзя было бы вернуть `Box<dyn Fn>` из этой функции с временем жизни
+/// дольше стекового кадра вызывающего кода (`FastEmbedder` больше нигде
+/// не нужен после сборки замыкания).
+///
+/// `None` — эмбеддинги выключены в конфиге ИЛИ бинарник собран без
+/// `--features embeddings` (в последнем случае, если конфиг включён,
+/// печатает предупреждение — тот же UX, что у `extract_facts_with_similarity`).
+#[cfg(feature = "embeddings")]
+pub(crate) fn facts_embed_fn(use_embeddings: bool) -> Option<OwnedReadEmbedFn> {
+    if !use_embeddings {
+        return None;
+    }
+    let embedder = berimor_memory::embeddings::FastEmbedder::new();
+    Some(Box::new(move |text: &str| embedder.embed(text)))
+}
+
+#[cfg(not(feature = "embeddings"))]
+pub(crate) fn facts_embed_fn(use_embeddings: bool) -> Option<OwnedReadEmbedFn> {
+    if use_embeddings {
+        eprintln!(
+            "[berimor] память: [memory] embeddings = true проигнорирован для слоя Facts — бинарник собран без --features embeddings"
+        );
+    }
+    None
+}
 
 /// Конвейер «модель предлагает факты → Mediation → дедупликация/конфликт
 /// → запись» поверх уже выбранного источника близости (`similarity` —

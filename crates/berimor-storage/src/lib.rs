@@ -495,6 +495,12 @@ pub trait SemanticStore {
         query_embedding: &[f32],
         limit: usize,
     ) -> Result<Vec<HybridHit>, StorageError>;
+    /// Удаляет факт целиком (prompt-next-wave.md задача 3, консолидация
+    /// памяти: слияние близких дублей физически убирает поглощённые
+    /// записи, не оставляет их висеть неограниченно). Неизвестный id —
+    /// не ошибка (то же соглашение, что `ScheduleStore::cancel_schedule`):
+    /// повторная консолидация того же факта идемпотентна.
+    fn delete_fact(&self, id: &str) -> Result<(), StorageError>;
 }
 
 fn embedding_to_json(embedding: &[f32]) -> String {
@@ -633,6 +639,13 @@ impl SemanticStore for SqliteEventLog {
         hits.sort_by(|a, b| b.combined_score.total_cmp(&a.combined_score));
         hits.truncate(limit);
         Ok(hits)
+    }
+
+    fn delete_fact(&self, id: &str) -> Result<(), StorageError> {
+        let conn = self.lock()?;
+        conn.execute("DELETE FROM facts WHERE id = ?1", params![id])?;
+        conn.execute("DELETE FROM facts_fts WHERE fact_id = ?1", params![id])?;
+        Ok(())
     }
 }
 
@@ -1357,6 +1370,45 @@ mod tests {
 
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].object, "Париж");
+    }
+
+    #[test]
+    fn delete_fact_removes_it_from_all_facts() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_fact(
+            &fact("f-1", "клиент c-1", "живёт_в", "Москва"),
+            Some(&[1.0, 0.0, 0.0]),
+        )
+        .unwrap();
+        log.upsert_fact(&fact("f-2", "клиент c-2", "живёт_в", "Тверь"), None)
+            .unwrap();
+
+        log.delete_fact("f-1").unwrap();
+
+        let facts = log.all_facts().unwrap();
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].id, "f-2");
+    }
+
+    #[test]
+    fn delete_fact_of_unknown_id_is_not_an_error() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        assert!(log.delete_fact("no-such-fact").is_ok());
+    }
+
+    #[test]
+    fn delete_fact_also_removes_it_from_fts_index() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        log.upsert_fact(&fact("f-1", "клиент c-1", "живёт_в", "Москва"), None)
+            .unwrap();
+
+        log.delete_fact("f-1").unwrap();
+
+        // Косвенно: hybrid_search по тексту, который раньше матчился бы
+        // через FTS, теперь не находит ничего (ни вектором, ни текстом —
+        // факта нет вовсе).
+        let hits = log.hybrid_search("Москва", &[1.0, 0.0, 0.0], 10).unwrap();
+        assert!(hits.is_empty());
     }
 
     #[test]

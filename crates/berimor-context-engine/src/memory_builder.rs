@@ -4,12 +4,14 @@
 //! `berimor run` (ROADMAP: пункт «интеграция», не отдельная буква фазы —
 //! см. `.remember/remember.md`).
 //!
-//! Facts (семантическая память) и Personality/Project сюда сознательно не
-//! входят: `Facts` требует эмбеддинг-запрос (`SemanticStore::hybrid_search`),
-//! а провайдера эмбеддингов в системе нет; Personality/Project требуют
-//! понятия профиля/арендатора, которого нет в конфигурации CLI. Оба —
-//! задокументированный пробел, не забытая строка (тот же класс, что
-//! `token_budget`/`cost_budget` в P6).
+//! Facts (семантическая память, `SemanticStore::hybrid_search`) подключён
+//! (prompt-next-wave.md задача 1) — опционально, `Some`/`None` на
+//! [`FactsSource`] решает вызывающий код по наличию эмбеддера (`[memory]
+//! embeddings` + фича `embeddings`), см. `facts_layer`. Personality/Project
+//! сюда по-прежнему сознательно не входят: требуют понятия профиля/
+//! арендатора, которого нет в конфигурации CLI — задокументированный
+//! пробел, не забытая строка (тот же класс, что `token_budget`/
+//! `cost_budget` в P6).
 
 use crate::{assemble, base_layer, layers_for_step, ContextBuilder, ContextLayer, LayerKind};
 
@@ -24,9 +26,38 @@ fn contains_token(haystack: &str, needle: &str) -> bool {
     })
 }
 use berimor_memory::{episodic, procedural::SkillSummary};
-use berimor_storage::{EntityGraphStore, EpisodicSearch};
+use berimor_storage::{EntityGraphStore, EpisodicSearch, SemanticStore};
 use berimor_types::model::ModelTier;
 use serde_json::Value;
+
+/// Источник семантического поиска по фактам (слой `Facts`,
+/// `memory-model.md` §3, `SemanticStore::hybrid_search`). `embed` — тот
+/// же шов, что у `semantic::VectorSimilarity::embed` (закрытие от
+/// конкретного провайдера эмбеддингов — эта крейта не зависит от
+/// `berimor-memory::embeddings`/fastembed, вызывающий код собирает
+/// замыкание за флагом `embeddings`), но возвращает `Result`, а не
+/// проглатывает ошибку в пустой вектор: сбой эмбеддера/хранилища здесь
+/// обязан быть ВИДИМ (см. `facts_layer`), тогда как на записи (run.rs)
+/// ошибка эмбеддинга нового факта не блокирует запись самого факта —
+/// разные последствия сбоя, разный контракт шва.
+pub struct FactsSource<'a> {
+    pub store: &'a dyn SemanticStore,
+    pub embed: &'a dyn Fn(&str) -> Result<Vec<f32>, String>,
+    /// Верхняя граница числа фактов в слое за один запрос (аналог
+    /// `session_search_limit`).
+    pub limit: usize,
+}
+
+/// Минимальный `HybridHit::combined_score` для включения факта в слой
+/// (см. doc-комментарий `facts_layer` — найдено e2e-прогоном на реальной
+/// модели, не теоретическая предосторожность). Значение — код-константа
+/// этого слоя, независимая от калибровки конкретной модели эмбеддингов
+/// (эта крейта не зависит от `berimor-memory::embeddings`): с запасом
+/// ниже наблюдённого нижней границы перифраз (~0.58) и выше наблюдённой
+/// верхней границы несвязанных пар (~0.39) для BGE-M3 — та же логика
+/// «стартовая константа кода до дальнейшей калибровки», что у
+/// `DEFAULT_SIMILARITY_THRESHOLD`/`budget_chars` в этом же workspace.
+const MIN_RELEVANCE_SCORE: f32 = 0.5;
 
 /// Построитель поверх уже открытого журнала (тот же `SqliteEventLog`, что
 /// и процесс-журнал — `EpisodicSearch` реализован на нём напрямую,
@@ -42,6 +73,12 @@ pub struct MemoryContextBuilder<'a> {
     /// «Включается профилем процесса, не глобально» — решение принимает
     /// вызывающий код (конфигурация), не построитель.
     pub entity_graph: Option<&'a dyn EntityGraphStore>,
+    /// Семантический поиск по фактам (слой `Facts`, prompt-next-wave.md
+    /// задача 1) — `None` тогда и только тогда, когда эмбеддинги
+    /// недоступны (`[memory] embeddings = false` ИЛИ бинарник собран без
+    /// `--features embeddings`): деградация тихая, слоя просто нет
+    /// (§3.5 уже опирался на это для Facts до этой задачи).
+    pub facts: Option<FactsSource<'a>>,
     /// Реестр секретов запуска (S5): контент слоя графа маскируется
     /// перед попаданием в контекст — записано оно может быть ВНЕ
     /// контрактов Mediation (контрактных продюсеров графа пока нет,
@@ -63,6 +100,7 @@ impl ContextBuilder for MemoryContextBuilder<'_> {
             .filter_map(|kind| {
                 let layer = match kind {
                     LayerKind::Skills => self.skills_layer(),
+                    LayerKind::Facts => self.facts_layer(task_hint, state),
                     LayerKind::Session => self.session_layer(task_hint),
                     LayerKind::EntityGraph => self.entity_layer(task_hint, state),
                     other => base_layer(other, state),
@@ -92,6 +130,107 @@ impl MemoryContextBuilder<'_> {
             .join("\n");
         Some(ContextLayer {
             name: "skills".into(),
+            content,
+            weight: 1.0,
+        })
+    }
+
+    /// Слой `Facts` (prompt-next-wave.md задача 1, `memory-model.md` §3):
+    /// релевантные факты семантической памяти для текущего запроса,
+    /// найденные `SemanticStore::hybrid_search` (вектор + полнотекст).
+    ///
+    /// Запрос — `state.goal`, если это непустая строка (так собирает
+    /// состояние `berimor chat`: `{"goal": <сообщение пользователя>,
+    /// ...}` — именно оно и есть «текущее сообщение пользователя», а не
+    /// `task_hint`, который для чата сегодня — фиксированная строка
+    /// `"chat"`, не текст сообщения); иначе — `task_hint` (тот же сигнал,
+    /// что уже использует `session_layer`/`entity_layer`, разумный
+    /// запрос для процессных шагов вне чата).
+    ///
+    /// `self.facts: None` — тихая деградация (эмбеддинги не
+    /// сконфигурированы или бинарник собран без фичи — решение принято
+    /// ДО вызова этого метода, см. `FactsSource`). Если источник ЕСТЬ, но
+    /// эмбеддер/хранилище реально отказали — предупреждение в stderr, не
+    /// молчание (иначе оператор с включённой опцией никогда не узнает,
+    /// что память фактически не читается).
+    ///
+    /// Найдено РЕАЛЬНЫМ e2e-прогоном (не догадкой): `hybrid_search`
+    /// возвращает TOP-`limit` результатов БЕЗ отсечки по релевантности
+    /// (её контракт — «не более limit», не «релевантные»). С одним
+    /// фактом в базе он попадал бы в контекст на ЛЮБОЙ запрос, даже
+    /// полностью несвязанный (`facts_context_cli::
+    /// facts_layer_does_not_surface_unrelated_fact` — прогон на реальной
+    /// BGE-M3 дал `combined_score≈0.39` для несвязанной пары против
+    /// `≥0.58` для перифразы, калибровка модели §20.23). Порог ниже
+    /// добавлен ИМЕННО здесь (слой контекста), не в `hybrid_search`
+    /// (общий примитив хранилища — не его дело решать, что «достаточно
+    /// релевантно» для конкретного потребителя).
+    fn facts_layer(&self, task_hint: &str, state: &Value) -> Option<ContextLayer> {
+        let source = self.facts.as_ref()?;
+        let query = state
+            .get("goal")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or(task_hint);
+        if query.is_empty() {
+            return None;
+        }
+        let embedding = match (source.embed)(query) {
+            Ok(v) => v,
+            Err(err) => {
+                eprintln!(
+                    "[berimor] память: эмбеддинг запроса для слоя Facts не удался — слой пропущен ({err})"
+                );
+                return None;
+            }
+        };
+        let hits = match source.store.hybrid_search(query, &embedding, source.limit) {
+            Ok(h) => h,
+            Err(err) => {
+                eprintln!(
+                    "[berimor] память: гибридный поиск фактов не удался — слой Facts пропущен ({err})"
+                );
+                return None;
+            }
+        };
+        // Отсечка релевантности — см. doc-комментарий метода и
+        // `MIN_RELEVANCE_SCORE`: `hybrid_search` сам не фильтрует.
+        let hits: Vec<_> = hits
+            .into_iter()
+            .filter(|hit| hit.combined_score >= MIN_RELEVANCE_SCORE)
+            .collect();
+        if hits.is_empty() {
+            return None;
+        }
+        // `hybrid_search` отдаёт только `fact_id`+оценки (сырьё для
+        // ранжирования, не факт целиком) — тот же приём, что
+        // `entity_layer` использует для узлов: полный скан `all_facts`
+        // и локальный lookup по id. Ошибка здесь — та же деградация
+        // «пустой слой», что и выше (хранилище уже ответило на
+        // hybrid_search, повторный отказ маловероятен, но не паникуем).
+        let all_facts = source.store.all_facts().unwrap_or_default();
+        let by_id: std::collections::HashMap<&str, &berimor_storage::FactRecord> =
+            all_facts.iter().map(|f| (f.id.as_str(), f)).collect();
+        let lines: Vec<String> = hits
+            .iter()
+            .filter_map(|hit| by_id.get(hit.fact_id.as_str()))
+            .map(|f| format!("{} {} {}", f.subject, f.predicate, f.object))
+            .collect();
+        if lines.is_empty() {
+            return None;
+        }
+        let content = lines.join("\n");
+        // Факты уже маскируются на записи (`StoredFact::new`, S5,
+        // memory-model.md §5) — здесь маскировка идемпотентна (значения
+        // секретов в реестре уже не встречаются в сохранённом тексте),
+        // применяется для консистентности с остальными слоями памяти
+        // (`entity_layer`), не потому что это единственная линия защиты.
+        let content = match self.masker {
+            Some(masker) => masker.mask_text(&content),
+            None => content,
+        };
+        Some(ContextLayer {
+            name: "facts".into(),
             content,
             weight: 1.0,
         })
@@ -254,6 +393,7 @@ mod tests {
             skills: &skills,
             session_search_limit: 5,
             entity_graph: None,
+            facts: None,
             masker: None,
         };
 
@@ -274,6 +414,7 @@ mod tests {
             skills: &[],
             session_search_limit: 5,
             entity_graph: None,
+            facts: None,
             masker: None,
         };
 
@@ -302,6 +443,7 @@ mod tests {
             skills: &skills,
             session_search_limit: 5,
             entity_graph: None,
+            facts: None,
             masker: None,
         };
 
@@ -325,6 +467,7 @@ mod tests {
             skills: &skills,
             session_search_limit: 5,
             entity_graph: None,
+            facts: None,
             masker: None,
         };
 
@@ -341,6 +484,7 @@ mod tests {
             skills: &skills,
             session_search_limit: 5,
             entity_graph: None,
+            facts: None,
             masker: None,
         };
 
@@ -397,6 +541,7 @@ mod tests {
             skills: &[],
             session_search_limit: 5,
             entity_graph: Some(&storage),
+            facts: None,
             masker: None,
         };
 
@@ -435,6 +580,7 @@ mod tests {
             skills: &[],
             session_search_limit: 5,
             entity_graph: None,
+            facts: None,
             masker: None,
         };
         let layers = off.build("llm_structured", ModelTier::Strong, &json!({}), "classify");
@@ -445,6 +591,7 @@ mod tests {
             skills: &[],
             session_search_limit: 5,
             entity_graph: Some(&storage),
+            facts: None,
             masker: None,
         };
         let layers = on_empty.build("llm_structured", ModelTier::Strong, &json!({}), "classify");
@@ -467,6 +614,7 @@ mod tests {
             skills: &[],
             session_search_limit: 5,
             entity_graph: Some(&storage),
+            facts: None,
             masker: None,
         };
 
@@ -504,6 +652,7 @@ mod tests {
             skills: &[],
             session_search_limit: 5,
             entity_graph: Some(&storage),
+            facts: None,
             masker: Some(&masker),
         };
 
@@ -538,6 +687,7 @@ mod tests {
             skills: &[],
             session_search_limit: 5,
             entity_graph: Some(&storage),
+            facts: None,
             masker: None,
         };
         let layers = builder.build(
@@ -550,5 +700,338 @@ mod tests {
         let graph_pos = names.iter().position(|n| *n == "entity_graph").unwrap();
         let state_pos = names.iter().position(|n| *n == "task_state").unwrap();
         assert!(graph_pos < state_pos, "{names:?}");
+    }
+
+    use berimor_storage::FactRecord;
+
+    fn fact(id: &str, subject: &str, predicate: &str, object: &str) -> FactRecord {
+        FactRecord {
+            id: id.into(),
+            subject: subject.into(),
+            predicate: predicate.into(),
+            object: object.into(),
+            confidence: 0.9,
+            source: "session:test".into(),
+            trusted_channel: true,
+        }
+    }
+
+    /// prompt-next-wave.md задача 1: слой Facts находит релевантный факт
+    /// через `hybrid_search` по эмбеддингу запроса, детерминированный
+    /// фейковый эмбеддер вместо реального fastembed (композиционный тест
+    /// на реальном sqlite-vec — тот же приём, что
+    /// `semantic::resolve_with_real_sqlite_vec_similarity_merges_close_facts`).
+    #[test]
+    fn facts_layer_finds_relevant_fact_via_hybrid_search() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        storage
+            .upsert_fact(
+                &fact("f-1", "клиент c-1", "живёт_в", "Москва"),
+                Some(&[1.0, 0.0, 0.0]),
+            )
+            .unwrap();
+        let embed = |_: &str| Ok(vec![1.0f32, 0.0, 0.0]);
+        let builder = MemoryContextBuilder {
+            episodic: &storage,
+            skills: &[],
+            session_search_limit: 5,
+            entity_graph: None,
+            facts: Some(FactsSource {
+                store: &storage,
+                embed: &embed,
+                limit: 5,
+            }),
+            masker: None,
+        };
+
+        let layers = builder.build(
+            "llm_structured",
+            ModelTier::Strong,
+            &json!({"goal": "где живёт клиент c-1?"}),
+            "chat",
+        );
+
+        let layer = layers
+            .iter()
+            .find(|l| l.name == "facts")
+            .expect("слой facts обязан быть");
+        assert!(layer.content.contains("Москва"), "{}", layer.content);
+    }
+
+    /// `state.goal` — приоритетный источник запроса (сообщение
+    /// пользователя чата), не `task_hint` (для чата — фиксированная
+    /// строка `"chat"`, не текст сообщения).
+    #[test]
+    fn facts_layer_prefers_state_goal_over_task_hint() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        storage
+            .upsert_fact(
+                &fact("f-1", "клиент c-1", "живёт_в", "Москва"),
+                Some(&[1.0, 0.0, 0.0]),
+            )
+            .unwrap();
+        let seen_query = std::cell::RefCell::new(String::new());
+        let embed = |q: &str| {
+            *seen_query.borrow_mut() = q.to_string();
+            Ok(vec![1.0f32, 0.0, 0.0])
+        };
+        let builder = MemoryContextBuilder {
+            episodic: &storage,
+            skills: &[],
+            session_search_limit: 5,
+            entity_graph: None,
+            facts: Some(FactsSource {
+                store: &storage,
+                embed: &embed,
+                limit: 5,
+            }),
+            masker: None,
+        };
+
+        builder.build(
+            "llm_structured",
+            ModelTier::Strong,
+            &json!({"goal": "сообщение пользователя"}),
+            "chat",
+        );
+
+        assert_eq!(*seen_query.borrow(), "сообщение пользователя");
+    }
+
+    /// Источник не сконфигурирован (эмбеддинги выключены/фичи нет) —
+    /// слоя нет вовсе, тихо: то же поведение, что было до этой задачи.
+    #[test]
+    fn facts_layer_absent_when_source_is_none() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        storage
+            .upsert_fact(
+                &fact("f-1", "клиент c-1", "живёт_в", "Москва"),
+                Some(&[1.0, 0.0, 0.0]),
+            )
+            .unwrap();
+        let builder = MemoryContextBuilder {
+            episodic: &storage,
+            skills: &[],
+            session_search_limit: 5,
+            entity_graph: None,
+            facts: None,
+            masker: None,
+        };
+
+        let layers = builder.build(
+            "llm_structured",
+            ModelTier::Strong,
+            &json!({"goal": "где живёт клиент c-1?"}),
+            "chat",
+        );
+
+        assert!(!layers.iter().any(|l| l.name == "facts"));
+    }
+
+    /// Источник ЕСТЬ, но эмбеддер реально отказал — слоя нет (сбой
+    /// памяти не хоронит ход), но это НЕ та же ветка, что «источника
+    /// нет вовсе» — код печатает предупреждение (см. doc-комментарий
+    /// `facts_layer`); здесь проверяется поведение (нет паники, нет
+    /// слоя), не текст в stderr.
+    #[test]
+    fn facts_layer_absent_and_does_not_panic_when_embedder_errors() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let embed = |_: &str| Err("модель недоступна".to_string());
+        let builder = MemoryContextBuilder {
+            episodic: &storage,
+            skills: &[],
+            session_search_limit: 5,
+            entity_graph: None,
+            facts: Some(FactsSource {
+                store: &storage,
+                embed: &embed,
+                limit: 5,
+            }),
+            masker: None,
+        };
+
+        let layers = builder.build(
+            "llm_structured",
+            ModelTier::Strong,
+            &json!({"goal": "любой запрос"}),
+            "chat",
+        );
+
+        assert!(!layers.iter().any(|l| l.name == "facts"));
+    }
+
+    /// Пустой запрос (нет `goal`, пустой `task_hint`) — слоя нет, эмбеддер
+    /// не вызывается вовсе (не тратим инференс на пустую строку).
+    #[test]
+    fn facts_layer_absent_when_query_is_empty() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        let called = std::cell::Cell::new(false);
+        let embed = |_: &str| {
+            called.set(true);
+            Ok(vec![1.0f32])
+        };
+        let builder = MemoryContextBuilder {
+            episodic: &storage,
+            skills: &[],
+            session_search_limit: 5,
+            entity_graph: None,
+            facts: Some(FactsSource {
+                store: &storage,
+                embed: &embed,
+                limit: 5,
+            }),
+            masker: None,
+        };
+
+        let layers = builder.build("llm_structured", ModelTier::Strong, &json!({}), "");
+
+        assert!(!layers.iter().any(|l| l.name == "facts"));
+        assert!(
+            !called.get(),
+            "эмбеддер не должен вызываться на пустой запрос"
+        );
+    }
+
+    /// S5: значение секрета в содержимом факта не доходит до модели даже
+    /// если каким-то путём оказалось незамаскированным на записи —
+    /// маскировка на чтении slой facts, консистентно с entity_layer.
+    #[test]
+    fn facts_layer_content_is_masked() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        storage
+            .upsert_fact(
+                &fact(
+                    "f-1",
+                    "сервис billing",
+                    "использует_ключ",
+                    "sk-live-FAKESECRET12345",
+                ),
+                Some(&[1.0, 0.0, 0.0]),
+            )
+            .unwrap();
+        let mut masker = berimor_secrets::Masker::new();
+        masker.register(berimor_secrets::Secret::new(
+            "sk-live-FAKESECRET12345".to_string(),
+        ));
+        let embed = |_: &str| Ok(vec![1.0f32, 0.0, 0.0]);
+        let builder = MemoryContextBuilder {
+            episodic: &storage,
+            skills: &[],
+            session_search_limit: 5,
+            entity_graph: None,
+            facts: Some(FactsSource {
+                store: &storage,
+                embed: &embed,
+                limit: 5,
+            }),
+            masker: Some(&masker),
+        };
+
+        let layers = builder.build(
+            "llm_structured",
+            ModelTier::Strong,
+            &json!({"goal": "какой ключ у billing?"}),
+            "chat",
+        );
+
+        let layer = layers.iter().find(|l| l.name == "facts").unwrap();
+        assert!(!layer.content.contains("sk-live-FAKESECRET12345"));
+        assert!(layer.content.contains("‹secret›"));
+    }
+
+    /// Канонический порядок (LayerKind): Facts — после Skills, до Session.
+    #[test]
+    fn facts_layer_sits_between_skills_and_session() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        storage
+            .upsert_fact(
+                &fact("f-1", "клиент c-1", "живёт_в", "Москва"),
+                Some(&[1.0, 0.0, 0.0]),
+            )
+            .unwrap();
+        let instance = ProcessInstanceId("run-1".into());
+        storage
+            .append(Event::new(
+                instance,
+                1,
+                EventKind::StepApplied {
+                    step_id: "classify".into(),
+                },
+                json!({"note": "chat"}),
+            ))
+            .unwrap();
+        let skills = vec![skill("s", "d")];
+        let embed = |_: &str| Ok(vec![1.0f32, 0.0, 0.0]);
+        let builder = MemoryContextBuilder {
+            episodic: &storage,
+            skills: &skills,
+            session_search_limit: 5,
+            entity_graph: None,
+            facts: Some(FactsSource {
+                store: &storage,
+                embed: &embed,
+                limit: 5,
+            }),
+            masker: None,
+        };
+
+        let layers = builder.build(
+            "llm_structured",
+            ModelTier::Strong,
+            &json!({"goal": "где живёт клиент c-1?"}),
+            "chat",
+        );
+
+        let names: Vec<&str> = layers.iter().map(|l| l.name.as_str()).collect();
+        let skills_pos = names.iter().position(|n| *n == "skills").unwrap();
+        let facts_pos = names.iter().position(|n| *n == "facts").unwrap();
+        let session_pos = names.iter().position(|n| *n == "session").unwrap();
+        assert!(skills_pos < facts_pos, "{names:?}");
+        assert!(facts_pos < session_pos, "{names:?}");
+    }
+
+    /// Найдено e2e-прогоном на реальной BGE-M3
+    /// (`facts_context_cli::facts_layer_does_not_surface_unrelated_fact`):
+    /// `hybrid_search` без отсечки возвращал единственный факт базы на
+    /// ЛЮБОЙ запрос. Здесь — та же гарантия на уровне юнит-теста, без
+    /// реальной модели: ортогональный вектор запроса (cosine=0) и текст,
+    /// не пересекающийся с полями факта, обязаны дать `combined_score`
+    /// ниже `MIN_RELEVANCE_SCORE` — слоя нет вовсе.
+    #[test]
+    fn facts_layer_excludes_hit_below_relevance_threshold() {
+        let storage = SqliteEventLog::open_in_memory().unwrap();
+        storage
+            .upsert_fact(
+                &fact("f-1", "клиент c-1", "живёт_в", "Москва"),
+                Some(&[1.0, 0.0, 0.0]),
+            )
+            .unwrap();
+        // Ортогонален сохранённому [1.0, 0.0, 0.0] — vector_score = 0.0;
+        // текст запроса не пересекается с полями факта — text_matched = false.
+        let embed = |_: &str| Ok(vec![0.0f32, 1.0, 0.0]);
+        let builder = MemoryContextBuilder {
+            episodic: &storage,
+            skills: &[],
+            session_search_limit: 5,
+            entity_graph: None,
+            facts: Some(FactsSource {
+                store: &storage,
+                embed: &embed,
+                limit: 5,
+            }),
+            masker: None,
+        };
+
+        let layers = builder.build(
+            "llm_structured",
+            ModelTier::Strong,
+            &json!({"goal": "рецепт борща на четыре порции"}),
+            "chat",
+        );
+
+        assert!(
+            !layers.iter().any(|l| l.name == "facts"),
+            "нерелевантный факт (combined_score ниже порога) не должен попадать в слой"
+        );
     }
 }

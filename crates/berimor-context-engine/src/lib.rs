@@ -62,6 +62,7 @@ pub fn layers_for_step(step_kind: &str) -> Vec<LayerKind> {
         "llm_structured" | "agent_step" | "codeact" => vec![
             LayerKind::SystemRules,
             LayerKind::Skills,
+            LayerKind::Facts,
             LayerKind::Session,
             LayerKind::EntityGraph,
             LayerKind::TaskState,
@@ -244,6 +245,7 @@ mod tests {
             vec![
                 LayerKind::SystemRules,
                 LayerKind::Skills,
+                LayerKind::Facts,
                 LayerKind::Session,
                 LayerKind::EntityGraph,
                 LayerKind::TaskState,

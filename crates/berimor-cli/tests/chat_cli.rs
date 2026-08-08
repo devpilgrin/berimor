@@ -140,6 +140,47 @@ fn chat_answers_simple_message_and_exits_on_eof() {
     assert!(stdout.contains("berimor"), "метка агента: {stdout}");
 }
 
+/// prompt-next-wave.md задача 4: после накопления достаточно длинной
+/// ленты (> 6 записей И > порога символов) агент сам вызывает модель за
+/// суммаризацией старой части (контракт `HistorySummary`, отдельный
+/// запрос к тому же моку) — не молчаливое посимвольное усечение.
+/// Арифметика подобрана точно: 4 хода по 2×3028+ символов на пару —
+/// первые 3 хода превышают порог символов, но НЕ порог числа записей
+/// (6 записей = KEEP_RECENT_ENTRIES, компакция ждёт СТРОГО больше);
+/// 4-й ход даёт 8 записей — компакция срабатывает сразу после него,
+/// присылая пятый запрос к моку (за суммаризацией) ДО того, как REPL
+/// вернётся читать следующую строку stdin (которой уже нет — EOF).
+#[test]
+fn chat_compacts_history_after_several_long_turns() {
+    let dir = std::env::temp_dir().join(format!("berimor-e2e-chatcompact-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let long_reply = "y".repeat(3000);
+    let url = sequential_mock(vec![
+        finish_turn(&long_reply),
+        finish_turn(&long_reply),
+        finish_turn(&long_reply),
+        finish_turn(&long_reply),
+        json!({"summary": "Пользователь отправил несколько длинных сообщений подряд."}),
+    ]);
+    let config_path = write_config(&dir, "chatcompact", &url);
+    let long_message = "x".repeat(3000);
+    let input = format!("{long_message}\n{long_message}\n{long_message}\n{long_message}\n");
+
+    let output = run_chat(&dir, &config_path, &input);
+
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("лента чата сжата"),
+        "компакция обязана была сработать: {stderr}"
+    );
+}
+
 #[test]
 fn chat_executes_builtin_tool_with_real_side_effect() {
     let dir = std::env::temp_dir().join(format!("berimor-e2e-chattool-{}", std::process::id()));

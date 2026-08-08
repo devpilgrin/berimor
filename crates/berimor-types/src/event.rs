@@ -100,6 +100,17 @@ pub enum EventKind {
     MemoryConflict {
         detail: String,
     },
+    /// `berimor memory consolidate` (prompt-next-wave.md задача 3): группа
+    /// семантически близких фактов слита в один — `detail` перечисляет
+    /// survivor и поглощённые id с оценками схожести (тот же стиль, что
+    /// `MemoryConflict::detail` — человекочитаемая строка, не структура:
+    /// это аудиторский след для чтения, не машинно разбираемый контракт).
+    /// Журналуется под синтетическим `ProcessInstanceId("memory-consolidation")`
+    /// (тот же приём, что `"trust-list"`/`"host-sessions"` — консолидация
+    /// не принадлежит ни одному прогону процесса).
+    FactsConsolidated {
+        detail: String,
+    },
     Snapshot,
     SecurityEvent {
         detail: String,

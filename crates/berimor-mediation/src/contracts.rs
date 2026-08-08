@@ -160,6 +160,23 @@ impl Contract for ChatReply {
     const NAME: &'static str = "ChatReply";
 }
 
+/// Суммаризация старой части ленты чата (prompt-next-wave.md задача 4):
+/// при переполнении бюджета контекста старые ходы диалога сжимаются в
+/// одну запись вместо молчаливого посимвольного усечения `apply_budget`.
+/// Одно текстовое поле — тот же принцип, что `ChatReply`: суммаризация
+/// пользователю не показывается напрямую, публикуемых полей не нужно.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
+pub struct HistorySummary {
+    #[validate(length(min = 1, max = 4000))]
+    pub summary: String,
+}
+
+impl Contract for HistorySummary {
+    const SCHEMA_VERSION: u32 = 1;
+    const NAME: &'static str = "HistorySummary";
+}
+
 impl Contract for FactProposal {
     const SCHEMA_VERSION: u32 = 1;
     const NAME: &'static str = "FactProposal";

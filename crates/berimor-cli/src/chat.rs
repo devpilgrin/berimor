@@ -24,12 +24,14 @@ use crate::chat_ui::{self, Theme};
 use crate::config::{self, Config};
 use crate::run::{build_executor_bundle, RunError};
 use crate::setup;
-use berimor_context_engine::memory_builder::MemoryContextBuilder;
+use berimor_context_engine::memory_builder::{FactsSource, MemoryContextBuilder};
 use berimor_executors::agent_step::AgentStepExecutor;
-use berimor_mediation::contracts::ChatReply;
+use berimor_executors::structured_llm::StructuredLlm;
+use berimor_mediation::contracts::{ChatReply, HistorySummary};
 use berimor_storage::{EventLog, SqliteEventLog};
 use berimor_types::contract::Contract;
 use berimor_types::event::{Event, EventKind, ProcessInstanceId};
+use berimor_types::model::ModelTierRequirement;
 use serde_json::{json, Value};
 use std::io::IsTerminal;
 use std::io::Write;
@@ -277,6 +279,7 @@ pub(crate) fn execute_turn(
             Event::new(telemetry_id.clone(), 1, kind, Value::Null),
         );
     };
+    let facts_embed = crate::run::facts_embed_fn(config.memory.embeddings);
     let memory_context = MemoryContextBuilder {
         episodic: &storage,
         skills: &bundle.skills,
@@ -285,6 +288,14 @@ pub(crate) fn execute_turn(
             .memory
             .entity_graph
             .then_some(&storage as &dyn berimor_storage::EntityGraphStore),
+        // prompt-next-wave.md задача 1: слой Facts ищет по `state.goal` —
+        // тому самому сообщению пользователя, ради которого писалась
+        // задача (`execute_turn` собирает state с "goal": message ниже).
+        facts: facts_embed.as_deref().map(|embed| FactsSource {
+            store: &storage,
+            embed,
+            limit: config.memory.facts_search_limit,
+        }),
         masker: Some(bundle.masker.as_ref()),
     };
     let on_tool_turn = |tool: &str, args: &Value, _observation: &Value, ok: bool| {
@@ -444,6 +455,7 @@ fn run_repl(
         );
     };
 
+    let facts_embed = crate::run::facts_embed_fn(config.memory.embeddings);
     let memory_context = MemoryContextBuilder {
         episodic: &storage,
         skills: &bundle.skills,
@@ -452,6 +464,11 @@ fn run_repl(
             .memory
             .entity_graph
             .then_some(&storage as &dyn berimor_storage::EntityGraphStore),
+        facts: facts_embed.as_deref().map(|embed| FactsSource {
+            store: &storage,
+            embed,
+            limit: config.memory.facts_search_limit,
+        }),
         masker: Some(bundle.masker.as_ref()),
     };
 
@@ -751,6 +768,42 @@ fn run_repl(
                 history.push(json!({"role": "assistant", "content": reply.clone()}));
                 let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
                 crate::chat_history::append(&workspace, message, &reply);
+
+                // Компакция (prompt-next-wave.md задача 4): если лента
+                // разрослась — старая часть сжимается моделью вместо
+                // молчаливого посимвольного усечения `apply_budget`.
+                let summarize = |old: &[Value]| -> Result<String, String> {
+                    let llm = StructuredLlm {
+                        pool: &bundle.pool,
+                        providers: &providers,
+                        context: &memory_context,
+                        on_attempt: Some(&on_attempt),
+                        secrets: bundle.masker.as_ref(),
+                    };
+                    let summary_state = json!({"history": old});
+                    let patch = llm
+                        .execute(
+                            "compact_history",
+                            HistorySummary::NAME,
+                            ModelTierRequirement::Weak,
+                            &summary_state,
+                            None,
+                        )
+                        .map_err(|err| err.to_string())?;
+                    patch
+                        .changes
+                        .get("summary")
+                        .and_then(Value::as_str)
+                        .map(String::from)
+                        .ok_or_else(|| "ответ модели не содержит поле summary".to_string())
+                };
+                match crate::chat_compaction::compact_if_needed(history, &summarize) {
+                    Ok(true) => eprintln!("[berimor] лента чата сжата (предыстория суммирована)"),
+                    Ok(false) => {}
+                    Err(err) => eprintln!(
+                        "[berimor] чат: суммаризация предыстории не удалась, лента не сжата: {err}"
+                    ),
+                }
             }
             Err(err) => {
                 // Ошибка хода — не смерть сессии: пользователь видит

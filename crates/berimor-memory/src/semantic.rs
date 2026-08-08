@@ -389,6 +389,82 @@ pub fn merge_confidence(existing_confidence: f32, candidate_confidence: f32) -> 
     existing_confidence.max(candidate_confidence)
 }
 
+/// Один найденный при консолидации (prompt-next-wave.md задача 3) кластер
+/// близких дублей: `survivor` — факт, в который сливаются остальные;
+/// `merged` — поглощённые факты с оценкой схожести против survivor.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConsolidationGroup {
+    pub survivor: FactId,
+    pub merged: Vec<(FactId, f32)>,
+}
+
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot / (norm_a * norm_b)
+    }
+}
+
+/// Находит кластеры семантически близких фактов СРЕДИ УЖЕ СУЩЕСТВУЮЩИХ
+/// записей — периодическая уборка накопленных со временем дублей,
+/// которые [`dedup`]/[`resolve`] на записи не поймали (например, факт
+/// был записан ДО того, как эмбеддинги вообще были включены, §20.23).
+/// Отличие от `dedup`: там кандидат сравнивается с существующими,
+/// здесь — существующие сравниваются друг с другом.
+///
+/// Жадная кластеризация по порядку `facts`: для каждого ещё не
+/// поглощённого факта survivor'ом становится он сам, а каждый
+/// ПОСЛЕДУЮЩИЙ ещё не поглощённый факт с `cosine(embeddings) >=
+/// threshold` ПРОТИВ НЕГО поглощается в его кластер — не транзитивно
+/// против всех уже добавленных в кластер (сознательное упрощение, тот
+/// же принцип «не выдумывать сложность, которую источник не требует»,
+/// что у `context_engine::entity_layer`). Факт без эмбеддинга в
+/// `embeddings` не участвует — сравнивать нечем, не ошибка (вызывающий
+/// код решает, что делать с фактами без эмбеддинга — молча пропускать
+/// их из консолидации, не то же самое, что молча терять факт).
+pub fn find_consolidation_groups(
+    facts: &[StoredFact],
+    embeddings: &std::collections::HashMap<String, Vec<f32>>,
+    threshold: f32,
+) -> Vec<ConsolidationGroup> {
+    let mut consumed: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut groups = Vec::new();
+    for (i, fact) in facts.iter().enumerate() {
+        if consumed.contains(fact.id.0.as_str()) {
+            continue;
+        }
+        let Some(fact_embedding) = embeddings.get(&fact.id.0) else {
+            continue;
+        };
+        let mut merged = Vec::new();
+        for other in &facts[i + 1..] {
+            if consumed.contains(other.id.0.as_str()) {
+                continue;
+            }
+            let Some(other_embedding) = embeddings.get(&other.id.0) else {
+                continue;
+            };
+            let score = cosine(fact_embedding, other_embedding);
+            if score >= threshold {
+                merged.push((other.id.clone(), score));
+                consumed.insert(other.id.0.as_str());
+            }
+        }
+        if !merged.is_empty() {
+            consumed.insert(fact.id.0.as_str());
+            groups.push(ConsolidationGroup {
+                survivor: fact.id.clone(),
+                merged,
+            });
+        }
+    }
+    groups
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -743,5 +819,101 @@ mod tests {
         let unknown = stored("f-missing", "клиент c-1", "живёт_в", "Москва", 0.6);
 
         assert_eq!(similarity.similarity(&candidate, &unknown).unwrap(), 0.0);
+    }
+
+    fn embeddings_map(pairs: &[(&str, Vec<f32>)]) -> std::collections::HashMap<String, Vec<f32>> {
+        pairs
+            .iter()
+            .map(|(id, v)| (id.to_string(), v.clone()))
+            .collect()
+    }
+
+    /// Два факта с идентичным эмбеддингом (cosine=1.0) — один кластер,
+    /// первый по порядку `facts` — survivor.
+    #[test]
+    fn find_consolidation_groups_merges_near_identical_embeddings() {
+        let facts = [
+            stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6),
+            stored("f-2", "клиент c-1", "проживает в", "г. Москва", 0.7),
+        ];
+        let embeddings =
+            embeddings_map(&[("f-1", vec![1.0, 0.0, 0.0]), ("f-2", vec![1.0, 0.0, 0.0])]);
+
+        let groups = find_consolidation_groups(&facts, &embeddings, 0.75);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].survivor, FactId("f-1".into()));
+        assert_eq!(groups[0].merged, vec![(FactId("f-2".into()), 1.0)]);
+    }
+
+    /// Ортогональные векторы (cosine=0.0) — ниже порога, кластеров нет.
+    #[test]
+    fn find_consolidation_groups_ignores_unrelated_facts() {
+        let facts = [
+            stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6),
+            stored("f-2", "клиент c-2", "живёт_в", "Тверь", 0.6),
+        ];
+        let embeddings =
+            embeddings_map(&[("f-1", vec![1.0, 0.0, 0.0]), ("f-2", vec![0.0, 1.0, 0.0])]);
+
+        let groups = find_consolidation_groups(&facts, &embeddings, 0.75);
+
+        assert!(groups.is_empty());
+    }
+
+    /// Три факта: f-1/f-2 близки, f-3 — нет. f-2 не должен ВТОРИЧНО
+    /// становиться survivor'ом для f-3 (уже поглощён кластером f-1).
+    #[test]
+    fn find_consolidation_groups_does_not_reuse_already_merged_fact_as_survivor() {
+        let facts = [
+            stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6),
+            stored("f-2", "клиент c-1", "проживает в", "Москва", 0.6),
+            stored("f-3", "клиент c-3", "живёт_в", "Казань", 0.6),
+        ];
+        let embeddings = embeddings_map(&[
+            ("f-1", vec![1.0, 0.0, 0.0]),
+            ("f-2", vec![1.0, 0.0, 0.0]),
+            ("f-3", vec![0.0, 0.0, 1.0]),
+        ]);
+
+        let groups = find_consolidation_groups(&facts, &embeddings, 0.75);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].survivor, FactId("f-1".into()));
+        assert_eq!(groups[0].merged, vec![(FactId("f-2".into()), 1.0)]);
+    }
+
+    /// Факт без эмбеддинга в карте — пропущен, не паника и не ложный
+    /// survivor/дубликат.
+    #[test]
+    fn find_consolidation_groups_skips_facts_without_an_embedding() {
+        let facts = [
+            stored("f-1", "клиент c-1", "живёт_в", "Москва", 0.6),
+            stored("f-2", "клиент c-1", "проживает в", "Москва", 0.6),
+        ];
+        // f-2 сознательно не в карте.
+        let embeddings = embeddings_map(&[("f-1", vec![1.0, 0.0, 0.0])]);
+
+        let groups = find_consolidation_groups(&facts, &embeddings, 0.75);
+
+        assert!(groups.is_empty());
+    }
+
+    /// Ровно на пороге — включается (`>=`, не `>`).
+    #[test]
+    fn find_consolidation_groups_includes_hit_exactly_at_threshold() {
+        let facts = [
+            stored("f-1", "a", "b", "c", 0.6),
+            stored("f-2", "a", "b", "d", 0.6),
+        ];
+        // cos(angle) = 0.75 ровно: подобраны так, что dot/(|a||b|) = 0.75.
+        let embeddings = embeddings_map(&[
+            ("f-1", vec![1.0, 0.0]),
+            ("f-2", vec![0.75, (1.0f32 - 0.75 * 0.75).sqrt()]),
+        ]);
+
+        let groups = find_consolidation_groups(&facts, &embeddings, 0.75);
+
+        assert_eq!(groups.len(), 1);
     }
 }

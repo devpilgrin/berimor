@@ -10,7 +10,7 @@
 
 use crate::config::Config;
 use crate::run::{build_executor_bundle, CliExecutor, RunError};
-use berimor_context_engine::memory_builder::MemoryContextBuilder;
+use berimor_context_engine::memory_builder::{FactsSource, MemoryContextBuilder};
 use berimor_executors::{
     agent_step::AgentStepExecutor,
     codeact::{CodeActExecutor, WasmHost},
@@ -96,6 +96,14 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         Some(journal) => journal,
         None => &storage,
     };
+    // prompt-next-wave.md задача 1: та же поправка находки 4.5, что уже
+    // применена к episodic выше — факты пишутся в РЕАЛЬНЫЙ журнал
+    // (fact_extraction), эфемерный журнал сценария их никогда не увидит.
+    let semantic_store: &dyn berimor_storage::SemanticStore = match &real_journal {
+        Some(journal) => journal,
+        None => &storage,
+    };
+    let facts_embed = crate::run::facts_embed_fn(config.memory.embeddings);
     let memory_context = MemoryContextBuilder {
         episodic,
         skills: &bundle.skills,
@@ -104,6 +112,11 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
             .memory
             .entity_graph
             .then_some(&storage as &dyn berimor_storage::EntityGraphStore),
+        facts: facts_embed.as_deref().map(|embed| FactsSource {
+            store: semantic_store,
+            embed,
+            limit: config.memory.facts_search_limit,
+        }),
         masker: Some(bundle.masker.as_ref()),
     };
     // Без телеметрии Mediation (on_attempt: None): у неё нет
