@@ -54,6 +54,8 @@ const SLASH_COMMANDS: &[(&str, &str)] = &[
         "/model",
         "сменить модель сессии (выбор из списка провайдера)",
     ),
+    ("/tools", "список доступных инструментов"),
+    ("/skills", "список установленных скилов"),
     ("/exit", "завершить"),
     ("/quit", "завершить"),
 ];
@@ -576,6 +578,25 @@ impl App {
                     .collect();
                 self.picker = Some(Picker::new("Провайдер (Enter — выбрать)", items, false));
                 self.flow = Some(Flow::SwitchPickProvider);
+            }
+            "tools" => {
+                let catalog = crate::chat::tools_catalog(&self.config);
+                let lines: Vec<String> = catalog
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .map(|tool| {
+                                let name = tool.get("name").and_then(Value::as_str).unwrap_or("?");
+                                let about = tool.get("about").and_then(Value::as_str).unwrap_or("");
+                                format!("{name} — {about}")
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for line in lines {
+                    self.sys(line);
+                }
             }
             "skills" => {
                 if self.skills.is_empty() {
@@ -1849,6 +1870,76 @@ mod tests {
             text.contains("code-review-ru"),
             "ожидали скилл в логе: {text}"
         );
+    }
+
+    /// Репорт 2026-08-09: «инструменты не обновляются, настроек нет» —
+    /// в TUI не было способа посмотреть список доступных инструментов
+    /// вообще (только `/config`, 3 строки, без списка). `/tools`
+    /// переиспользует ту же функцию, что видит модель (`chat::
+    /// tools_catalog`) — что в логе, то и реально доступно агенту.
+    #[test]
+    fn run_command_tools_lists_builtin_and_mcp() {
+        let (tx, rx) = channel();
+        let mut config = Config::default();
+        config.mcp_servers.push(crate::config::McpServerConfig {
+            name: "demo-mcp".into(),
+            command: "demo".into(),
+            args: vec![],
+        });
+        let mut app = App {
+            config,
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: vec![],
+            answer_tx: None,
+            tx,
+            rx,
+            done: false,
+        };
+        app.run_command("tools");
+        let text = app
+            .log
+            .iter()
+            .map(|l| match l {
+                LogLine::Sys(t) | LogLine::Tool(t) | LogLine::User(t) => t.clone(),
+                LogLine::Assistant(t) | LogLine::Err(t) => t.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(text.contains("files.write"), "встроенный: {text}");
+        assert!(text.contains("terminal.exec"), "встроенный: {text}");
+        assert!(text.contains("demo-mcp.*"), "MCP-сервер: {text}");
+    }
+
+    /// `/tools`/`/skills` реально работают в run_command (проверено выше),
+    /// но должны быть и в автодополнении/`/help` — иначе не обнаружимы.
+    #[test]
+    fn slash_commands_advertise_tools_and_skills() {
+        let names: Vec<&str> = SLASH_COMMANDS.iter().map(|(name, _)| *name).collect();
+        assert!(names.contains(&"/tools"));
+        assert!(names.contains(&"/skills"));
     }
 
     /// Репорт 0.14.0: пользователь жмёт ↓ к «проекту», модал слушал

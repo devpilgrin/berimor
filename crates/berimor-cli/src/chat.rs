@@ -51,7 +51,7 @@ enum SessionOutcome {
 /// Каталог инструментов для состояния агента: модель узнаёт имена и
 /// формы аргументов из state (подсказка хода список не несёт —
 /// см. agent_step.rs, «шагу доступен весь сконфигурированный набор»).
-fn tools_catalog(config: &Config) -> Value {
+pub(crate) fn tools_catalog(config: &Config) -> Value {
     let mut tools = vec![
         json!({"name": "files.read", "args": {"path": "строка"}, "about": "прочитать файл (кап 1 МиБ, флаг truncated)"}),
         json!({"name": "files.write", "args": {"path": "строка", "content": "строка"}, "about": "записать файл (родитель обязан существовать)"}),
