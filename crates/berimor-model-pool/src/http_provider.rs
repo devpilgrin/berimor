@@ -31,7 +31,17 @@ use std::time::Duration;
 /// важнее точной цифры. Клиент блокирующий (`reqwest::blocking`),
 /// синхронный цикл `berimor run`: без таймаута зависший endpoint
 /// блокировал бы весь процесс навсегда.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+///
+/// Директива 2026-08-08: было 30с — локальные reasoning-модели (LM
+/// Studio) на первом же ходе агентного цикла (самый крупный системный
+/// промпт — каталог инструментов) легко превышают это на decode-
+/// скорости порядка 170 ток/с, ловя транспортный таймаут, который ещё
+/// и ретраится 4 раза (см. `TRANSPORT_BACKOFF_MS`) — пользователь ждёт
+/// ~2 минуты ради гарантированного отказа. Дефолт поднят ×5; для
+/// провайдеров, которым и этого мало (или наоборот — нужен короткий
+/// потолок для быстрого fail-over в облаке), есть
+/// `ProviderConfig::request_timeout_secs`.
+pub const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 150;
 
 /// Верхний лимит тела HTTP-ответа провайдера (аудит 3.9). Реальный
 /// ответ chat/completions — килобайты; лимит с большим запасом, но
@@ -65,6 +75,10 @@ pub struct OpenAiCompatibleProvider {
 impl OpenAiCompatibleProvider {
     /// `api_key` — `None` для endpoint'ов без аутентификации (локальные
     /// серверы). Ключ оборачивается в [`Secret`] на границе конфигурации.
+    /// `request_timeout_secs` — `None` берёт `DEFAULT_REQUEST_TIMEOUT_SECS`
+    /// (директива 2026-08-08: локальным reasoning-моделям дефолта может
+    /// не хватать — настраивается per-провайдер, не глобальной правкой
+    /// константы).
     pub fn new(
         identity: ModelIdentity,
         base_url: String,
@@ -72,13 +86,16 @@ impl OpenAiCompatibleProvider {
         allow_private_endpoint: bool,
         temperature: Option<f32>,
         json_object_response_format: bool,
+        request_timeout_secs: Option<u64>,
     ) -> Result<Self, ModelError> {
         // Находка 2.14 аудита: гейт применялся только к первому хопу —
         // reqwest следовал за 302 на непроверенный хост. Редирект для
         // LLM API — аномалия: fail-closed (3xx всплывёт как HTTP-ошибка),
         // как у встроенного http.fetch («редиректы не следуются»).
+        let timeout =
+            Duration::from_secs(request_timeout_secs.unwrap_or(DEFAULT_REQUEST_TIMEOUT_SECS));
         let client = reqwest::blocking::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
+            .timeout(timeout)
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|err| {
@@ -295,6 +312,7 @@ mod tests {
             false, // приватный endpoint БЕЗ opt-in — гейт обязан отказать
             None,
             true,
+            None,
         )
         .and_then(|p| p.complete(request()));
         assert!(result.is_err(), "гейт обязан видеть 127.0.0.1 за userinfo");
@@ -319,7 +337,7 @@ mod tests {
         });
 
         let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true).unwrap();
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, None).unwrap();
         let result = provider.complete(request());
         server.join().unwrap();
         assert!(
@@ -390,6 +408,7 @@ mod tests {
             true,
             None,
             true,
+            None,
         )
         .unwrap();
 
@@ -421,7 +440,7 @@ mod tests {
     fn json_object_response_format_false_omits_the_field_even_when_structured_output_is_expected() {
         let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
         let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, false).unwrap();
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, false, None).unwrap();
 
         provider.complete(request()).unwrap();
 
@@ -441,7 +460,7 @@ mod tests {
     fn expects_structured_output_false_omits_response_format_even_with_a_contract_name() {
         let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
         let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true).unwrap();
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, None).unwrap();
         let request = CompletionRequest {
             expects_structured_output: false,
             ..request()
@@ -463,7 +482,7 @@ mod tests {
         let huge = format!("{{\"pad\": \"{}\"}}", "x".repeat(9 * 1024 * 1024));
         let (url, server) = serve_once("200 OK", huge);
         let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true).unwrap();
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, None).unwrap();
 
         let result = provider.complete(request());
 
@@ -484,8 +503,45 @@ mod tests {
     fn response_within_limit_is_accepted() {
         let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
         let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true).unwrap();
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, None).unwrap();
         assert!(provider.complete(request()).is_ok());
+        server.join().unwrap();
+    }
+
+    /// Директива 2026-08-08: дефолт таймаута поднят ×5 (30с → 150с) —
+    /// зафиксировано значение, не только комментарий.
+    #[test]
+    fn default_request_timeout_is_five_times_the_old_thirty_seconds() {
+        assert_eq!(DEFAULT_REQUEST_TIMEOUT_SECS, 150);
+    }
+
+    /// `request_timeout_secs` реально доходит до HTTP-клиента: сервер,
+    /// который отвечает МЕДЛЕННЕЕ заданного потолка, обязан дать
+    /// транспортную ошибку — не 150с дефолта (тест был бы недопустимо
+    /// медленным), а свой короткий предел.
+    #[test]
+    fn custom_request_timeout_shorter_than_default_is_honored() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = [0u8; 2048];
+            let _ = stream.read(&mut head);
+            // Дольше клиентского таймаута (1с) — клиент обязан отвалиться
+            // раньше, чем сервер вообще начнёт отвечать.
+            std::thread::sleep(Duration::from_secs(3));
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}");
+        });
+
+        let provider =
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, Some(1))
+                .unwrap();
+        let result = provider.complete(request());
+
+        assert!(
+            result.is_err(),
+            "запрос обязан упасть по короткому таймауту, не дождавшись сервера"
+        );
         server.join().unwrap();
     }
 
@@ -493,7 +549,7 @@ mod tests {
     fn http_error_maps_to_unavailable() {
         let (url, server) = serve_once("500 Internal Server Error", "{\"error\": \"boom\"}".into());
         let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true).unwrap();
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, None).unwrap();
 
         let result = provider.complete(request());
 
@@ -512,6 +568,7 @@ mod tests {
             false,
             None,
             true,
+            None,
         )
         .unwrap();
 
@@ -540,6 +597,7 @@ mod tests {
             false,
             None,
             true,
+            None,
         )
         .unwrap();
 

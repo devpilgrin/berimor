@@ -78,6 +78,13 @@ pub struct ProviderConfig {
     /// CodeAct); пресет lmstudio задаёт `false`.
     #[serde(default = "default_true")]
     pub json_object_response_format: bool,
+    /// Потолок одного HTTP-вызова провайдеру в секундах; `None` —
+    /// `berimor_model_pool::http_provider::DEFAULT_REQUEST_TIMEOUT_SECS`
+    /// (150с, поднято ×5 директивой 2026-08-08 — локальные reasoning-
+    /// модели легко превышали прежние 30с уже на первом ходе агентного
+    /// цикла, ловя транспортный таймаут вдобавок ретраящийся 4 раза).
+    #[serde(default)]
+    pub request_timeout_secs: Option<u64>,
 }
 
 fn default_true() -> bool {

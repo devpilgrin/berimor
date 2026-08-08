@@ -32,6 +32,13 @@ pub struct ProviderPreset {
     /// (репорт 2026-08-08: LM Studio отвечает 400 на каждый структурный
     /// запрос — весь `berimor chat` был неработоспособен с этим пресетом).
     pub json_object_response_format: bool,
+    /// Свой потолок HTTP-вызова в секундах; `None` — общий дефолт
+    /// (150с). Ни один пресет пока не переопределяет — квирк по
+    /// умолчанию решается на уровне пресета/конфига ПОЛЬЗОВАТЕЛЕМ под
+    /// свою модель/железо, не молчаливым выбором за него (директива
+    /// 2026-08-08: разные локальные модели по-разному медленные,
+    /// единого «правильного» числа для всех локальных серверов нет).
+    pub request_timeout_secs: Option<u64>,
 }
 
 pub const PRESETS: &[ProviderPreset] = &[
@@ -52,6 +59,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         // k3/kimi-for-coding: «only 1 is allowed for this model».
         temperature: Some(1.0),
         json_object_response_format: true,
+        request_timeout_secs: None,
     },
     ProviderPreset {
         name: "moonshot",
@@ -64,6 +72,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         private: false,
         temperature: None,
         json_object_response_format: true,
+        request_timeout_secs: None,
     },
     ProviderPreset {
         name: "deepseek",
@@ -76,6 +85,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         private: false,
         temperature: None,
         json_object_response_format: true,
+        request_timeout_secs: None,
     },
     ProviderPreset {
         name: "openai",
@@ -88,6 +98,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         private: false,
         temperature: None,
         json_object_response_format: true,
+        request_timeout_secs: None,
     },
     ProviderPreset {
         name: "claude",
@@ -100,6 +111,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         private: false,
         temperature: None,
         json_object_response_format: true,
+        request_timeout_secs: None,
     },
     ProviderPreset {
         name: "ollama",
@@ -112,6 +124,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         private: true,
         temperature: None,
         json_object_response_format: true,
+        request_timeout_secs: None,
     },
     ProviderPreset {
         name: "llamacpp",
@@ -124,6 +137,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         private: true,
         temperature: None,
         json_object_response_format: true,
+        request_timeout_secs: None,
     },
     ProviderPreset {
         name: "lmstudio",
@@ -142,6 +156,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         // проходит 200 OK. Живой список моделей (§20.14) работал всегда —
         // это отдельный GET /models без chat/completions и без этого поля.
         json_object_response_format: false,
+        request_timeout_secs: None,
     },
     ProviderPreset {
         // Директива пользователя 2026-08-08: «llamaCpp, Ollama и другие
@@ -157,6 +172,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         private: true,
         temperature: None,
         json_object_response_format: true,
+        request_timeout_secs: None,
     },
     ProviderPreset {
         name: "textgenwebui",
@@ -169,6 +185,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         private: true,
         temperature: None,
         json_object_response_format: true,
+        request_timeout_secs: None,
     },
     ProviderPreset {
         name: "koboldcpp",
@@ -181,6 +198,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         private: true,
         temperature: None,
         json_object_response_format: true,
+        request_timeout_secs: None,
     },
 ];
 
@@ -208,6 +226,7 @@ pub fn instantiate(
         cost_per_1k_tokens: None,
         temperature: preset.temperature,
         json_object_response_format: preset.json_object_response_format,
+        request_timeout_secs: preset.request_timeout_secs,
     }
 }
 
@@ -238,6 +257,9 @@ pub fn render_provider_toml(provider: &ProviderConfig) -> String {
     }
     if !provider.json_object_response_format {
         block.push_str("json_object_response_format = false\n");
+    }
+    if let Some(timeout) = provider.request_timeout_secs {
+        block.push_str(&format!("request_timeout_secs = {timeout}\n"));
     }
     block
 }
