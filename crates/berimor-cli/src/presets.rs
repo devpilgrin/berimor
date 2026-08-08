@@ -28,6 +28,10 @@ pub struct ProviderPreset {
     pub private: bool,
     /// Обязательная температура, если модель её диктует (Kimi k3 — 1.0).
     pub temperature: Option<f32>,
+    /// `false` — сервер не принимает `response_format: json_object`
+    /// (репорт 2026-08-08: LM Studio отвечает 400 на каждый структурный
+    /// запрос — весь `berimor chat` был неработоспособен с этим пресетом).
+    pub json_object_response_format: bool,
 }
 
 pub const PRESETS: &[ProviderPreset] = &[
@@ -47,6 +51,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         private: false,
         // k3/kimi-for-coding: «only 1 is allowed for this model».
         temperature: Some(1.0),
+        json_object_response_format: true,
     },
     ProviderPreset {
         name: "moonshot",
@@ -58,6 +63,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         key_env: Some("MOONSHOT_PLATFORM_API_KEY"),
         private: false,
         temperature: None,
+        json_object_response_format: true,
     },
     ProviderPreset {
         name: "deepseek",
@@ -69,6 +75,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         key_env: Some("DEEPSEEK_API_KEY"),
         private: false,
         temperature: None,
+        json_object_response_format: true,
     },
     ProviderPreset {
         name: "openai",
@@ -80,6 +87,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         key_env: Some("OPENAI_API_KEY"),
         private: false,
         temperature: None,
+        json_object_response_format: true,
     },
     ProviderPreset {
         name: "claude",
@@ -91,6 +99,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         key_env: Some("OPENROUTER_API_KEY"),
         private: false,
         temperature: None,
+        json_object_response_format: true,
     },
     ProviderPreset {
         name: "ollama",
@@ -102,6 +111,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         key_env: None,
         private: true,
         temperature: None,
+        json_object_response_format: true,
     },
     ProviderPreset {
         name: "llamacpp",
@@ -113,6 +123,7 @@ pub const PRESETS: &[ProviderPreset] = &[
         key_env: None,
         private: true,
         temperature: None,
+        json_object_response_format: true,
     },
     ProviderPreset {
         name: "lmstudio",
@@ -124,6 +135,52 @@ pub const PRESETS: &[ProviderPreset] = &[
         key_env: None,
         private: true,
         temperature: None,
+        // Репорт 2026-08-08: LM Studio (в отличие от ollama/llama-server)
+        // отвечает 400 «response_format.type must be 'json_schema' or
+        // 'text'» на `{"type": "json_object"}` — живой прогон против
+        // localhost:1234 подтвердил и саму ошибку, и что без поля запрос
+        // проходит 200 OK. Живой список моделей (§20.14) работал всегда —
+        // это отдельный GET /models без chat/completions и без этого поля.
+        json_object_response_format: false,
+    },
+    ProviderPreset {
+        // Директива пользователя 2026-08-08: «llamaCpp, Ollama и другие
+        // локальные» — расширение набора локальных OpenAI-совместимых
+        // серверов инференса сверх уже имевшихся ollama/llamacpp/lmstudio.
+        name: "vllm",
+        display: "vLLM OpenAI-сервер (локальные модели)",
+        about: "локальный vllm serve --enable-auto-tool-choice, порт 8000",
+        base_url: "http://localhost:8000/v1",
+        default_model: "local",
+        tier: ModelTier::Strong,
+        key_env: None,
+        private: true,
+        temperature: None,
+        json_object_response_format: true,
+    },
+    ProviderPreset {
+        name: "textgenwebui",
+        display: "text-generation-webui / oobabooga (локальные модели)",
+        about: "локальный сервер с расширением openai, порт 5000",
+        base_url: "http://localhost:5000/v1",
+        default_model: "local",
+        tier: ModelTier::Weak,
+        key_env: None,
+        private: true,
+        temperature: None,
+        json_object_response_format: true,
+    },
+    ProviderPreset {
+        name: "koboldcpp",
+        display: "KoboldCpp (локальные модели)",
+        about: "локальный koboldcpp, OpenAI-совместимый endpoint, порт 5001",
+        base_url: "http://localhost:5001/v1",
+        default_model: "local",
+        tier: ModelTier::Weak,
+        key_env: None,
+        private: true,
+        temperature: None,
+        json_object_response_format: true,
     },
 ];
 
@@ -150,6 +207,7 @@ pub fn instantiate(
         allow_private_endpoint: preset.private,
         cost_per_1k_tokens: None,
         temperature: preset.temperature,
+        json_object_response_format: preset.json_object_response_format,
     }
 }
 
@@ -178,6 +236,9 @@ pub fn render_provider_toml(provider: &ProviderConfig) -> String {
     if let Some(temperature) = provider.temperature {
         block.push_str(&format!("temperature = {temperature:?}\n"));
     }
+    if !provider.json_object_response_format {
+        block.push_str("json_object_response_format = false\n");
+    }
     block
 }
 
@@ -189,7 +250,17 @@ mod tests {
     fn presets_cover_all_promised_providers() {
         let names: Vec<&str> = PRESETS.iter().map(|p| p.name).collect();
         for expected in [
-            "kimi", "moonshot", "deepseek", "openai", "claude", "ollama", "llamacpp", "lmstudio",
+            "kimi",
+            "moonshot",
+            "deepseek",
+            "openai",
+            "claude",
+            "ollama",
+            "llamacpp",
+            "lmstudio",
+            "vllm",
+            "textgenwebui",
+            "koboldcpp",
         ] {
             assert!(names.contains(&expected), "нет пресета {expected}");
         }
@@ -209,10 +280,54 @@ mod tests {
 
     #[test]
     fn local_presets_are_private_and_keyless() {
-        for name in ["ollama", "llamacpp", "lmstudio"] {
+        for name in [
+            "ollama",
+            "llamacpp",
+            "lmstudio",
+            "vllm",
+            "textgenwebui",
+            "koboldcpp",
+        ] {
             let preset = find_preset(name).unwrap();
             assert!(preset.private, "{name} обязан быть приватным");
             assert!(preset.key_env.is_none(), "{name} не требует ключа");
+        }
+    }
+
+    /// Репорт 2026-08-08: LM Studio отвечает 400 на
+    /// `response_format: {"type": "json_object"}` — пресет обязан
+    /// отключать поле, а отключение обязано пережить запись/чтение
+    /// TOML (иначе `/models add` пишет провайдера, который снова ловит
+    /// 400 на первом же структурном ходе).
+    #[test]
+    fn lmstudio_disables_json_object_response_format_and_it_round_trips_through_toml() {
+        let preset = find_preset("lmstudio").unwrap();
+        assert!(!preset.json_object_response_format);
+
+        let provider = instantiate(preset, None, None);
+        let toml_text = render_provider_toml(&provider);
+        assert!(toml_text.contains("json_object_response_format = false"));
+
+        let parsed: crate::config::PartialConfig = toml::from_str(&toml_text).unwrap();
+        assert!(!parsed.providers[0].json_object_response_format);
+    }
+
+    /// Остальные пресеты не платят за чужую находку: поле в TOML не
+    /// пишется вовсе (умолчание true и без него).
+    #[test]
+    fn presets_other_than_lmstudio_keep_json_object_response_format_enabled() {
+        for preset in PRESETS.iter().filter(|p| p.name != "lmstudio") {
+            assert!(
+                preset.json_object_response_format,
+                "{} неожиданно отключает json_object_response_format",
+                preset.name
+            );
+            let toml_text = render_provider_toml(&instantiate(preset, None, None));
+            assert!(
+                !toml_text.contains("json_object_response_format"),
+                "{}: поле не должно писаться при умолчании",
+                preset.name
+            );
         }
     }
 

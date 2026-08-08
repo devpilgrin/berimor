@@ -290,6 +290,7 @@ mod tests {
             allow_private_endpoint: false,
             cost_per_1k_tokens: None,
             temperature: None,
+            json_object_response_format: true,
         }
     }
 

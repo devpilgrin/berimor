@@ -83,9 +83,10 @@ fn print_help() {
     eprintln!("  /help        — этот список");
     eprintln!("  /config      — эффективная конфигурация (слои: глобальный ← локальный)");
     eprintln!("  /models      — провайдеры моделей эффективного конфига");
-    eprintln!("  /models add  — мастер пресетов (kimi, deepseek, openai, claude,");
-    eprintln!("                 ollama, llamacpp, lmstudio) → глобальный конфиг,");
-    eprintln!("                 рантайм перезагружается, история сохраняется");
+    eprintln!("  /models add  — мастер пресетов (kimi, moonshot, deepseek, openai,");
+    eprintln!("                 claude, ollama, llamacpp, lmstudio, vllm, textgenwebui,");
+    eprintln!("                 koboldcpp) → глобальный конфиг, рантайм перезагружается,");
+    eprintln!("                 история сохраняется");
     eprintln!("  /sessions    — живые сессии хоста (реестр журнала)");
     eprintln!("  /tell <id> <текст> — сообщение сессии (персистентная почта)");
     eprintln!("  /broadcast <текст> — сообщение всем живым сессиям");

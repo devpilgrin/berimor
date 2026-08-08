@@ -69,6 +69,19 @@ pub struct ProviderConfig {
     /// kimi задаёт её (§20.14, репорт 2026-08-03).
     #[serde(default)]
     pub temperature: Option<f32>,
+    /// `response_format: {"type": "json_object"}` в запросе — большинство
+    /// OpenAI-совместимых серверов его принимают, но не все (репорт
+    /// 2026-08-08: LM Studio отвечает 400 «response_format.type must be
+    /// 'json_schema' or 'text'» — весь чат структурного вывода падал на
+    /// каждом ходе). `false` — клиент не шлёт `response_format` вовсе,
+    /// полагаясь на инструкцию формата в самом промпте (как уже делает
+    /// CodeAct); пресет lmstudio задаёт `false`.
+    #[serde(default = "default_true")]
+    pub json_object_response_format: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Заглушка инструмента для `berimor run`: детерминированный ответ на

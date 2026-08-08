@@ -513,6 +513,7 @@ pub(crate) fn build_executor_bundle_with_session(
                     api_key,
                     p.allow_private_endpoint,
                     p.temperature,
+                    p.json_object_response_format,
                 )
                 .map_err(|err| RunError::Provider(err.to_string()))?,
             ),
@@ -1185,6 +1186,7 @@ mod oauth_wiring_tests {
             allow_private_endpoint: false,
             cost_per_1k_tokens: None,
             temperature: None,
+            json_object_response_format: true,
         }
     }
 

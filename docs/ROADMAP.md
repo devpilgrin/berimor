@@ -1011,6 +1011,86 @@ C1–C3, S1–S4, E1, E2, E3, E5, хотя эти задачи реализов�
 
 </details>
 
+### 20.31. Баг-репорт: провайдер LM Studio не отвечал + новые локальные пресеты
+
+**Статус: ✅ закрыто** (2026-08-08, в рабочем дереве на момент записи).
+Директива пользователя: «Провайдер LM Studio работает не корректно.
+Выбор моделей работает. Запрос к модели не проходит» + «добавить ещё
+пресеты: llamaCpp, Ollama и другие локальные».
+
+- **Корневая причина (найдена живым прогоном, не догадкой).** LM Studio
+  реально запущен на этой машине (`localhost:1234`) — `GET /v1/models`
+  (используется живым списком §20.14) отвечал 200 OK, поэтому выбор
+  модели в TUI работал. Но `POST /v1/chat/completions` с тем же телом,
+  что шлёт `OpenAiCompatibleProvider::complete` (`response_format:
+  {"type": "json_object"}` — ставится, когда шаг ждёт структурный
+  вывод, а таких шагов в `berimor chat`/`run` почти все), отвечал `400
+  {"error":"'response_format.type' must be 'json_schema' or 'text'"}`.
+  Без этого поля тот же запрос — 200 OK с корректным ответом. LM
+  Studio, в отличие от ollama/llama-server, не принимает устаревший
+  (в терминах самого OpenAI) вариант `json_object`.
+- **Фикс — квирк провайдера как код-данные (тот же приём, что
+  `temperature` у Kimi k3, §20.14):** новое поле
+  `ProviderConfig::json_object_response_format: bool` (serde-умолчание
+  `true` — существующие конфиги не ломаются) и
+  `ProviderPreset::json_object_response_format`; пресет `lmstudio`
+  ставит `false`. `OpenAiCompatibleProvider::new` принимает флаг,
+  `complete()` шлёт `response_format` только когда
+  `expects_structured_output && json_object_response_format` —
+  остальные провайдеры (openai/deepseek/kimi/moonshot/claude-через-
+  openrouter/ollama/llamacpp/vllm/textgenwebui/koboldcpp) не платят за
+  чужую находку: поле в TOML не пишется при умолчании
+  (`render_provider_toml`), в HTTP-теле есть как раньше.
+- **Живое доказательство — четыре независимых слоя, не пересказ:**
+  1. `curl` напрямую против `localhost:1234` — 400 с `response_format`,
+     200 OK без него, ДО правки кода.
+  2. Юнит-тест
+     `json_object_response_format_false_omits_the_field_even_when_structured_output_is_expected`
+     (`http_provider.rs`) — тот же сценарий против мок-сервера.
+  3. Реальный бинарник `berimor chat` (собран после правки) против
+     ТОГО ЖЕ живого LM Studio, `XDG_CONFIG_HOME` изолирован (чтобы
+     реальный `kimi`/`deepseek` пользователя не подменили провайдера
+     под капотом): `json_object_response_format = true` (старое
+     поведение) → ход падает ровно с текстом из репорта пользователя,
+     `провайдер ответил 400 Bad Request: "'response_format.type' must
+     be 'json_schema' or 'text'"`; `= false` (пресет lmstudio теперь) →
+     настоящий ответ модели, ход зелёный.
+  4. `presets.rs::lmstudio_disables_json_object_response_format_and_it_round_trips_through_toml`
+     — значение переживает запись/чтение TOML, не теряется при
+     `/models add`.
+- **Новые локальные пресеты** (директива «llamaCpp, Ollama и другие
+  локальные» — расширение сверх уже имевшихся): `vllm` (порт 8000,
+  `--enable-auto-tool-choice`), `textgenwebui` / oobabooga-расширение
+  `openai` (порт 5000), `koboldcpp` (порт 5001). Все — `private: true`,
+  без ключа, `json_object_response_format: true` (нет свидетельств
+  того же квирка — не гасится молча, только для доказанного случая).
+- Обновлены: `presets_cover_all_promised_providers`,
+  `local_presets_are_private_and_keyless`, добавлены
+  `lmstudio_disables_json_object_response_format_and_it_round_trips_through_toml`,
+  `presets_other_than_lmstudio_keep_json_object_response_format_enabled`;
+  подсказка `/help` в `chat.rs` приведена в соответствие полному списку
+  пресетов (была неполной уже до этой сессии — не хватало moonshot).
+
+**Честно принятые остаточные пробелы:**
+- TUI-путь (`chat_tui.rs`, pty) не гонялся живьём в этой сессии —
+  только REPL-путь (`run_repl`) реальным бинарником; логика клиента
+  (`http_provider.rs`) общая для обоих путей, но сам pty-прогон не
+  выполнялся.
+- Квирк `json_object_response_format` не автообнаруживается (не
+  пытается угадать по 400-ответу на лету) — осознанно: код-данные, не
+  эвристика в рантайме (ADR-0011), но значит следующий несовместимый
+  локальный сервер потребует нового пресета/ручной правки конфига, а
+  не будет исправлен сам.
+- **Существующий `~/.config/berimor/config.toml` этого пользователя
+  уже содержит блок `[[providers]] name = "lmstudio"` БЕЗ нового поля**
+  (записан до этой сессии) — код-фикс меняет пресет (новые `/models
+  add lmstudio`), но не переписывает уже сохранённые конфиги
+  (`render_provider_toml` дописывает, не редактирует существующие
+  блоки — тот же принцип «не переписывает чужие правки», что и
+  остальной мастер). У пользователя останется 400 на lmstudio, пока
+  строка `json_object_response_format = false` не окажется в его
+  блоке — вручную или через `/models add lmstudio` заново.
+
 ### 20.30. Компакция длинных сессий чата (prompt-next-wave.md задача 4)
 
 **Статус: ✅ закрыто** (2026-08-08, в рабочем дереве на момент записи).

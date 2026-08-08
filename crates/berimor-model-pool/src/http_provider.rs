@@ -51,6 +51,14 @@ pub struct OpenAiCompatibleProvider {
     /// is allowed», репорт 2026-08-03) — для них пресет/конфиг задаёт
     /// её явно.
     temperature: Option<f32>,
+    /// `false` — сервер отвергает `response_format: {"type":
+    /// "json_object"}` (репорт 2026-08-08: LM Studio — 400
+    /// «response_format.type must be 'json_schema' or 'text'», живой
+    /// прогон против localhost:1234 подтвердил и ошибку, и что без поля
+    /// тот же запрос проходит 200 OK). Поле тогда не отправляется
+    /// вовсе — как уже происходит для CodeAct при
+    /// `expects_structured_output: false`.
+    json_object_response_format: bool,
     client: reqwest::blocking::Client,
 }
 
@@ -63,6 +71,7 @@ impl OpenAiCompatibleProvider {
         api_key: Option<Secret>,
         allow_private_endpoint: bool,
         temperature: Option<f32>,
+        json_object_response_format: bool,
     ) -> Result<Self, ModelError> {
         // Находка 2.14 аудита: гейт применялся только к первому хопу —
         // reqwest следовал за 302 на непроверенный хост. Редирект для
@@ -81,6 +90,7 @@ impl OpenAiCompatibleProvider {
             temperature,
             api_key,
             allow_private_endpoint,
+            json_object_response_format,
             client,
         })
     }
@@ -174,10 +184,13 @@ impl ModelProvider for OpenAiCompatibleProvider {
             // работать через реальный OpenAI-совместимый endpoint (сервер
             // заставлял бы модель ответить JSON вместо JS-текста).
             // Явное поле `expects_structured_output` — не вывод из
-            // `contract_name`.
-            response_format: request.expects_structured_output.then_some(ResponseFormat {
-                kind: "json_object",
-            }),
+            // `contract_name`. Дополнительно гасится квирком провайдера
+            // (репорт 2026-08-08: LM Studio — 400 на этом поле).
+            response_format: (request.expects_structured_output
+                && self.json_object_response_format)
+                .then_some(ResponseFormat {
+                    kind: "json_object",
+                }),
         };
 
         // Ретраи на ТРАНСПОРТНЫЕ сбои (обрыв соединения, усечённое тело,
@@ -281,6 +294,7 @@ mod tests {
             None,
             false, // приватный endpoint БЕЗ opt-in — гейт обязан отказать
             None,
+            true,
         )
         .and_then(|p| p.complete(request()));
         assert!(result.is_err(), "гейт обязан видеть 127.0.0.1 за userinfo");
@@ -304,7 +318,8 @@ mod tests {
             stream.write_all(response.as_bytes()).unwrap();
         });
 
-        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true, None).unwrap();
+        let provider =
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true).unwrap();
         let result = provider.complete(request());
         server.join().unwrap();
         assert!(
@@ -374,6 +389,7 @@ mod tests {
             Some(Secret::new("sk-test".into())),
             true,
             None,
+            true,
         )
         .unwrap();
 
@@ -394,6 +410,28 @@ mod tests {
         assert_eq!(response.model.provider, "mock");
     }
 
+    /// Репорт 2026-08-08: LM Studio отвечает 400 «response_format.type
+    /// must be 'json_schema' or 'text'» на `{"type": "json_object"}`
+    /// (подтверждено живым прогоном против localhost:1234) — при таком
+    /// квирке провайдера поле не должно уходить вовсе, даже когда шаг
+    /// САМ по себе ждёт структурный вывод (`expects_structured_output:
+    /// true`). Без этого фикса каждый структурный ход `berimor chat`
+    /// падал на первом же запросе к LM Studio.
+    #[test]
+    fn json_object_response_format_false_omits_the_field_even_when_structured_output_is_expected() {
+        let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
+        let provider =
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, false).unwrap();
+
+        provider.complete(request()).unwrap();
+
+        let captured = server.join().unwrap();
+        assert!(
+            !captured.to_lowercase().contains("response_format"),
+            "квирк провайдера обязан гасить поле: {captured}"
+        );
+    }
+
     /// Техдолг TD3.3: `contract_name` присутствует (нужен Mediation
     /// результата — CodeAct тоже его передаёт), но `expects_structured_output:
     /// false` — сервер не должен получить `response_format`. Раньше поле
@@ -402,7 +440,8 @@ mod tests {
     #[test]
     fn expects_structured_output_false_omits_response_format_even_with_a_contract_name() {
         let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
-        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true, None).unwrap();
+        let provider =
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true).unwrap();
         let request = CompletionRequest {
             expects_structured_output: false,
             ..request()
@@ -423,7 +462,8 @@ mod tests {
     fn oversized_response_body_is_rejected_with_limit_error() {
         let huge = format!("{{\"pad\": \"{}\"}}", "x".repeat(9 * 1024 * 1024));
         let (url, server) = serve_once("200 OK", huge);
-        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true, None).unwrap();
+        let provider =
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true).unwrap();
 
         let result = provider.complete(request());
 
@@ -443,7 +483,8 @@ mod tests {
     #[test]
     fn response_within_limit_is_accepted() {
         let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
-        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true, None).unwrap();
+        let provider =
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true).unwrap();
         assert!(provider.complete(request()).is_ok());
         server.join().unwrap();
     }
@@ -451,7 +492,8 @@ mod tests {
     #[test]
     fn http_error_maps_to_unavailable() {
         let (url, server) = serve_once("500 Internal Server Error", "{\"error\": \"boom\"}".into());
-        let provider = OpenAiCompatibleProvider::new(identity(), url, None, true, None).unwrap();
+        let provider =
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true).unwrap();
 
         let result = provider.complete(request());
 
@@ -469,6 +511,7 @@ mod tests {
             None,
             false,
             None,
+            true,
         )
         .unwrap();
 
@@ -496,6 +539,7 @@ mod tests {
             None,
             false,
             None,
+            true,
         )
         .unwrap();
 
