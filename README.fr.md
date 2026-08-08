@@ -24,6 +24,7 @@ Agent universel pour LLM à noyau déterministe : le routage des tâches, le bra
 ![MCP](https://img.shields.io/badge/protocol-MCP-5B5BD6)
 ![ratatui](https://img.shields.io/badge/TUI-ratatui-E95420)
 ![sigstore](https://img.shields.io/badge/supply--chain-sigstore%20keyless-2E8B57)
+[![Socket](https://badge.socket.dev/npm/package/berimor)](https://socket.dev/npm/package/berimor)
 ![oxc](https://img.shields.io/badge/static%20analysis-oxc__parser-black)
 
 ---
