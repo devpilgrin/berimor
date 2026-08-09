@@ -243,6 +243,9 @@ enum PluginAction {
         #[arg(long)]
         capability_ceiling: Option<String>,
     },
+    /// Удалить установленный плагин (§20.36 — не трогает доверенный
+    /// список: репозиторий мог использоваться другими плагинами).
+    Remove { name: String },
 }
 
 #[derive(Subcommand)]
@@ -431,6 +434,13 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             }
+            PluginAction::Remove { name } => match plugin_install::remove(&name) {
+                Ok(path) => println!("удалено: {}", path.display()),
+                Err(err) => {
+                    eprintln!("[berimor] {err}");
+                    return ExitCode::FAILURE;
+                }
+            },
         },
         Command::Skill { action } => {
             let code = ext_cmd::run(ext_cmd::ExtKind::Skill, action);

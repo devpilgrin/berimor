@@ -54,6 +54,20 @@ const SLASH_COMMANDS: &[(&str, &str)] = &[
     ),
     ("/tools", "список доступных инструментов"),
     ("/skills", "список установленных скилов"),
+    ("/skills add", "установить скилл из каталога berimor-skills"),
+    ("/skills remove", "удалить установленный скилл"),
+    ("/agents", "список установленных субагентов"),
+    (
+        "/agents add",
+        "установить субагента из каталога berimor-agents",
+    ),
+    ("/agents remove", "удалить установленного субагента"),
+    ("/plugins", "список установленных плагинов"),
+    (
+        "/plugins add",
+        "установить плагин из доверенного репозитория",
+    ),
+    ("/plugins remove", "удалить установленный плагин"),
     ("/exit", "завершить"),
     ("/quit", "завершить"),
 ];
@@ -172,6 +186,27 @@ enum Flow {
     SwitchPickProvider,
     /// /model: выбор модели провайдера.
     SwitchPickModel { provider_name: String },
+    /// /skills add, /agents add (§20.36): пикер из живого git-каталога
+    /// (тот же приём, что AddPickModel — картинка для показа отдельно
+    /// от чистого имени для установки). `names[i]` соответствует
+    /// `picker.items[i]`.
+    ExtCatalogPick {
+        kind: crate::ext_cmd::ExtKind,
+        names: Vec<String>,
+    },
+    /// /skills remove, /agents remove: пикер из УСТАНОВЛЕННЫХ.
+    ExtRemovePick {
+        kind: crate::ext_cmd::ExtKind,
+        names: Vec<String>,
+    },
+    /// /plugins add: ввод URL репозитория (не маскируется — не секрет).
+    /// Установка — не пикер (нет каталога плагинов, см. catalog.rs) и
+    /// не эта конечная точка: Enter лишь копит `input`, реальный запуск
+    /// — через `App.pending_plugin_install`, обработанный в
+    /// `event_loop` (нужен доступ к `Terminal` для приостановки TUI).
+    PluginAskRepo { input: String },
+    /// /plugins remove: пикер из установленных плагинов.
+    PluginRemovePick { names: Vec<String> },
 }
 
 struct App {
@@ -216,6 +251,18 @@ struct App {
     session_grants: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Установленные скилы (§20.16): триггер — кодом, потолок — фильтром.
     skills: Vec<crate::skills::Skill>,
+    /// Установленные субагенты (§20.36: видны и устанавливаются из TUI,
+    /// не только CLI).
+    agents: Vec<crate::agents::AgentDef>,
+    /// URL репозитория плагина, набранный в `Flow::PluginAskRepo` и
+    /// ГОТОВЫЙ к запуску (§20.36): установка плагина — полноценный
+    /// process-engine-инстанс с человеческим гейтом (TOFU доверия
+    /// репозиторию) — не переписывается под канал TUI, вместо этого
+    /// `event_loop` временно ПРИОСТАНАВЛИВАЕТ альтернативный экран/raw
+    /// mode и прогоняет реальный `plugin_install::run` как в CLI, потом
+    /// восстанавливает TUI. Поле — сигнал из `handle_key` (без доступа
+    /// к `Terminal`) в `event_loop` (где `Terminal` есть).
+    pending_plugin_install: Option<String>,
     /// Ответ воркеру на подтверждение (канал создаётся на ход).
     answer_tx: Option<Sender<ConfirmAnswer>>,
     tx: Sender<WorkerMsg>,
@@ -297,6 +344,8 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
             std::sync::Mutex::new(std::collections::HashSet::new()),
         ),
         skills: crate::skills::load_all(&std::env::current_dir().unwrap_or_default()),
+        agents: crate::agents::load_all(&std::env::current_dir().unwrap_or_default()),
+        pending_plugin_install: None,
         answer_tx: None,
         tx,
         rx,
@@ -411,8 +460,40 @@ fn event_loop(
         } else if app.busy {
             app.spinner_frame += 1; // тик спиннера по таймауту poll
         }
+
+        // /plugins add (§20.36): установка плагина — реальный
+        // process-engine-инстанс с human_gate (TOFU доверия репозиторию),
+        // подключённый к блокирующему stdin — как в CLI, не переписан
+        // под канал TUI. Вместо того чтобы дублировать security-
+        // критичный код, TUI временно ВЫХОДИТ из alternate screen/raw
+        // mode (тот же приём, что у редактора коммит-сообщения git),
+        // прогоняет тот же `plugin_install::run`, что CLI, и
+        // восстанавливается. `handle_key` не может сделать это сама —
+        // ей не передан `Terminal`; сигнал — `pending_plugin_install`.
+        if let Some(repo) = app.pending_plugin_install.take() {
+            suspend_and_install_plugin(app, terminal, &repo);
+        }
     }
     Ok(())
+}
+
+/// См. комментарий в `event_loop` у места вызова.
+fn suspend_and_install_plugin(
+    app: &mut App,
+    terminal: &mut Terminal<ratatui::backend::CrosstermBackend<Stdout>>,
+    repo: &str,
+) {
+    let _ = terminal.backend_mut().execute(LeaveAlternateScreen);
+    let _ = disable_raw_mode();
+    println!("[berimor] установка плагина из {repo} (как в CLI berimor plugin install):");
+    let result = crate::plugin_install::run(&app.config, repo, &None, None, None, None);
+    let _ = enable_raw_mode();
+    let _ = terminal.backend_mut().execute(EnterAlternateScreen);
+    let _ = terminal.clear(); // экран вне TUI мог оставить чужой контент
+    match result {
+        Ok(()) => app.sys(format!("плагин установлен из {repo}")),
+        Err(err) => app.sys(format!("установка плагина не удалась: {err}")),
+    }
 }
 
 impl App {
@@ -630,6 +711,61 @@ impl App {
                     self.sys(line);
                 }
             }
+            "skills add" => self.open_ext_catalog_picker(crate::ext_cmd::ExtKind::Skill),
+            "skills remove" => self.open_ext_remove_picker(crate::ext_cmd::ExtKind::Skill),
+            "agents" => {
+                if self.agents.is_empty() {
+                    self.sys("субагенты не установлены — /agents add");
+                }
+                let lines: Vec<String> = self
+                    .agents
+                    .iter()
+                    .map(|agent| format!("{} — {}", agent.name, agent.description))
+                    .collect();
+                for line in lines {
+                    self.sys(line);
+                }
+            }
+            "agents add" => self.open_ext_catalog_picker(crate::ext_cmd::ExtKind::Agent),
+            "agents remove" => self.open_ext_remove_picker(crate::ext_cmd::ExtKind::Agent),
+            "plugins" => {
+                let dispatch = crate::plugin_runtime::PluginRuntimeDispatch::scan(
+                    &crate::plugin_install::plugins_root_dir(),
+                );
+                if dispatch.is_empty() {
+                    self.sys("плагины не установлены — /plugins add <repo>");
+                }
+                for (name, tools) in dispatch.summaries() {
+                    let tools = if tools.is_empty() {
+                        "без инструментов".to_string()
+                    } else {
+                        tools.join(", ")
+                    };
+                    self.sys(format!("{name} — {tools}"));
+                }
+            }
+            "plugins add" => {
+                self.flow = Some(Flow::PluginAskRepo {
+                    input: String::new(),
+                });
+            }
+            "plugins remove" => {
+                let dispatch = crate::plugin_runtime::PluginRuntimeDispatch::scan(
+                    &crate::plugin_install::plugins_root_dir(),
+                );
+                let names: Vec<String> = dispatch.summaries().into_iter().map(|(n, _)| n).collect();
+                if names.is_empty() {
+                    self.sys("ничего не установлено");
+                    return;
+                }
+                let items = names.clone();
+                self.picker = Some(Picker::new(
+                    "Удалить плагин (Enter — подтвердить)",
+                    items,
+                    false,
+                ));
+                self.flow = Some(Flow::PluginRemovePick { names });
+            }
             other => {
                 // Slash-триггер скилла (§20.16): неизвестная встроенная
                 // команда может быть триггером — тогда это сообщение агенту.
@@ -765,6 +901,47 @@ impl App {
                 ));
             }
             Flow::AddAskKey { .. } => {} // обрабатывается в вводе, не пикером
+            Flow::PluginAskRepo { .. } => {} // обрабатывается в вводе, не пикером
+            Flow::ExtCatalogPick { kind, names } => {
+                let Some(name) = picker.selected().and_then(|i| names.get(i)).cloned() else {
+                    return;
+                };
+                let root = match crate::ext_cmd::dest_root(&kind, false) {
+                    Ok(root) => root,
+                    Err(err) => {
+                        self.sys(err);
+                        return;
+                    }
+                };
+                match crate::catalog::install(kind.default_repo(), kind.prefix(), &name, &root) {
+                    Ok(path) => {
+                        self.sys(format!("установлено: {}", path.display()));
+                        self.reload_extensions();
+                    }
+                    Err(err) => self.sys(format!("установка не удалась: {err}")),
+                }
+            }
+            Flow::ExtRemovePick { kind, names } => {
+                let Some(name) = picker.selected().and_then(|i| names.get(i)).cloned() else {
+                    return;
+                };
+                match crate::ext_cmd::remove_installed(&kind, &name, false) {
+                    Ok(path) => {
+                        self.sys(format!("удалено: {}", path.display()));
+                        self.reload_extensions();
+                    }
+                    Err(err) => self.sys(err),
+                }
+            }
+            Flow::PluginRemovePick { names } => {
+                let Some(name) = picker.selected().and_then(|i| names.get(i)).cloned() else {
+                    return;
+                };
+                match crate::plugin_install::remove(&name) {
+                    Ok(path) => self.sys(format!("удалено: {}", path.display())),
+                    Err(err) => self.sys(err),
+                }
+            }
         }
     }
 
@@ -848,6 +1025,57 @@ impl App {
             }
             Err(err) => self.sys(format!("перечитать конфиг: {err}")),
         }
+    }
+
+    /// /skills add, /agents add (§20.36): живой git-каталог — тот же
+    /// приём, что `fetch_models` для провайдеров.
+    fn open_ext_catalog_picker(&mut self, kind: crate::ext_cmd::ExtKind) {
+        let repo = kind.default_repo();
+        match crate::catalog::sync(repo) {
+            Ok(dir) => {
+                let entries = crate::catalog::list(&dir, kind.prefix(), kind.marker());
+                if entries.is_empty() {
+                    self.sys(format!("каталог пуст ({})", kind.prefix()));
+                    return;
+                }
+                let names: Vec<String> = entries.iter().map(|e| e.name.clone()).collect();
+                let items: Vec<String> = entries
+                    .iter()
+                    .map(|e| format!("{} — {}", e.name, e.summary))
+                    .collect();
+                self.picker = Some(Picker::new(
+                    format!("Каталог {} (Enter — установить)", kind.prefix()),
+                    items,
+                    false,
+                ));
+                self.flow = Some(Flow::ExtCatalogPick { kind, names });
+            }
+            Err(err) => self.sys(format!("каталог недоступен: {err}")),
+        }
+    }
+
+    /// /skills remove, /agents remove: пикер из уже установленных.
+    fn open_ext_remove_picker(&mut self, kind: crate::ext_cmd::ExtKind) {
+        let names: Vec<String> = match kind {
+            crate::ext_cmd::ExtKind::Skill => self.skills.iter().map(|s| s.name.clone()).collect(),
+            crate::ext_cmd::ExtKind::Agent => self.agents.iter().map(|a| a.name.clone()).collect(),
+        };
+        if names.is_empty() {
+            self.sys("ничего не установлено");
+            return;
+        }
+        let items = names.clone();
+        self.picker = Some(Picker::new("Удалить (Enter — подтвердить)", items, false));
+        self.flow = Some(Flow::ExtRemovePick { kind, names });
+    }
+
+    /// Перечитывает установленные скилы/субагенты после install/remove
+    /// (§20.36) — без этого требовался бы перезапуск `berimor` для
+    /// подхвата изменения, сделанного в ЭТОЙ же сессии.
+    fn reload_extensions(&mut self) {
+        let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        self.skills = crate::skills::load_all(&workspace);
+        self.agents = crate::agents::load_all(&workspace);
     }
 }
 
@@ -954,6 +1182,33 @@ fn handle_key(app: &mut App, key: KeyEvent) {
                     app.pick_model_for(preset);
                 }
             }
+            KeyCode::Backspace => {
+                input.pop();
+            }
+            KeyCode::Char(c) => input.push(c),
+            _ => {}
+        }
+        return;
+    }
+
+    // Ввод URL репозитория плагина (не маскируется — не секрет).
+    // Реальный запуск установки — не здесь: только копим `input` и
+    // сигналим через `pending_plugin_install`, потому что установка
+    // плагина требует ПРИОСТАНОВКИ TUI (нужен `Terminal`, которого
+    // здесь нет) — обрабатывает `event_loop` после этого вызова.
+    if let Some(Flow::PluginAskRepo { input }) = &mut app.flow {
+        match key.code {
+            KeyCode::Enter => {
+                if let Some(Flow::PluginAskRepo { input }) = app.flow.take() {
+                    let repo = input.trim().to_string();
+                    if repo.is_empty() {
+                        app.sys("пустой URL — отменено");
+                    } else {
+                        app.pending_plugin_install = Some(repo);
+                    }
+                }
+            }
+            KeyCode::Esc => app.flow = None,
             KeyCode::Backspace => {
                 input.pop();
             }
@@ -1145,6 +1400,9 @@ fn draw(frame: &mut Frame, app: &App) {
     }
     if let Some(Flow::AddAskKey { key_env, input, .. }) = &app.flow {
         draw_key_prompt(frame, key_env, input.len());
+    }
+    if let Some(Flow::PluginAskRepo { input }) = &app.flow {
+        draw_plugin_repo_prompt(frame, input);
     }
     if let Some(prompt) = &app.confirm_prompt {
         draw_confirm(frame, prompt, app.confirm_selection);
@@ -1570,6 +1828,22 @@ fn draw_key_prompt(frame: &mut Frame, key_env: &str, input_len: usize) {
     frame.render_widget(prompt, area);
 }
 
+/// /plugins add: ввод URL — не маскируется (не секрет).
+fn draw_plugin_repo_prompt(frame: &mut Frame, input: &str) {
+    let area = centered_rect(60, 20, frame.area());
+    let prompt = Paragraph::new(vec![
+        Line::from(" URL репозитория плагина:"),
+        Line::from(format!(" {input}")),
+        Line::from(Span::styled(
+            " Enter — установить (приостановит TUI на время установки) · Esc — отмена",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ])
+    .block(Block::default().borders(Borders::ALL).title(" плагин "));
+    frame.render_widget(Clear, area);
+    frame.render_widget(prompt, area);
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -1624,6 +1898,8 @@ mod tests {
                 std::collections::HashSet::new(),
             )),
             skills: Vec::new(),
+            agents: Vec::new(),
+            pending_plugin_install: None,
             answer_tx: None,
             tx,
             rx,
@@ -1670,6 +1946,8 @@ mod tests {
                 std::collections::HashSet::new(),
             )),
             skills: Vec::new(),
+            agents: Vec::new(),
+            pending_plugin_install: None,
             answer_tx: None,
             tx,
             rx,
@@ -1717,6 +1995,8 @@ mod tests {
                 std::collections::HashSet::new(),
             )),
             skills: Vec::new(),
+            agents: Vec::new(),
+            pending_plugin_install: None,
             answer_tx: None,
             tx,
             rx,
@@ -1857,6 +2137,8 @@ mod tests {
                 body: String::new(),
                 origin: std::path::PathBuf::from("/tmp/x"),
             }],
+            agents: Vec::new(),
+            pending_plugin_install: None,
             answer_tx: None,
             tx,
             rx,
@@ -1876,6 +2158,168 @@ mod tests {
             text.contains("code-review-ru"),
             "ожидали скилл в логе: {text}"
         );
+    }
+
+    /// /agents в TUI (§20.36 — команды не было вовсе): ветка run_command
+    /// выводит установленных субагентов, тот же приём, что /skills.
+    #[test]
+    fn run_command_agents_lists_installed() {
+        let (tx, rx) = channel();
+        let mut app = App {
+            config: Config::default(),
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: vec![],
+            agents: vec![crate::agents::AgentDef {
+                name: "reviewer".into(),
+                description: "Только чтение, ревью diff'ов".into(),
+                ..Default::default()
+            }],
+            pending_plugin_install: None,
+            answer_tx: None,
+            tx,
+            rx,
+            done: false,
+        };
+        app.run_command("agents");
+        let text = app
+            .log
+            .iter()
+            .map(|l| match l {
+                LogLine::Sys(t) | LogLine::Tool(t) | LogLine::User(t) => t.clone(),
+                LogLine::Assistant(t) | LogLine::Err(t) => t.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            text.contains("reviewer"),
+            "ожидали субагента в логе: {text}"
+        );
+    }
+
+    /// §20.36: ввод URL плагина — Enter с непустым текстом сигналит
+    /// `pending_plugin_install` (реальный запуск — в `event_loop`, не
+    /// здесь: нужен `Terminal` для приостановки TUI). Esc/Backspace/
+    /// Char — та же механика, что у AddAskKey.
+    #[test]
+    fn plugin_ask_repo_enter_sets_pending_install() {
+        let (tx, rx) = channel();
+        let mut app = App {
+            config: Config::default(),
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: Some(Flow::PluginAskRepo {
+                input: String::new(),
+            }),
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: vec![],
+            agents: vec![],
+            pending_plugin_install: None,
+            answer_tx: None,
+            tx,
+            rx,
+            done: false,
+        };
+        for c in "https://example.test/plugin".chars() {
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        assert!(app.pending_plugin_install.is_none(), "ещё не Enter");
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(
+            app.pending_plugin_install.as_deref(),
+            Some("https://example.test/plugin")
+        );
+        assert!(app.flow.is_none(), "flow снят после Enter");
+    }
+
+    /// Esc отменяет ввод URL без сигнала установки.
+    #[test]
+    fn plugin_ask_repo_esc_cancels_without_pending_install() {
+        let (tx, rx) = channel();
+        let mut app = App {
+            config: Config::default(),
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: Some(Flow::PluginAskRepo {
+                input: "partial".into(),
+            }),
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: vec![],
+            agents: vec![],
+            pending_plugin_install: None,
+            answer_tx: None,
+            tx,
+            rx,
+            done: false,
+        };
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.pending_plugin_install.is_none());
+        assert!(app.flow.is_none());
     }
 
     /// Репорт 2026-08-09: «инструменты не обновляются, настроек нет» —
@@ -1919,6 +2363,8 @@ mod tests {
                 std::collections::HashSet::new(),
             )),
             skills: vec![],
+            agents: Vec::new(),
+            pending_plugin_install: None,
             answer_tx: None,
             tx,
             rx,
@@ -1946,6 +2392,27 @@ mod tests {
         let names: Vec<&str> = SLASH_COMMANDS.iter().map(|(name, _)| *name).collect();
         assert!(names.contains(&"/tools"));
         assert!(names.contains(&"/skills"));
+    }
+
+    /// §20.36: установка/удаление скилов, субагентов, плагинов из TUI —
+    /// без объявления в SLASH_COMMANDS они не видны ни в /help, ни в
+    /// автодополнении по `/` (тот же класс пробела, что был у /skills
+    /// до §20.33).
+    #[test]
+    fn slash_commands_advertise_ext_and_plugin_actions() {
+        let names: Vec<&str> = SLASH_COMMANDS.iter().map(|(name, _)| *name).collect();
+        for expected in [
+            "/skills add",
+            "/skills remove",
+            "/agents",
+            "/agents add",
+            "/agents remove",
+            "/plugins",
+            "/plugins add",
+            "/plugins remove",
+        ] {
+            assert!(names.contains(&expected), "нет команды {expected}");
+        }
     }
 
     /// Репорт 0.14.0: пользователь жмёт ↓ к «проекту», модал слушал
@@ -1982,6 +2449,8 @@ mod tests {
                 std::collections::HashSet::new(),
             )),
             skills: Vec::new(),
+            agents: Vec::new(),
+            pending_plugin_install: None,
             answer_tx: Some(answer_tx),
             tx,
             rx,
@@ -2042,6 +2511,8 @@ mod tests {
                 std::collections::HashSet::new(),
             )),
             skills: Vec::new(),
+            agents: Vec::new(),
+            pending_plugin_install: None,
             answer_tx: None,
             tx,
             rx,

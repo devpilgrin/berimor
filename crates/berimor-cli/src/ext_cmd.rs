@@ -45,27 +45,28 @@ pub enum ExtAction {
 }
 
 /// Тип расширения — параметризует каталог, префикс и маркер манифеста.
+#[derive(Clone, Copy)]
 pub enum ExtKind {
     Skill,
     Agent,
 }
 
 impl ExtKind {
-    fn default_repo(&self) -> &'static str {
+    pub(crate) fn default_repo(&self) -> &'static str {
         match self {
             ExtKind::Skill => crate::catalog::DEFAULT_SKILLS_REPO,
             ExtKind::Agent => crate::catalog::DEFAULT_AGENTS_REPO,
         }
     }
 
-    fn prefix(&self) -> &'static str {
+    pub(crate) fn prefix(&self) -> &'static str {
         match self {
             ExtKind::Skill => "skills",
             ExtKind::Agent => "agents",
         }
     }
 
-    fn marker(&self) -> &'static str {
+    pub(crate) fn marker(&self) -> &'static str {
         match self {
             ExtKind::Skill => "SKILL.md",
             ExtKind::Agent => "agent.yaml",
@@ -80,7 +81,7 @@ impl ExtKind {
     }
 }
 
-fn dest_root(kind: &ExtKind, project: bool) -> Result<PathBuf, String> {
+pub(crate) fn dest_root(kind: &ExtKind, project: bool) -> Result<PathBuf, String> {
     if project {
         let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
         Ok(cwd.join(".berimor").join(kind.prefix()))
@@ -264,23 +265,54 @@ fn install(kind: &ExtKind, name: &str, project: bool, repo: Option<&str>) -> i32
 }
 
 fn remove(kind: &ExtKind, name: &str, project: bool) -> i32 {
-    let Ok(root) = dest_root(kind, project) else {
-        eprintln!("глобальная директория недоступна");
-        return 1;
-    };
-    let target = root.join(name);
-    if !target.is_dir() {
-        eprintln!("'{name}' не установлен ({})", root.display());
-        return 1;
-    }
-    match std::fs::remove_dir_all(&target) {
-        Ok(()) => {
+    match remove_installed(kind, name, project) {
+        Ok(target) => {
             println!("удалено: {}", target.display());
             0
         }
         Err(err) => {
-            eprintln!("удаление не удалось: {err}");
+            eprintln!("{err}");
             1
         }
+    }
+}
+
+/// Чистая логика удаления — без println!/exit-кодов, переиспользуется
+/// TUI (`chat_tui.rs::run_command("... remove")`), не только CLI.
+pub(crate) fn remove_installed(
+    kind: &ExtKind,
+    name: &str,
+    project: bool,
+) -> Result<PathBuf, String> {
+    let root =
+        dest_root(kind, project).map_err(|_| "глобальная директория недоступна".to_string())?;
+    let target = root.join(name);
+    if !target.is_dir() {
+        return Err(format!("'{name}' не установлен ({})", root.display()));
+    }
+    std::fs::remove_dir_all(&target).map_err(|err| format!("удаление не удалось: {err}"))?;
+    Ok(target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Отрицательный путь — безопасен для параллельных `cargo test`: не
+    /// трогает реальную глобальную директорию (`dest_root(project:
+    /// false)` — платформенный `~/.config/berimor`), только читает.
+    /// Позитивный путь (реальное удаление) — CWD-зависим
+    /// (`dest_root(project: true)` = `cwd.join(".berimor")`), проверен
+    /// живым прогоном в TUI, не юнит-тестом (та же осторожность, что
+    /// уберегла от инцидента со случайным note.txt в исходниках пакета
+    /// в этой же сессии ранее).
+    #[test]
+    fn remove_installed_errors_when_not_installed() {
+        let result = remove_installed(
+            &ExtKind::Skill,
+            "definitely-not-a-real-skill-anywhere-xyz123",
+            false,
+        );
+        assert!(result.is_err());
     }
 }

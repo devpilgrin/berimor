@@ -91,6 +91,20 @@ pub(crate) fn plugins_root_dir() -> PathBuf {
         .unwrap_or_else(|| std::env::temp_dir().join("berimor-plugins"))
 }
 
+/// Удаляет установленный плагин (§20.36 — команда отсутствовала вовсе,
+/// ни в CLI, ни в TUI). Только `installed/<name>/` — доверенный список
+/// (trust_list) не трогается: репозиторий мог использоваться другими
+/// плагинами, отзыв доверия — отдельное осознанное действие, не
+/// побочный эффект удаления одного плагина.
+pub fn remove(name: &str) -> Result<PathBuf, String> {
+    let target = plugins_root_dir().join("installed").join(name);
+    if !target.is_dir() {
+        return Err(format!("'{name}' не установлен ({})", target.display()));
+    }
+    std::fs::remove_dir_all(&target).map_err(|err| format!("удаление не удалось: {err}"))?;
+    Ok(target)
+}
+
 /// Локальная/неподписанная установка плагина (§20.19): каталог с
 /// бинарником + manifest.yaml, или git-репозиторий такой же раскладки.
 /// Подпись не проверяется — потому и требуется ЯВНЫЙ `--allow-unsigned`
@@ -962,6 +976,18 @@ mod tests {
             );
         }
         assert!(validate_plugin_name("hello-tool").is_ok());
+    }
+
+    /// §20.36: `remove` не установлено — отказ, не паника/тихий успех.
+    /// Позитивный путь (реальное удаление) — живой прогон в TUI, не
+    /// юнит-тест: `plugins_root_dir()` указывает на РЕАЛЬНУЮ платформенную
+    /// директорию пользователя, трогать её из параллельного тестового
+    /// бинаря небезопасно (та же осторожность, что у remove_installed
+    /// в ext_cmd.rs).
+    #[test]
+    fn remove_errors_when_not_installed() {
+        let result = remove("definitely-not-a-real-plugin-anywhere-xyz123");
+        assert!(result.is_err());
     }
     use super::*;
 

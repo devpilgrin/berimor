@@ -63,6 +63,26 @@ impl PluginRuntimeDispatch {
         self.plugins.is_empty()
     }
 
+    /// Имя + имена инструментов на плагин — для `berimor plugin list`/
+    /// `/plugins` в TUI (§20.36). Манифест не несёт собственного
+    /// description (только по-инструментно) — сводка из имён.
+    pub fn summaries(&self) -> Vec<(String, Vec<String>)> {
+        self.plugins
+            .iter()
+            .map(|p| {
+                (
+                    p.manifest.name.clone(),
+                    p.manifest
+                        .capabilities
+                        .tools
+                        .iter()
+                        .map(|t| t.name.clone())
+                        .collect(),
+                )
+            })
+            .collect()
+    }
+
     pub fn has_tool(&self, tool: &str) -> bool {
         self.plugins
             .iter()
@@ -213,6 +233,23 @@ mod tests {
         let policies = dispatch.policies();
         assert_eq!(policies.len(), 1);
         assert_eq!(policies[0].1.mutates, Some(false));
+    }
+
+    /// §20.36: `/plugins` в TUI показывает установленные плагины и их
+    /// инструменты — `summaries()` источник данных для этой команды.
+    #[test]
+    fn summaries_lists_installed_plugins_with_tool_names() {
+        let root = std::env::temp_dir().join(format!("berimor-plugin-sum-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        plant_plugin(&root);
+        let dispatch = PluginRuntimeDispatch::scan(&root);
+
+        let summaries = dispatch.summaries();
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].0, "hello");
+        assert_eq!(summaries[0].1, vec!["hello.greet".to_string()]);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]
