@@ -73,6 +73,11 @@ const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/plugins remove", "удалить установленный плагин"),
     ("/exit", "завершить"),
     ("/quit", "завершить"),
+    (
+        "/mouse",
+        "отпустить/захватить мышь (нативное выделение vs колесо)",
+    ),
+    ("/copy", "последний ответ агента — в буфер обмена"),
 ];
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -279,6 +284,10 @@ struct App {
     answer_tx: Option<Sender<ConfirmAnswer>>,
     /// Фокус мыши: журнал (прокрутка) или поле ввода (по умолчанию).
     focus: Focus,
+    /// Мышь захвачена (колесо/клик) или отпущена (`/mouse` — нативное
+    /// выделение текста; репорт 2026-08-09: «перестало работать
+    /// копирование»). Захвачена по умолчанию — как у Claude Code.
+    mouse_capture: bool,
     /// Области журнала и поля ввода последнего кадра — для hit-test
     /// кликов и колеса (записываются в `draw`, читаются в
     /// `handle_mouse`).
@@ -370,6 +379,7 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         pending_plugin_install: None,
         answer_tx: None,
         focus: Focus::Input,
+        mouse_capture: true,
         log_area: Rect::default(),
         input_area: Rect::default(),
         input_scroll: 0,
@@ -670,6 +680,44 @@ impl App {
     fn run_command(&mut self, command: &str) {
         match command {
             "exit" | "quit" => self.done = true,
+            // Репорт 2026-08-09: «перестали работать выделение и
+            // копирование» — неизбежная цена захвата мыши (у Claude
+            // Code — та же модель: полный захват, выделение через
+            // Shift). Переключатель отпускает захват: выделение снова
+            // нативное, колесо и клик-фокус отключаются до повторного
+            // /mouse.
+            "mouse" => {
+                self.mouse_capture = !self.mouse_capture;
+                let mut out = std::io::stdout();
+                if self.mouse_capture {
+                    let _ = out.execute(EnableMouseCapture);
+                    self.sys(
+                        "мышь захвачена: колесо и клик-фокус работают; выделение — Shift+drag",
+                    );
+                } else {
+                    let _ = out.execute(DisableMouseCapture);
+                    self.sys(
+                        "мышь отпущена: выделение нативное; колесо недоступно. Вернуть — /mouse",
+                    );
+                }
+            }
+            // Копирование без выделения: последний ответ агента — в
+            // буфер обмена внешней утилитой (без новых зависимостей).
+            "copy" => {
+                let last = self.log.iter().rev().find_map(|line| match line {
+                    LogLine::Assistant(text) => Some(text.clone()),
+                    _ => None,
+                });
+                match last {
+                    Some(text) => match copy_to_clipboard(&text) {
+                        Ok(tool) => {
+                            self.sys(format!("последний ответ скопирован в буфер ({tool})"))
+                        }
+                        Err(err) => self.sys(err),
+                    },
+                    None => self.sys("журнал пуст — нечего копировать"),
+                }
+            }
             "help" => {
                 for (name, about) in SLASH_COMMANDS {
                     self.sys(format!("{name:<12} — {about}"));
@@ -1520,6 +1568,38 @@ fn point_in_rect(area: Rect, x: u16, y: u16) -> bool {
     x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height
 }
 
+/// Буфер обмена — внешней утилитой, без новых зависимостей (репорт
+/// 2026-08-09, /copy): Wayland — wl-copy, X11 — xclip/xsel, macOS —
+/// pbcopy. Ошибка — говорящая строка для sys-сообщения, не паника.
+fn copy_to_clipboard(text: &str) -> Result<&'static str, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let candidates: [(&str, &[&str]); 4] = [
+        ("wl-copy", &[]),
+        ("xclip", &["-selection", "clipboard"]),
+        ("xsel", &["--clipboard", "--input"]),
+        ("pbcopy", &[]),
+    ];
+    for (prog, args) in candidates {
+        let Ok(mut child) = Command::new(prog)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            continue;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        if matches!(child.wait(), Ok(status) if status.success()) {
+            return Ok(prog);
+        }
+    }
+    Err("буфер обмена недоступен: не найдено wl-copy/xclip/xsel/pbcopy".into())
+}
+
 /// Байтовые сдвиги начал логических строк (разделитель — '\n').
 fn line_starts(input: &str) -> Vec<usize> {
     let mut starts = vec![0];
@@ -2023,6 +2103,8 @@ fn draw_hints(frame: &mut Frame, app: &App, area: Rect) {
         " ↑↓ — выбор · Tab/Enter — вставить · Esc — закрыть"
     } else if app.focus == Focus::Log {
         " журнал в фокусе · ↑↓/PgUp/PgDn/колесо — прокрутка · Esc или клик по вводу — назад"
+    } else if !app.mouse_capture {
+        " мышь отпущена — выделение нативное · /mouse — вернуть колесо · /copy — ответ в буфер"
     } else {
         " Enter — отправить · Alt+Enter — новая строка · колесо/клик — журнал · выделение — Shift+drag · / — команды"
     };
@@ -2179,6 +2261,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2233,6 +2316,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2317,6 +2401,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Log,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2381,6 +2466,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2454,6 +2540,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2477,6 +2564,33 @@ mod tests {
         assert_eq!(display_rows(" › a\nb", 10), 2);
         assert_eq!(display_pos(" › a\nb", 10), (1, 1));
         assert_eq!(display_pos(" › привет", 5), (4, 1));
+    }
+
+    /// /mouse (репорт 2026-08-09): переключатель захвата — флаг
+    /// двигается, sys-сообщения честные обе стороны. /copy на пустом
+    /// журнале — говорящий отказ, не паника и не молчание.
+    #[test]
+    fn mouse_command_toggles_capture_and_copy_reports_empty_log() {
+        let (tx, rx) = channel();
+        let mut app = blank_app(tx, rx);
+        assert!(app.mouse_capture);
+        app.run_command("mouse");
+        assert!(!app.mouse_capture);
+        assert!(app.log.iter().any(|l| matches!(
+            l,
+            LogLine::Sys(t) if t.contains("мышь отпущена")
+        )));
+        app.run_command("mouse");
+        assert!(app.mouse_capture);
+        assert!(app.log.iter().any(|l| matches!(
+            l,
+            LogLine::Sys(t) if t.contains("мышь захвачена")
+        )));
+        app.run_command("copy");
+        assert!(app.log.iter().any(|l| matches!(
+            l,
+            LogLine::Sys(t) if t.contains("нечего копировать")
+        )));
     }
 
     #[test]
@@ -2519,6 +2633,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2665,6 +2780,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2728,6 +2844,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2791,6 +2908,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2850,6 +2968,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2894,6 +3013,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -3026,6 +3146,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -3116,6 +3237,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -3182,6 +3304,7 @@ mod tests {
             tx,
             rx,
             focus: Focus::Input,
+            mouse_capture: true,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
