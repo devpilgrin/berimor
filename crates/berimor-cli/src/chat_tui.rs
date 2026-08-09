@@ -22,9 +22,7 @@ use crate::config::{self, Config, ProviderConfig};
 use crate::presets::{self, ProviderPreset};
 use crate::run::RunError;
 use crate::setup;
-use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -327,6 +325,15 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
 
 /// RAII: raw mode + alternate screen, восстановление при выходе
 /// (включая панику выше по стеку — терминал пользователя святость).
+///
+/// Мышь НЕ захватывается (репорт 2026-08-09: «ничего не выделяется и
+/// не копируется» — Shift+drag для обхода захвата поддерживают не все
+/// терминалы/мультиплексоры пользователя, а колесо мыши дублирует уже
+/// работающие PgUp/PgDn — не стоит того, чтобы терять нативное
+/// выделение текста по умолчанию). `handle_mouse`/`Event::Mouse` в
+/// `event_loop` остаются — безвредный мёртвый код на случай, если
+/// мышь снова понадобится опционально; юнит-тест колеса дёргает его
+/// напрямую, не через реальный терминал.
 struct TerminalGuard(Terminal<ratatui::backend::CrosstermBackend<Stdout>>);
 
 impl TerminalGuard {
@@ -334,7 +341,6 @@ impl TerminalGuard {
         enable_raw_mode()?;
         let mut stdout = std::io::stdout();
         stdout.execute(EnterAlternateScreen)?;
-        stdout.execute(EnableMouseCapture)?;
         let backend = ratatui::backend::CrosstermBackend::new(stdout);
         Ok(Self(Terminal::new(backend)?))
     }
@@ -343,7 +349,6 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = std::io::stdout().execute(DisableMouseCapture);
         let _ = self.0.backend_mut().execute(LeaveAlternateScreen);
         let _ = self.0.show_cursor();
     }
