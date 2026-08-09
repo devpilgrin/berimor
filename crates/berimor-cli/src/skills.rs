@@ -189,6 +189,18 @@ model_tier: strong
         assert!(match_trigger(&skills, "/help").is_none());
     }
 
+    /// Репорт 2026-08-09: тест раньше сверял АБСОЛЮТНОЕ число скилов
+    /// (`len() == 1`), молчаливо предполагая пустой реальный глобальный
+    /// каталог (`~/.config/berimor/skills/`) — тест НЕ изолирует
+    /// XDG_CONFIG_HOME (небезопасно: `std::env::set_var` в параллельном
+    /// тестовом бинаре — гонка с другими тестами, читающими его же).
+    /// Как только пользователь реально воспользовался `/skills add` в
+    /// своём настоящем окружении (ровно то, для чего фича сделана), в
+    /// глобальном каталоге появились ДРУГИЕ скилы — тест упал не из-за
+    /// регрессии, а из-за того, что проверял не то. Теперь сверяется
+    /// именно заявленное поведение — «проектный побеждает по имени» —
+    /// не общее количество: ровно одна запись с этим именем, и её
+    /// origin — проектный путь, не глобальный.
     #[test]
     fn project_overrides_global_by_name() {
         let base = std::env::temp_dir().join(format!("berimor-skills-{}", std::process::id()));
@@ -196,8 +208,19 @@ model_tier: strong
         std::fs::create_dir_all(&project_skill).unwrap();
         std::fs::write(project_skill.join("SKILL.md"), SAMPLE).unwrap();
         let skills = load_all(&base);
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "code-review-ru");
+        let matching: Vec<&Skill> = skills
+            .iter()
+            .filter(|s| s.name == "code-review-ru")
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "дубликат по имени не должен пережить override: {skills:?}"
+        );
+        assert_eq!(
+            matching[0].origin, project_skill,
+            "победить обязан проектный экземпляр, не глобальный"
+        );
         std::fs::remove_dir_all(&base).ok();
     }
 }

@@ -22,7 +22,9 @@ use crate::config::{self, Config, ProviderConfig};
 use crate::presets::{self, ProviderPreset};
 use crate::run::RunError;
 use crate::setup;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
+};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -390,6 +392,13 @@ impl TerminalGuard {
         enable_raw_mode()?;
         let mut stdout = std::io::stdout();
         stdout.execute(EnterAlternateScreen)?;
+        // Репорт 2026-08-09: без bracketed paste терминал в raw-режиме
+        // шлёт вставленный многострочный текст как ОТДЕЛЬНЫЕ нажатия
+        // Enter на каждый перевод строки — вставка спеки с заголовками
+        // разбивалась на десяток отдельных сообщений, обрывающихся
+        // ровно на заголовках. С этим режимом вся вставка приходит
+        // ОДНИМ `Event::Paste` — см. обработку в `event_loop`.
+        stdout.execute(EnableBracketedPaste)?;
         let backend = ratatui::backend::CrosstermBackend::new(stdout);
         Ok(Self(Terminal::new(backend)?))
     }
@@ -397,6 +406,7 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        let _ = std::io::stdout().execute(DisableBracketedPaste);
         let _ = disable_raw_mode();
         let _ = self.0.backend_mut().execute(LeaveAlternateScreen);
         let _ = self.0.show_cursor();
@@ -455,6 +465,7 @@ fn event_loop(
             match event::read().map_err(|e| RunError::BadInput(e.to_string()))? {
                 Event::Key(key) => handle_key(app, key),
                 Event::Mouse(mouse) => handle_mouse(app, mouse.kind),
+                Event::Paste(text) => handle_paste(app, &text),
                 _ => {}
             }
         } else if app.busy {
@@ -537,6 +548,19 @@ impl App {
     }
 
     fn submit(&mut self) {
+        // Репорт 2026-08-09: без этой защиты быстрый повторный Enter
+        // (в частности — вставка многострочного текста БЕЗ bracketed
+        // paste, где каждый \n синтетически становится Enter) запускал
+        // ВТОРОЙ воркер, пока первый ещё не ответил. Оба треда шлют
+        // `WorkerMsg::Reply`, и обработчик берёт `conversation.last()`
+        // по ВРЕМЕНИ ПРИХОДА ответа, не по своему ходу — второй ответ
+        // приходит уже ПОСЛЕ push первого ассистентского сообщения, и
+        // `chat_history::append` записывает ответ модели как будто это
+        // ввод пользователя (зеркалирование ленты, зацикливание агента
+        // на переспрашивании самого себя).
+        if self.busy {
+            return;
+        }
         let message = self.input.trim().to_string();
         if message.is_empty() {
             return;
@@ -1344,6 +1368,31 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+}
+
+/// Bracketed paste (репорт 2026-08-09): весь вставленный текст — ОДНИМ
+/// событием, не синтетическими нажатиями Enter на каждый перевод строки
+/// (как было бы без `EnableBracketedPaste` — см. `TerminalGuard::new`).
+/// Переводы строк схлопываются в пробел: поле ввода однострочное, а
+/// главное — вставка обязана остаться ОДНИМ сообщением на выходе.
+fn handle_paste(app: &mut App, text: &str) {
+    let normalized: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return;
+    }
+    // Активный текстовый ввод (ключ API / URL плагина) — тот же
+    // приоритет, что у handle_key: вставка идёт туда, не в поле
+    // сообщения.
+    if let Some(Flow::AddAskKey { input, .. } | Flow::PluginAskRepo { input }) = &mut app.flow {
+        input.push_str(&normalized);
+        return;
+    }
+    // Модал/пикер — вставлять некуда, молча игнорируем.
+    if app.confirm_prompt.is_some() || app.picker.is_some() {
+        return;
+    }
+    app.input.insert_str(app.cursor, &normalized);
+    app.cursor += normalized.len();
 }
 
 /// Мышь (мышь в TUI, remember-кандидат): колесо — прокрутка журнала,
@@ -2320,6 +2369,120 @@ mod tests {
         handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(app.pending_plugin_install.is_none());
         assert!(app.flow.is_none());
+    }
+
+    fn blank_app(tx: Sender<WorkerMsg>, rx: Receiver<WorkerMsg>) -> App {
+        App {
+            config: Config::default(),
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: vec![],
+            agents: vec![],
+            pending_plugin_install: None,
+            answer_tx: None,
+            tx,
+            rx,
+            done: false,
+        }
+    }
+
+    /// Репорт 2026-08-09: вставка многострочного текста БЕЗ bracketed
+    /// paste шлётся терминалом как синтетический Enter на каждый \n —
+    /// `submit()` без этой защиты отправлял бы каждую строку отдельным
+    /// сообщением. Событие `Event::Paste` приходит одним куском —
+    /// `handle_paste` обязана схлопнуть переводы строк, не звать submit.
+    #[test]
+    fn handle_paste_inserts_as_single_normalized_message_without_submitting() {
+        let (tx, rx) = channel();
+        let mut app = blank_app(tx, rx);
+
+        handle_paste(&mut app, "## Раздел 1\n\n### Раздел 2\nтело раздела");
+
+        assert_eq!(app.input, "## Раздел 1 ### Раздел 2 тело раздела");
+        assert_eq!(app.cursor, app.input.len());
+        assert!(
+            app.conversation.is_empty(),
+            "вставка не должна сама отправлять сообщение"
+        );
+    }
+
+    /// Вставка при открытом текстовом вводе (ключ/URL плагина) идёт в
+    /// НЕГО, не в поле сообщения — тот же приоритет, что у handle_key.
+    #[test]
+    fn handle_paste_goes_into_active_text_flow_not_message_input() {
+        let (tx, rx) = channel();
+        let mut app = blank_app(tx, rx);
+        app.flow = Some(Flow::PluginAskRepo {
+            input: "https://".into(),
+        });
+
+        handle_paste(&mut app, "example.test/plugin");
+
+        assert!(matches!(
+            &app.flow,
+            Some(Flow::PluginAskRepo { input }) if input == "https://example.test/plugin"
+        ));
+        assert!(app.input.is_empty());
+    }
+
+    /// Пикер открыт — вставлять некуда, молча игнорируем (не паникуем,
+    /// не портим состояние пикера).
+    #[test]
+    fn handle_paste_ignored_while_picker_open() {
+        let (tx, rx) = channel();
+        let mut app = blank_app(tx, rx);
+        app.picker = Some(Picker::new("test", vec!["a".into()], false));
+
+        handle_paste(&mut app, "не должно никуда попасть");
+
+        assert!(app.input.is_empty());
+    }
+
+    /// Репорт 2026-08-09 (вторая половина находки): без этой защиты
+    /// быстрый повторный Enter (в т.ч. синтетический — от вставки без
+    /// bracketed paste) запускал ВТОРОЙ воркер поверх первого; когда
+    /// ответы приходили вперемешку, `chat_history::append` записывал
+    /// ОТВЕТ МОДЕЛИ как будто это ввод пользователя (зеркалирование
+    /// ленты, репорт «свободный цикл исчерпал лимит ходов без Finish»).
+    #[test]
+    fn submit_is_a_noop_while_busy() {
+        let (tx, rx) = channel();
+        let mut app = blank_app(tx, rx);
+        app.busy = true;
+        app.input = "второе сообщение поверх первого хода".into();
+
+        app.submit();
+
+        assert!(
+            app.conversation.is_empty(),
+            "занятый воркер не должен получать второе сообщение"
+        );
+        assert_eq!(
+            app.input, "второе сообщение поверх первого хода",
+            "ввод не должен очищаться, пока не отправлен"
+        );
     }
 
     /// Репорт 2026-08-09: «инструменты не обновляются, настроек нет» —
