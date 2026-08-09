@@ -27,12 +27,16 @@ pub enum SetupError {
 /// именами пропускаются (повторный запуск мастера безопасен). Возвращает
 /// имена реально добавленных.
 /// Закрепление модели навсегда (§«закрепить из /model», репорт 2026-08-03):
-/// model_id провайдера — в ЛОКАЛЬНЫЙ `./berimor.toml` (слой сильнее
-/// глобального, merge по имени — глобальную запись не трогаем). Если блок
-/// провайдера в локальном файле уже есть — заменяем строку model_id в нём,
-/// иначе дописываем блок целиком. Возвращает путь файла для сообщения.
+/// model_id провайдера — в ЛОКАЛЬНЫЙ конфиг (слой сильнее глобального,
+/// merge по имени — глобальную запись не трогаем). Путь —
+/// `config::default_config_path()`: `.berimor/config.toml` для новых
+/// проектов, легаси `./berimor.toml` — если уже существует (директива
+/// 2026-08-09). Если блок провайдера в локальном файле уже есть —
+/// заменяем строку model_id в нём, иначе дописываем блок целиком.
+/// Возвращает путь файла для сообщения.
 pub fn pin_model_to_local_config(provider: &ProviderConfig) -> Result<String, SetupError> {
-    pin_model_to(Path::new("./berimor.toml"), provider)
+    let path = config::default_config_path();
+    pin_model_to(&path, provider)
 }
 
 fn pin_model_to(local_path: &Path, provider: &ProviderConfig) -> Result<String, SetupError> {
@@ -48,6 +52,12 @@ fn pin_model_to(local_path: &Path, provider: &ProviderConfig) -> Result<String, 
         text.push_str(&presets::render_provider_toml(provider));
         text
     };
+    // .berimor/ может ещё не существовать (первая запись в новый проект).
+    if let Some(parent) = local_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
     std::fs::write(local_path, updated)?;
     Ok(local_path.display().to_string())
 }
@@ -328,6 +338,25 @@ mod tests {
             !text.contains("model_id = \"v3\""),
             "старая модель заменена"
         );
+    }
+
+    /// Директива 2026-08-09: `.berimor/` может ещё не существовать для
+    /// нового проекта — `pin_model_to` обязан создать её, не падать.
+    #[test]
+    fn pin_model_creates_dot_berimor_dir_if_missing() {
+        let dir = std::env::temp_dir().join(format!("berimor-pin-mkdir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(".berimor").join("config.toml");
+        assert!(
+            !path.parent().unwrap().is_dir(),
+            "директория ещё не создана"
+        );
+
+        pin_model_to(&path, &test_provider("deepseek", "deepseek-v4-flash")).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("name = \"deepseek\""));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

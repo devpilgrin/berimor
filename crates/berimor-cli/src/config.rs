@@ -218,8 +218,8 @@ pub struct Config {
     /// Инструменты, разрешённые к мутирующим действиям БЕЗ вопроса
     /// (0.14.0, директива «не ебать пользователю мозги»): глобальные и
     /// проектные разрешения складываются (union). Deny-статика и jail
-    /// выше — разрешение снимает ВОПРОС, не запрет. Плюс файл
-    /// `.berimor-allow` в корне области (пишет модал «для проекта»).
+    /// выше — разрешение снимает ВОПРОС, не запрет. Плюс allow-лист
+    /// области (`.berimor/allow`, пишет модал «для проекта»).
     #[serde(default)]
     pub auto_confirm: Vec<String>,
     #[serde(default)]
@@ -261,10 +261,44 @@ pub enum ConfigError {
 
 // --- Слоистая конфигурация (§20.12) ------------------------------------
 
-/// Путь локальной конфигурации по умолчанию — `./berimor.toml` в
-/// текущей директории (слой проекта поверх глобального, §20.12).
+/// Директива 2026-08-09: служебные файлы проекта (конфиг, журнал,
+/// allow-лист) не должны захламлять корень — все новые складываются
+/// под `.berimor/` (тот же каталог, что уже занят `skills/`/`agents/`,
+/// §20.16/20.17).
+const PROJECT_STATE_DIR: &str = ".berimor";
+
+/// Чистая логика выбора пути — без обращения к CWD внутри, ради теста
+/// без гонок между параллельными тестами (`std::env::set_current_dir`
+/// в многопоточном тестовом бинаре — общий процесс, отдельный `#[test]`
+/// не может безопасно менять глобальный CWD). Уже существующий легаси-
+/// файл в корне побеждает: директива «старые проекты не трогать» — ни
+/// переноса, ни молчаливой потери уже накопленного состояния (пропавший
+/// провайдер/журнал будет выглядеть как баг, не как миграция).
+fn prefer_legacy_or_new(workspace: &Path, legacy_relative: &str, new_relative: &str) -> PathBuf {
+    let legacy = workspace.join(legacy_relative);
+    if legacy.is_file() {
+        legacy
+    } else {
+        workspace.join(PROJECT_STATE_DIR).join(new_relative)
+    }
+}
+
+fn current_dir_or_dot() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// Путь локальной конфигурации по умолчанию (слой проекта поверх
+/// глобального, §20.12): `.berimor/config.toml` для новых проектов;
+/// уже существующий `./berimor.toml` (до 2026-08-09) — используется
+/// как есть.
 pub fn default_config_path() -> PathBuf {
-    PathBuf::from("./berimor.toml")
+    prefer_legacy_or_new(&current_dir_or_dot(), "berimor.toml", "config.toml")
+}
+
+/// Путь SQLite-журнала по умолчанию — тот же принцип обратной
+/// совместимости.
+fn default_storage_path() -> PathBuf {
+    prefer_legacy_or_new(&current_dir_or_dot(), "berimor.db", "berimor.db")
 }
 
 /// Промежуточная форма файла конфигурации: скаляры опциональны, чтобы
@@ -379,7 +413,7 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
         storage_path: local
             .storage_path
             .or(global.storage_path)
-            .unwrap_or(defaults.storage_path),
+            .unwrap_or_else(default_storage_path),
         confirmation_mode: local
             .confirmation_mode
             .or(global.confirmation_mode)
@@ -398,13 +432,20 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
     }
 }
 
-/// Проектные разрешения на мутации: `.berimor-allow` в корне области —
-/// по одному имени инструмента на строку (`#` — комментарии). Пишет
-/// модал подтверждения («разрешить для проекта»), читается при сборке
-/// бандла. Файл, а не ключ в TOML: дописывать строку честнее, чем
-/// переписывать пользовательский конфиг сериализатором.
+/// Путь allow-листа: `.berimor/allow` для новых проектов; уже
+/// существующий легаси `./.berimor-allow` (до 2026-08-09) — используется
+/// как есть (см. `prefer_legacy_or_new`).
+fn project_allow_path(workspace: &Path) -> PathBuf {
+    prefer_legacy_or_new(workspace, ".berimor-allow", "allow")
+}
+
+/// Проектные разрешения на мутации: по одному имени инструмента на
+/// строку (`#` — комментарии). Пишет модал подтверждения («разрешить
+/// для проекта»), читается при сборке бандла. Файл, а не ключ в TOML:
+/// дописывать строку честнее, чем переписывать пользовательский конфиг
+/// сериализатором.
 pub fn load_project_allow(workspace: &std::path::Path) -> Vec<String> {
-    let Ok(contents) = std::fs::read_to_string(workspace.join(".berimor-allow")) else {
+    let Ok(contents) = std::fs::read_to_string(project_allow_path(workspace)) else {
         return Vec::new();
     };
     contents
@@ -415,16 +456,20 @@ pub fn load_project_allow(workspace: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-/// Дописывает разрешение в `.berimor-allow` области (идемпотентно).
+/// Дописывает разрешение в allow-лист области (идемпотентно).
 pub fn append_project_allow(workspace: &std::path::Path, tool: &str) -> std::io::Result<()> {
     if load_project_allow(workspace).iter().any(|t| t == tool) {
         return Ok(());
     }
     use std::io::Write as _;
+    let path = project_allow_path(workspace);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?; // .berimor/ может ещё не существовать
+    }
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(workspace.join(".berimor-allow"))?;
+        .open(path)?;
     writeln!(file, "{tool}")
 }
 
@@ -496,7 +541,19 @@ pub fn load(explicit_path: Option<&Path>) -> Result<Config, ConfigError> {
         });
     }
     let local = PartialConfig::load_file(&local_path)?;
-    Ok(merge(global.unwrap_or_default(), local.unwrap_or_default()))
+    let config = merge(global.unwrap_or_default(), local.unwrap_or_default());
+    // .berimor/ может ещё не существовать для нового проекта (директива
+    // 2026-08-09) — SqliteEventLog::open не создаёт родительские
+    // директории сама, откроется с ошибкой ДО этой правки. Ошибка здесь
+    // намеренно не всплывает: не она откроет журнал, это сделает
+    // storage::open чуть позже с говорящим сообщением — эта попытка
+    // просто заранее готовит директорию, best-effort.
+    if let Some(parent) = config.storage_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
+    Ok(config)
 }
 
 #[cfg(test)]
@@ -592,9 +649,12 @@ base_url = "https://api.openai.com/v1"
         let config = load(Some(&path)).unwrap();
 
         assert_eq!(config.update_channel, UpdateChannel::Beta);
+        // Не Config::default().storage_path (2026-08-09): дефолт теперь
+        // I/O-зависимый (легаси-путь в корне побеждает, если уже
+        // существует) — эталон тот же самый resolver, не голая константа.
         assert_eq!(
             config.storage_path,
-            Config::default().storage_path,
+            default_storage_path(),
             "неуказанное поле должно остаться значением по умолчанию"
         );
 
@@ -639,6 +699,72 @@ base_url = "https://api.openai.com/v1"
             "испорченный существующий файл конфигурации не должен молчаливо игнорироваться"
         );
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Директива 2026-08-09: «служебные файлы должны лежать в
+    /// .berimor/». Новый проект (ни легаси-файла, ни `.berimor/`) —
+    /// путь под `.berimor/`. `prefer_legacy_or_new` параметризован
+    /// workspace ради теста без гонок по глобальному CWD.
+    #[test]
+    fn prefer_legacy_or_new_uses_dot_berimor_for_fresh_workspace() {
+        let dir = std::env::temp_dir().join(format!("berimor-state-fresh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let path = prefer_legacy_or_new(&dir, "berimor.db", "berimor.db");
+
+        assert_eq!(path, dir.join(".berimor").join("berimor.db"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Директива «старые проекты не трогать»: уже существующий легаси-
+    /// файл в корне побеждает — ни переноса, ни молчаливой потери уже
+    /// накопленного состояния.
+    #[test]
+    fn prefer_legacy_or_new_keeps_existing_root_file() {
+        let dir = std::env::temp_dir().join(format!("berimor-state-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("berimor.db"), "").unwrap();
+
+        let path = prefer_legacy_or_new(&dir, "berimor.db", "berimor.db");
+
+        assert_eq!(path, dir.join("berimor.db"), "легаси-файл не переносится");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `.berimor-allow` (легаси) → `.berimor/allow` (новые проекты) —
+    /// тот же принцип, отдельная от журнала/конфига функция.
+    #[test]
+    fn project_allow_new_workspace_uses_dot_berimor_subdir() {
+        let dir = std::env::temp_dir().join(format!("berimor-allow-fresh-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        append_project_allow(&dir, "files.write").unwrap();
+
+        assert!(dir.join(".berimor").join("allow").is_file());
+        assert!(!dir.join(".berimor-allow").exists());
+        assert_eq!(load_project_allow(&dir), vec!["files.write".to_string()]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn project_allow_keeps_existing_legacy_file() {
+        let dir = std::env::temp_dir().join(format!("berimor-allow-legacy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(".berimor-allow"), "terminal.exec\n").unwrap();
+
+        append_project_allow(&dir, "files.write").unwrap();
+
+        let legacy = std::fs::read_to_string(dir.join(".berimor-allow")).unwrap();
+        assert!(legacy.contains("terminal.exec"));
+        assert!(
+            legacy.contains("files.write"),
+            "дописано в легаси-файл: {legacy}"
+        );
+        assert!(
+            !dir.join(".berimor").join("allow").exists(),
+            "новый файл не создан, пока легаси уже существует"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

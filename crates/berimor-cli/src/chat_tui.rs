@@ -69,9 +69,9 @@ pub(crate) enum ConfirmAnswer {
     Once,
     /// Этот инструмент — до конца сессии.
     Session,
-    /// Этот инструмент — для области (пишется в `.berimor-allow`).
+    /// Этот инструмент — для области (пишется в `.berimor/allow`).
     Project,
-    /// ВСЕ инструменты — для области (`*` в `.berimor-allow`, 0.14.1:
+    /// ВСЕ инструменты — для области (`*` в `.berimor/allow`, 0.14.1:
     /// «я давал везде разрешение на проект» — разрешение на РАБОТУ,
     /// не на один инструмент). Deny-статика, jail и external_effect —
     /// выше широкого разрешения.
@@ -747,7 +747,8 @@ impl App {
                 }
                 self.active_provider = Some(provider_name.clone());
                 // «Закрепить навсегда» (репорт 2026-08-03): model_id — в
-                // локальный ./berimor.toml (слой сильнее глобального).
+                // локальный конфиг (слой сильнее глобального; путь —
+                // config::default_config_path(), §20.X 2026-08-09).
                 let pin_note = match self
                     .config
                     .providers
@@ -1207,7 +1208,7 @@ fn draw_confirm(frame: &mut Frame, prompt: &str, selection: usize) {
     const OPTIONS: [(&str, &str, Color); 5] = [
         (" да [y] ", "разрешить", Color::Green),
         (" сессия [с] ", "до конца сессии", Color::Cyan),
-        (" проект [п] ", "инструмент — в .berimor-allow", Color::Cyan),
+        (" проект [п] ", "инструмент — в .berimor/allow", Color::Cyan),
         (" всё [в] ", "ВСЁ для проекта", Color::Cyan),
         (" нет [n] ", "отказ", Color::Red),
     ];

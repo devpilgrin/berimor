@@ -179,11 +179,11 @@ impl berimor_executors::tool_only::ConfirmationHandler for TuiConfirmer<'_> {
                 }
                 let note = match persisted {
                     Ok(()) => format!(
-                        "разрешение для проекта: {} (записано в .berimor-allow)",
+                        "разрешение для проекта: {} (записано в .berimor/allow)",
                         action.tool
                     ),
                     Err(err) => format!(
-                        "разрешение для проекта: {} — НЕ удалось записать .berimor-allow ({err}); действует до конца сессии",
+                        "разрешение для проекта: {} — НЕ удалось записать .berimor/allow ({err}); действует до конца сессии",
                         action.tool
                     ),
                 };
@@ -198,7 +198,7 @@ impl berimor_executors::tool_only::ConfirmationHandler for TuiConfirmer<'_> {
                     grants.insert("*".to_string());
                 }
                 let note = match persisted {
-                    Ok(()) => "широкое разрешение для проекта: все инструменты (записано в .berimor-allow)".to_string(),
+                    Ok(()) => "широкое разрешение для проекта: все инструменты (записано в .berimor/allow)".to_string(),
                     Err(err) => format!(
                         "широкое разрешение НЕ записано ({err}); действует до конца сессии"
                     ),

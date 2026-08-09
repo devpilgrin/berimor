@@ -371,8 +371,8 @@ pub(crate) fn build_executor_bundle_with_session(
     let jail = berimor_capability::jail::FsJail::new(&workspace_root)
         .map_err(|err| RunError::Jail(err.to_string()))?;
     // Разрешения на мутации без вопроса (0.14.0): конфиг (глобальный +
-    // проектный, union) + `.berimor-allow` в корне области. Deny-статика
-    // и jail выше — разрешение снимает ВОПРОС, не запрет.
+    // проектный, union) + allow-лист области (`.berimor/allow`).
+    // Deny-статика и jail выше — разрешение снимает ВОПРОС, не запрет.
     let mut auto_confirm = config.auto_confirm.clone();
     for tool in crate::config::load_project_allow(&workspace_root) {
         if !auto_confirm.contains(&tool) {
