@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-839%20green-brightgreen)](#프로젝트-인프라)
+[![Tests](https://img.shields.io/badge/tests-843%20green-brightgreen)](#프로젝트-인프라)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -73,7 +73,7 @@ Berimor는 정반대의 전제 위에 세워졌습니다: **모델에게 오케�
 
 **컴포넌트당 하나의 크레이트로 구성된 Rust workspace** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. 게스트 WASM 모듈(`codeact-guest/`)은 별도의 crate로 존재하며 빌드된 아티팩트로 커밋되어 있습니다 — 일반 빌드가 느려지지 않습니다.
 
-**검증 규율.** 모든 릴리스: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace`(839개 테스트: 유닛, 통합, 실제 바이너리를 통한 e2e, 프로세스 및 악의적 입력의 골든 픽스처). 중요 컴포넌트는 필수 독립 리뷰를 거칩니다. 전체 독립 감사(`docs/audit-2026-07-31.md`) — **모든 지적 사항이 해결되었거나 의식적으로 문서화됨**.
+**검증 규율.** 모든 릴리스: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace`(843개 테스트: 유닛, 통합, 실제 바이너리를 통한 e2e, 프로세스 및 악의적 입력의 골든 픽스처). 중요 컴포넌트는 필수 독립 리뷰를 거칩니다. 전체 독립 감사(`docs/audit-2026-07-31.md`) — **모든 지적 사항이 해결되었거나 의식적으로 문서화됨**.
 
 **어른의 서플라이 체인.** 크로스 플랫폼 릴리스(Linux x64/arm64, macOS arm64, Windows x64)에 cosign/sigstore 키리스 서명 — 개인 키는 어디에도 존재하지 않습니다. 검증: `berimor verify <아카이브>`. npm 퍼블리시는 provenance와 함께, 파이프라인에 SBOM(CycloneDX), 셀프 업데이트(`berimor self-update`)는 Process Engine 프리미티브 위에 구현 — 임시 스크립트가 아니라 일반 프로세스와 동일한 저널과 장애 복구.
 

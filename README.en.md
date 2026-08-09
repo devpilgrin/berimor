@@ -14,7 +14,7 @@ A universal LLM agent with a deterministic core: task routing, process branching
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-839%20green-brightgreen)](#project-infrastructure)
+[![Tests](https://img.shields.io/badge/tests-843%20green-brightgreen)](#project-infrastructure)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -73,7 +73,7 @@ All of this installs with a single command — from a catalogue or **any git rep
 
 **Rust workspace with one crate per component** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. The guest WASM module (`codeact-guest/`) lives as a separate crate and is committed as a ready-made artifact — normal builds are not slowed down.
 
-**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (839 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
+**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (843 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
 
 **Grown-up supply chain.** Cross-platform releases (Linux x64/arm64, macOS arm64, Windows x64) with keyless cosign/sigstore signing — the private key exists nowhere. Verification: `berimor verify <archive>`. npm publication with provenance, SBOM (CycloneDX) in the pipeline, self-update (`berimor self-update`) implemented on Process Engine primitives — the same journal and failure recovery as ordinary processes, not an ad-hoc script.
 

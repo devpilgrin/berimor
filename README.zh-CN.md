@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-839%20green-brightgreen)](#项目基础设施)
+[![Tests](https://img.shields.io/badge/tests-843%20green-brightgreen)](#项目基础设施)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -73,7 +73,7 @@ Berimor 建立在相反的假设之上：**不能把编排（orchestration）交
 
 **Rust workspace，每个组件一个 crate**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。Guest WASM 模块（`codeact-guest/`）作为独立的 crate 存在，并以预构建产物提交——常规构建不会变慢。
 
-**检查纪律。** 每次发布：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（839 个测试：单元、集成、通过真实二进制的 e2e、流程和恶意输入的黄金夹具）。关键组件必须通过强制性的独立评审。完整的独立审计（`docs/audit-2026-07-31.md`）——**所有发现均已关闭或有意识地记录在案**。
+**检查纪律。** 每次发布：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（843 个测试：单元、集成、通过真实二进制的 e2e、流程和恶意输入的黄金夹具）。关键组件必须通过强制性的独立评审。完整的独立审计（`docs/audit-2026-07-31.md`）——**所有发现均已关闭或有意识地记录在案**。
 
 **成人级的供应链。** 跨平台发布（Linux x64/arm64、macOS arm64、Windows x64），使用 cosign/sigstore 无钥匙签名——私钥在任何地方都不存在。验证：`berimor verify <归档文件>`。npm 发布带 provenance，流水线中包含 SBOM（CycloneDX），自更新（`berimor self-update`）基于 Process Engine 原语实现——与普通流程共享同一套日志与故障恢复，而非临时脚本。
 
