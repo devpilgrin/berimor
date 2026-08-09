@@ -14,7 +14,7 @@ Agent universel pour LLM à noyau déterministe : le routage des tâches, le bra
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-719%20green-brightgreen)](#infrastructure-du-projet)
+[![Tests](https://img.shields.io/badge/tests-839%20green-brightgreen)](#infrastructure-du-projet)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -65,6 +65,7 @@ La mémoire de travail se compacte en cas de dépassement du budget. L'épisodiq
 - **Skills** (SKILL.md) — rôles experts pour le chat : déclencheur par le code (pas par le modèle), plafond d'outils par le filtre du dispatcher.
 - **Sous-agents** (agent.yaml) — boucle agentique imbriquée avec son propre budget et journal ; droits de l'enfant = intersection avec ceux du parent, extension impossible. Imbrication de spawn — uniquement avec `allow_spawn: true` explicite, profondeur limitée par le code.
 - **Plugins** — processus isolés avec manifeste ACL et signature keyless sigstore : installation depuis une liste de confiance avec confirmation TOFU, comme SSH.
+- **MCP** — serveurs d'outils externes via le protocole ouvert Model Context Protocol (SDK Rust officiel rmcp, ADR-0023) : ils se connectent par la section `[[mcp_servers]]` de la config, rejoignent le dispatcher commun après les outils intégrés et les plugins, et passent la même barrière de capabilities que n'importe quelle étape de processus. Fonctionne aussi dans l'autre sens : Berimor peut exposer ses propres outils via MCP.
 
 Tout cela s'installe en une seule commande — depuis le catalogue ou **n'importe quel dépôt git** : `berimor skill install code-review-ru --from https://github.com/...`.
 
@@ -72,7 +73,7 @@ Tout cela s'installe en une seule commande — depuis le catalogue ou **n'import
 
 **Workspace Rust à raison d'un crate par composant** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. Le module WASM invité (`codeact-guest/`) vit comme un crate séparé et est commité en tant qu'artefact prêt à l'emploi — le build normal n'est pas ralenti.
 
-**Discipline de vérification.** Chaque release : `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (719 tests : unitaires, d'intégration, e2e via le vrai binaire, fixtures golden de processus et d'entrées malveillantes). Les composants critiques passent une revue indépendante obligatoire. Audit complet autonome (`docs/audit-2026-07-31.md`) — **tous les constats sont corrigés ou documentés en connaissance de cause**.
+**Discipline de vérification.** Chaque release : `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (839 tests : unitaires, d'intégration, e2e via le vrai binaire, fixtures golden de processus et d'entrées malveillantes). Les composants critiques passent une revue indépendante obligatoire. Audit complet autonome (`docs/audit-2026-07-31.md`) — **tous les constats sont corrigés ou documentés en connaissance de cause**.
 
 **Supply chain comme les grands.** Releases multiplateformes (Linux x64/arm64, macOS arm64, Windows x64) avec signature keyless cosign/sigstore — aucune clé privée n'existe nulle part. Vérification : `berimor verify <archive>`. Publication npm avec provenance, SBOM (CycloneDX) dans le pipeline, l'auto-mise à jour (`berimor self-update`) est implémentée sur les primitives du Process Engine — même journal et même reprise après panne que pour les processus ordinaires, et non un script ad hoc.
 
@@ -149,11 +150,13 @@ Sous Windows, la dernière commande est `.\target\release\berimor.exe --version`
 berimor          # = berimor chat : dialogue interactif avec l'agent
 ```
 
-Au premier lancement, l'assistant proposera de connecter des modèles depuis des presets (Kimi, DeepSeek, OpenAI, Claude via OpenRouter, locaux via Ollama/llama.cpp/LM Studio) — choisissez les numéros ou les noms, collez la clé API (elle ira dans `~/.config/berimor/secrets.env` avec des droits « propriétaire seul », pas dans la config). Plus tard, la même chose — `berimor setup` ou directement dans le chat avec la commande `/models add`.
+Au premier lancement, l'assistant proposera de connecter des modèles depuis des presets (Kimi, DeepSeek, OpenAI, Claude via OpenRouter, locaux via Ollama/llama.cpp/LM Studio) — choisissez les numéros ou les noms, collez la clé API (elle ira dans `~/.config/berimor/secrets.env` avec des droits « propriétaire seul », pas dans la config). Au lieu d'une clé API, on peut se connecter par abonnement — `berimor login` (OAuth avec PKCE : Claude Pro/Max, ChatGPT Plus/Pro ; les jetons vont dans le même `secrets.env`, le rafraîchissement est transparent). Plus tard, la même chose — `berimor setup` ou directement dans le chat avec la commande `/models add`.
 
 Commandes utiles du chat : `/help`, `/models`, `/skills`, `/config`, `/exit`.
 
 Processus déterministes (plan YAML déclaratif à contrats stricts — le principal mode « combat ») : `berimor run <process.yaml>`. Exemples de processus et de configurations — dans [`fixtures/golden/processes/`](fixtures/golden/processes/) et [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Automatisation par-dessus les processus : `berimor schedule add` + `berimor daemon` — exécution des processus selon un calendrier ; `berimor serve` — service HTTP par-dessus run/schedule/sessions (avec jeton, sans accès anonyme) ; `berimor sessions` — registre des sessions actives de l'hôte ; `berimor trace <instance>` — traçage lisible du journal de n'importe quelle exécution.
 
 Extensions en une commande :
 

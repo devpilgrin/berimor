@@ -14,7 +14,7 @@ A universal LLM agent with a deterministic core: task routing, process branching
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-719%20green-brightgreen)](#project-infrastructure)
+[![Tests](https://img.shields.io/badge/tests-839%20green-brightgreen)](#project-infrastructure)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -65,6 +65,7 @@ Working memory compacts when the budget overflows. Episodic — full-text search
 - **Skills** (SKILL.md) — expert roles for chat: triggering is done by code (not the model); the tool ceiling is enforced by the dispatcher's filter.
 - **Subagents** (agent.yaml) — a nested agent loop with its own budget and journal; the child's rights = the intersection with the parent's rights; they cannot expand. Nested spawning requires explicit `allow_spawn: true`; depth is limited by code.
 - **Plugins** — isolated processes with an ACL manifest and keyless sigstore signing: installation from a trusted list with TOFU confirmation, like SSH.
+- **MCP** — external tool servers over the open Model Context Protocol (official Rust SDK rmcp, ADR-0023): they connect via a `[[mcp_servers]]` section in the config, join the shared dispatcher after the built-in tools and plugins, and pass the same capability gate as any process step. It works the other way too: Berimor can expose its own tools over MCP.
 
 All of this installs with a single command — from a catalogue or **any git repository**: `berimor skill install code-review-ru --from https://github.com/...`.
 
@@ -72,7 +73,7 @@ All of this installs with a single command — from a catalogue or **any git rep
 
 **Rust workspace with one crate per component** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. The guest WASM module (`codeact-guest/`) lives as a separate crate and is committed as a ready-made artifact — normal builds are not slowed down.
 
-**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (719 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
+**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (839 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
 
 **Grown-up supply chain.** Cross-platform releases (Linux x64/arm64, macOS arm64, Windows x64) with keyless cosign/sigstore signing — the private key exists nowhere. Verification: `berimor verify <archive>`. npm publication with provenance, SBOM (CycloneDX) in the pipeline, self-update (`berimor self-update`) implemented on Process Engine primitives — the same journal and failure recovery as ordinary processes, not an ad-hoc script.
 
@@ -149,11 +150,13 @@ On Windows the last command is `.\target\release\berimor.exe --version`.
 berimor          # = berimor chat: interactive conversation with the agent
 ```
 
-On first launch, the wizard will offer to connect models from presets (Kimi, DeepSeek, OpenAI, Claude via OpenRouter, local models via Ollama/llama.cpp/LM Studio) — pick numbers or names, paste the API key (it lands in `~/.config/berimor/secrets.env` with "owner-only" permissions, not in the config). Later, do the same with `berimor setup` or directly in chat with the `/models add` command.
+On first launch, the wizard will offer to connect models from presets (Kimi, DeepSeek, OpenAI, Claude via OpenRouter, local models via Ollama/llama.cpp/LM Studio) — pick numbers or names, paste the API key (it lands in `~/.config/berimor/secrets.env` with "owner-only" permissions, not in the config). Instead of an API key, you can sign in with a subscription — `berimor login` (OAuth with PKCE: Claude Pro/Max, ChatGPT Plus/Pro; tokens live in the same `secrets.env`, refresh is transparent). Later, do the same with `berimor setup` or directly in chat with the `/models add` command.
 
 Useful chat commands: `/help`, `/models`, `/skills`, `/config`, `/exit`.
 
 Deterministic processes (a declarative YAML plan with strict contracts — the primary "production" mode): `berimor run <process.yaml>`. Examples of processes and configurations are in [`fixtures/golden/processes/`](fixtures/golden/processes/) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+Automation on top of processes: `berimor schedule add` + `berimor daemon` — scheduled execution of processes; `berimor serve` — an HTTP service on top of run/schedule/sessions (token-protected, no anonymous access); `berimor sessions` — a registry of live sessions on the host; `berimor trace <instance>` — human-readable journal tracing of any run.
 
 Extensions with a single command:
 

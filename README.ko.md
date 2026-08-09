@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-719%20green-brightgreen)](#프로젝트-인프라)
+[![Tests](https://img.shields.io/badge/tests-839%20green-brightgreen)](#프로젝트-인프라)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -65,6 +65,7 @@ Berimor는 정반대의 전제 위에 세워졌습니다: **모델에게 오케�
 - **스킬**(SKILL.md) — 채팅용 전문가 역할: 트리거는 코드로(모델이 아니라), 도구 상한은 디스패처 필터로 보장.
 - **서브에이전트**(agent.yaml) — 자체 예산과 저널을 가진 중첩 에이전트 루프; 자식의 권한 = 부모 권한과의 교집합이며 확장 불가. 중첩 스폰은 명시적 `allow_spawn: true`일 때만 가능하며 깊이는 코드로 제한.
 - **플러그인** — ACL 매니페스트와 sigstore 키리스 서명을 갖춘 격리 프로세스: SSH처럼 신뢰 목록에서 설치하고 TOFU 확인.
+- **MCP** — 개방형 프로토콜 Model Context Protocol을 통한 외부 도구 서버(공식 Rust SDK rmcp, ADR-0023): 설정의 `[[mcp_servers]]` 섹션으로 연결되며, 내장 도구와 플러그인 뒤의 공통 디스패처에 등록되고 모든 프로세스 단계와 동일한 capability 게이트를 통과합니다. 반대 방향으로도 동작합니다: Berimor는 자체 도구를 MCP로 제공할 수 있습니다.
 
 이 모든 것을 한 명령으로 설치할 수 있습니다 — 카탈로그에서, 또는 **임의의 git 저장소**에서: `berimor skill install code-review-ru --from https://github.com/...`.
 
@@ -72,7 +73,7 @@ Berimor는 정반대의 전제 위에 세워졌습니다: **모델에게 오케�
 
 **컴포넌트당 하나의 크레이트로 구성된 Rust workspace** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. 게스트 WASM 모듈(`codeact-guest/`)은 별도의 crate로 존재하며 빌드된 아티팩트로 커밋되어 있습니다 — 일반 빌드가 느려지지 않습니다.
 
-**검증 규율.** 모든 릴리스: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace`(719개 테스트: 유닛, 통합, 실제 바이너리를 통한 e2e, 프로세스 및 악의적 입력의 골든 픽스처). 중요 컴포넌트는 필수 독립 리뷰를 거칩니다. 전체 독립 감사(`docs/audit-2026-07-31.md`) — **모든 지적 사항이 해결되었거나 의식적으로 문서화됨**.
+**검증 규율.** 모든 릴리스: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace`(839개 테스트: 유닛, 통합, 실제 바이너리를 통한 e2e, 프로세스 및 악의적 입력의 골든 픽스처). 중요 컴포넌트는 필수 독립 리뷰를 거칩니다. 전체 독립 감사(`docs/audit-2026-07-31.md`) — **모든 지적 사항이 해결되었거나 의식적으로 문서화됨**.
 
 **어른의 서플라이 체인.** 크로스 플랫폼 릴리스(Linux x64/arm64, macOS arm64, Windows x64)에 cosign/sigstore 키리스 서명 — 개인 키는 어디에도 존재하지 않습니다. 검증: `berimor verify <아카이브>`. npm 퍼블리시는 provenance와 함께, 파이프라인에 SBOM(CycloneDX), 셀프 업데이트(`berimor self-update`)는 Process Engine 프리미티브 위에 구현 — 임시 스크립트가 아니라 일반 프로세스와 동일한 저널과 장애 복구.
 
@@ -149,11 +150,13 @@ Windows에서는 마지막 명령이 `.\target\release\berimor.exe --version`입
 berimor          # = berimor chat: 에이전트와의 대화형 채팅
 ```
 
-첫 실행 시 마법사가 프리셋에서 모델 연결을 제안합니다(Kimi, DeepSeek, OpenAI, OpenRouter를 통한 Claude, Ollama/llama.cpp/LM Studio를 통한 로컬 모델) — 번호나 이름을 선택하고 API 키를 붙여넣으세요(설정 파일이 아니라 `~/.config/berimor/secrets.env`에 "소유자 전용" 권한으로 저장됨). 나중에 같은 작업은 `berimor setup` 또는 채팅에서 바로 `/models add` 명령으로 할 수 있습니다.
+첫 실행 시 마법사가 프리셋에서 모델 연결을 제안합니다(Kimi, DeepSeek, OpenAI, OpenRouter를 통한 Claude, Ollama/llama.cpp/LM Studio를 통한 로컬 모델) — 번호나 이름을 선택하고 API 키를 붙여넣으세요(설정 파일이 아니라 `~/.config/berimor/secrets.env`에 "소유자 전용" 권한으로 저장됨). API 키 대신 구독으로 로그인할 수도 있습니다 — `berimor login`(PKCE를 사용한 OAuth: Claude Pro/Max, ChatGPT Plus/Pro; 토큰은 같은 `secrets.env`에 저장되며 갱신은 투명하게 이루어짐). 나중에 같은 작업은 `berimor setup` 또는 채팅에서 바로 `/models add` 명령으로 할 수 있습니다.
 
 유용한 채팅 명령: `/help`, `/models`, `/skills`, `/config`, `/exit`.
 
 결정론적 프로세스(엄격한 계약을 가진 선언적 YAML 플랜 — 주요 "실전" 모드): `berimor run <process.yaml>`. 프로세스 및 설정 예제는 [`fixtures/golden/processes/`](fixtures/golden/processes/)와 [`CONTRIBUTING.md`](CONTRIBUTING.md)에 있습니다.
+
+프로세스 위의 자동화: `berimor schedule add` + `berimor daemon` — 일정에 따른 프로세스 실행; `berimor serve` — run/schedule/sessions 위의 HTTP 서비스(토큰 사용, 익명 접근 불가); `berimor sessions` — 호스트의 활성 세션 레지스트리; `berimor trace <인스턴스>` — 임의 실행의 저널을 사람이 읽기 쉬운 형태로 추적.
 
 한 명령으로 확장 설치:
 
