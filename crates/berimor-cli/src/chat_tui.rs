@@ -23,7 +23,8 @@ use crate::presets::{self, ProviderPreset};
 use crate::run::RunError;
 use crate::setup;
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent,
 };
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -211,6 +212,15 @@ enum Flow {
     PluginRemovePick { names: Vec<String> },
 }
 
+/// Фокус мыши (репорт 2026-08-09): клик по журналу переводит фокус на
+/// прокрутку (↑↓ листают журнал, а не историю команд), клик по полю
+/// ввода или любая печать — обратно.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Focus {
+    Input,
+    Log,
+}
+
 struct App {
     config: Config,
     explicit_config: Option<std::path::PathBuf>,
@@ -267,6 +277,16 @@ struct App {
     pending_plugin_install: Option<String>,
     /// Ответ воркеру на подтверждение (канал создаётся на ход).
     answer_tx: Option<Sender<ConfirmAnswer>>,
+    /// Фокус мыши: журнал (прокрутка) или поле ввода (по умолчанию).
+    focus: Focus,
+    /// Области журнала и поля ввода последнего кадра — для hit-test
+    /// кликов и колеса (записываются в `draw`, читаются в
+    /// `handle_mouse`).
+    log_area: Rect,
+    input_area: Rect,
+    /// Прокрутка многострочного поля ввода (первая видимая экранная
+    /// строка): поле растёт до потолка, дальше крутится само.
+    input_scroll: u16,
     tx: Sender<WorkerMsg>,
     rx: Receiver<WorkerMsg>,
     done: bool,
@@ -349,6 +369,10 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         agents: crate::agents::load_all(&std::env::current_dir().unwrap_or_default()),
         pending_plugin_install: None,
         answer_tx: None,
+        focus: Focus::Input,
+        log_area: Rect::default(),
+        input_area: Rect::default(),
+        input_scroll: 0,
         tx,
         rx,
         done: false,
@@ -377,14 +401,12 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
 /// RAII: raw mode + alternate screen, восстановление при выходе
 /// (включая панику выше по стеку — терминал пользователя святость).
 ///
-/// Мышь НЕ захватывается (репорт 2026-08-09: «ничего не выделяется и
-/// не копируется» — Shift+drag для обхода захвата поддерживают не все
-/// терминалы/мультиплексоры пользователя, а колесо мыши дублирует уже
-/// работающие PgUp/PgDn — не стоит того, чтобы терять нативное
-/// выделение текста по умолчанию). `handle_mouse`/`Event::Mouse` в
-/// `event_loop` остаются — безвредный мёртвый код на случай, если
-/// мышь снова понадобится опционально; юнит-тест колеса дёргает его
-/// напрямую, не через реальный терминал.
+/// Мышь захватывается (репорт 2026-08-09: «колесо листает историю
+/// команд в поле ввода» — без захвата терминал в alternate screen шлёт
+/// колесо как стрелки ↑↓). Колесо крутит область под указателем
+/// (журнал или многострочное поле ввода), клик переводит фокус —
+/// см. `handle_mouse`. Цена известна: нативное выделение текста
+/// требует Shift+drag — это отражено в строке подсказок.
 struct TerminalGuard(Terminal<ratatui::backend::CrosstermBackend<Stdout>>);
 
 impl TerminalGuard {
@@ -399,6 +421,10 @@ impl TerminalGuard {
         // ровно на заголовках. С этим режимом вся вставка приходит
         // ОДНИМ `Event::Paste` — см. обработку в `event_loop`.
         stdout.execute(EnableBracketedPaste)?;
+        // Захват — ПОСЛЕ EnterAlternateScreen (тот же день: колесо без
+        // него улетает в историю команд); снятие — в Drop, чтобы паника
+        // не оставила терминал с захваченной мышью.
+        stdout.execute(EnableMouseCapture)?;
         let backend = ratatui::backend::CrosstermBackend::new(stdout);
         Ok(Self(Terminal::new(backend)?))
     }
@@ -406,6 +432,7 @@ impl TerminalGuard {
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
+        let _ = std::io::stdout().execute(DisableMouseCapture);
         let _ = std::io::stdout().execute(DisableBracketedPaste);
         let _ = disable_raw_mode();
         let _ = self.0.backend_mut().execute(LeaveAlternateScreen);
@@ -464,7 +491,7 @@ fn event_loop(
         if event::poll(Duration::from_millis(80)).map_err(|e| RunError::BadInput(e.to_string()))? {
             match event::read().map_err(|e| RunError::BadInput(e.to_string()))? {
                 Event::Key(key) => handle_key(app, key),
-                Event::Mouse(mouse) => handle_mouse(app, mouse.kind),
+                Event::Mouse(mouse) => handle_mouse(app, mouse),
                 Event::Paste(text) => handle_paste(app, &text),
                 _ => {}
             }
@@ -495,11 +522,18 @@ fn suspend_and_install_plugin(
     repo: &str,
 ) {
     let _ = terminal.backend_mut().execute(LeaveAlternateScreen);
+    // Вне TUI мышь и bracketed paste не нужны (выделение текста в
+    // выводе установщика обязано работать нативно); на возврате —
+    // включить обратно, иначе колесо снова уйдёт в историю команд.
+    let _ = terminal.backend_mut().execute(DisableMouseCapture);
+    let _ = terminal.backend_mut().execute(DisableBracketedPaste);
     let _ = disable_raw_mode();
     println!("[berimor] установка плагина из {repo} (как в CLI berimor plugin install):");
     let result = crate::plugin_install::run(&app.config, repo, &None, None, None, None);
     let _ = enable_raw_mode();
     let _ = terminal.backend_mut().execute(EnterAlternateScreen);
+    let _ = terminal.backend_mut().execute(EnableBracketedPaste);
+    let _ = terminal.backend_mut().execute(EnableMouseCapture);
     let _ = terminal.clear(); // экран вне TUI мог оставить чужой контент
     match result {
         Ok(()) => app.sys(format!("плагин установлен из {repo}")),
@@ -1259,7 +1293,45 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Фокус на журнале (клик мышью, репорт 2026-08-09): стрелки ↑↓
+    // листают ЖУРНАЛ, а не историю команд поля ввода; Esc — назад в
+    // ввод; любая печать/Enter возвращает фокус и обрабатывается уже
+    // как ввод (символ не теряется).
+    if app.focus == Focus::Log {
+        match key.code {
+            KeyCode::Esc => {
+                app.focus = Focus::Input;
+                return;
+            }
+            KeyCode::Up => {
+                app.follow_tail = false;
+                app.scroll = app.scroll.saturating_sub(1).min(u16::MAX - 1);
+                if app.scroll == u16::MAX {
+                    app.scroll = 0;
+                }
+                return;
+            }
+            KeyCode::Down => {
+                app.scroll = app.scroll.saturating_add(1);
+                app.follow_tail = false;
+                return;
+            }
+            // PgUp/PgDn — общий скролл ниже, фокус журнала сохраняется.
+            KeyCode::PageUp | KeyCode::PageDown => {}
+            _ => app.focus = Focus::Input,
+        }
+    }
+
     match key.code {
+        // Alt+Enter — ручной перевод строки (многострочный ввод,
+        // репорт 2026-08-09: «сделал бы многострочное поле ввода»).
+        // Обычный Enter остаётся отправкой. Shift+Enter большинству
+        // терминалов без расширенного клавиатурного протокола
+        // неотличим от Enter — не используем.
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::ALT) => {
+            app.input.insert(app.cursor, '\n');
+            app.cursor += 1;
+        }
         // Enter при открытой палитре — выбранная команда, а не набранный
         // фрагмент (репорт 2026-08-03: «выбор в палитре не учитывается»).
         // Tab — только подстановка, без отправки.
@@ -1285,7 +1357,13 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Up => {
-            if !app.history.is_empty() {
+            // Многострочный буфер: ↑↓ двигают курсор по строкам
+            // (репорт 2026-08-09); история команд — только когда поле
+            // однострочное, иначе ↑ на первой строке молча затирал бы
+            // набранный многострочный черновик.
+            if app.input.contains('\n') {
+                move_cursor_vertical(app, -1);
+            } else if !app.history.is_empty() {
                 let idx = app
                     .history_idx
                     .map(|i| i.saturating_sub(1))
@@ -1296,7 +1374,9 @@ fn handle_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Down => {
-            if let Some(idx) = app.history_idx {
+            if app.input.contains('\n') {
+                move_cursor_vertical(app, 1);
+            } else if let Some(idx) = app.history_idx {
                 if idx + 1 < app.history.len() {
                     app.history_idx = Some(idx + 1);
                     app.input = app.history[idx + 1].clone();
@@ -1373,17 +1453,14 @@ fn handle_key(app: &mut App, key: KeyEvent) {
 /// Bracketed paste (репорт 2026-08-09): весь вставленный текст — ОДНИМ
 /// событием, не синтетическими нажатиями Enter на каждый перевод строки
 /// (как было бы без `EnableBracketedPaste` — см. `TerminalGuard::new`).
-/// Переводы строк схлопываются в пробел: поле ввода однострочное, а
-/// главное — вставка обязана остаться ОДНИМ сообщением на выходе.
+/// Поле сообщения — многострочное (тот же репорт): переводы строк
+/// сохраняются (нормализация \r\n/\r → \n), вставка остаётся ОДНИМ
+/// сообщением на выходе.
 fn handle_paste(app: &mut App, text: &str) {
-    let normalized: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.is_empty() {
-        return;
-    }
-    // Активный текстовый ввод (ключ API / URL плагина) — тот же
-    // приоритет, что у handle_key: вставка идёт туда, не в поле
-    // сообщения.
+    // Активный текстовый ввод (ключ API / URL плагина) — однострочный:
+    // пробельные схлопываются, переводы строк в ключ не попадают.
     if let Some(Flow::AddAskKey { input, .. } | Flow::PluginAskRepo { input }) = &mut app.flow {
+        let normalized: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
         input.push_str(&normalized);
         return;
     }
@@ -1391,41 +1468,169 @@ fn handle_paste(app: &mut App, text: &str) {
     if app.confirm_prompt.is_some() || app.picker.is_some() {
         return;
     }
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    if normalized.trim().is_empty() {
+        return;
+    }
     app.input.insert_str(app.cursor, &normalized);
     app.cursor += normalized.len();
 }
 
-/// Мышь (мышь в TUI, remember-кандидат): колесо — прокрутка журнала,
-/// шаг меньше PageUp/Down (3 строки против 10). Семантика scroll как у
-/// клавиатуры: u16::MAX — «прижат к низу» (maybe_follow при рендере).
-fn handle_mouse(app: &mut App, kind: crossterm::event::MouseEventKind) {
-    use crossterm::event::MouseEventKind;
-    match kind {
+/// Мышь (репорт 2026-08-09): колесо крутит область ПОД УКАЗАТЕЛЕМ —
+/// журнал (шаг 3, семантика PageUp/Down: u16::MAX — «прижат к низу»)
+/// или многострочное поле ввода. Клик левой кнопкой переводит фокус:
+/// по журналу — прокрутка стрелками, по полю ввода — обратно.
+fn handle_mouse(app: &mut App, mouse: MouseEvent) {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    let in_log = point_in_rect(app.log_area, mouse.column, mouse.row);
+    let in_input = point_in_rect(app.input_area, mouse.column, mouse.row);
+    match mouse.kind {
         MouseEventKind::ScrollUp => {
-            app.follow_tail = false;
-            app.scroll = app.scroll.saturating_sub(3).min(u16::MAX - 1);
-            if app.scroll == u16::MAX {
-                app.scroll = 0;
+            if in_input {
+                app.input_scroll = app.input_scroll.saturating_sub(3);
+            } else {
+                app.follow_tail = false;
+                app.scroll = app.scroll.saturating_sub(3).min(u16::MAX - 1);
+                if app.scroll == u16::MAX {
+                    app.scroll = 0;
+                }
             }
         }
         MouseEventKind::ScrollDown => {
-            app.scroll = app.scroll.saturating_add(3);
-            app.follow_tail = false;
+            if in_input {
+                app.input_scroll = app.input_scroll.saturating_add(3);
+            } else {
+                app.scroll = app.scroll.saturating_add(3);
+                app.follow_tail = false;
+            }
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            if in_log {
+                app.focus = Focus::Log;
+            } else if in_input {
+                app.focus = Focus::Input;
+            }
         }
         _ => {}
     }
 }
 
-fn draw(frame: &mut Frame, app: &App) {
+/// Точка внутри прямоугольника (hit-test мыши).
+fn point_in_rect(area: Rect, x: u16, y: u16) -> bool {
+    x >= area.x && x < area.x + area.width && y >= area.y && y < area.y + area.height
+}
+
+/// Байтовые сдвиги начал логических строк (разделитель — '\n').
+fn line_starts(input: &str) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (i, ch) in input.char_indices() {
+        if ch == '\n' {
+            starts.push(i + 1);
+        }
+    }
+    starts
+}
+
+/// Позиция курсора (байты) как (логическая строка, колонка в символах).
+fn cursor_row_col(input: &str, cursor: usize) -> (usize, usize) {
+    let mut row = 0usize;
+    let mut col = 0usize;
+    for (i, ch) in input.char_indices() {
+        if i >= cursor {
+            break;
+        }
+        if ch == '\n' {
+            row += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (row, col)
+}
+
+/// Вертикальное движение курсора по многострочному буферу с
+/// сохранением колонки (в символах; кириллица — 1 колонка, 2 байта).
+fn move_cursor_vertical(app: &mut App, delta: isize) {
+    let starts = line_starts(&app.input);
+    let (row, col) = cursor_row_col(&app.input, app.cursor);
+    let new_row = (row as isize + delta).clamp(0, starts.len() as isize - 1) as usize;
+    let start = starts[new_row];
+    let line_len = app.input[start..]
+        .chars()
+        .take_while(|&c| c != '\n')
+        .count();
+    let take = col.min(line_len);
+    app.cursor = start
+        + app.input[start..]
+            .chars()
+            .take(take)
+            .map(char::len_utf8)
+            .sum::<usize>();
+}
+
+/// Число экранных строк текста при переносе по ширине `width`
+/// (перевод строки — новая строка; длинная строка переносится).
+fn display_rows(text: &str, width: u16) -> u16 {
+    let width = width.max(1) as usize;
+    let mut rows = 1usize;
+    let mut col = 0usize;
+    for ch in text.chars() {
+        if ch == '\n' {
+            rows += 1;
+            col = 0;
+        } else {
+            col += 1;
+            if col >= width {
+                rows += 1;
+                col = 0;
+            }
+        }
+    }
+    rows as u16
+}
+
+/// Экранная позиция (колонка, строка) конца текста при переносе по
+/// ширине — для установки курсора.
+fn display_pos(text: &str, width: u16) -> (u16, u16) {
+    let width = width.max(1) as usize;
+    let mut row = 0usize;
+    let mut col = 0usize;
+    for ch in text.chars() {
+        if ch == '\n' {
+            row += 1;
+            col = 0;
+        } else {
+            col += 1;
+            if col >= width {
+                row += 1;
+                col = 0;
+            }
+        }
+    }
+    (col as u16, row as u16)
+}
+
+fn draw(frame: &mut Frame, app: &mut App) {
+    // Многострочное поле ввода (репорт 2026-08-09): высота растёт с
+    // числом экранных строк буфера, потолок — треть экрана (кап 10
+    // строк), дальше поле крутится само (`input_scroll`). Ширина для
+    // подсчёта переносов — полная: поле ввода занимает всю ширину
+    // (инфо-панель живёт только в строке журнала).
+    let full = frame.area();
+    let rendered = format!(" › {}", app.input);
+    let input_rows = display_rows(&rendered, full.width).max(1);
+    let max_rows = (full.height / 3).clamp(1, 10);
+    let input_height = input_rows.min(max_rows) + 1; // + бордер TOP
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(4), // шапка — фиксированная, не сдвигаемая
-            Constraint::Min(3),    // журнал
-            Constraint::Length(3), // ввод
-            Constraint::Length(1), // подсказки
+            Constraint::Length(4),            // шапка — фиксированная, не сдвигаемая
+            Constraint::Min(3),               // журнал
+            Constraint::Length(input_height), // ввод — растёт с буфером
+            Constraint::Length(1),            // подсказки
         ])
-        .split(frame.area());
+        .split(full);
     draw_header(frame, app, chunks[0]);
     // §20.26: инфо-панель справа — только при достаточной ширине
     // (узкий терминал не теряет журнал: панель — чистый бонус).
@@ -1436,9 +1641,12 @@ fn draw(frame: &mut Frame, app: &App) {
             .split(chunks[1]);
         draw_log(frame, app, cols[0]);
         draw_side_panel(frame, app, cols[1]);
+        app.log_area = cols[0];
     } else {
         draw_log(frame, app, chunks[1]);
+        app.log_area = chunks[1];
     }
+    app.input_area = chunks[2];
     draw_input(frame, app, chunks[2]);
     draw_hints(frame, app, chunks[3]);
     if app.slash_open {
@@ -1768,10 +1976,22 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(log, area);
 }
 
-fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_input(frame: &mut Frame, app: &mut App, area: Rect) {
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(Color::DarkGray));
+    // Многострочный буфер (репорт 2026-08-09): промпт « › » — часть
+    // текста, чтобы переносы и курсор считались одной функцией
+    // (display_pos). Окно прокрутки держит курсор видимым.
+    let width = area.width.max(1);
+    let visible = area.height.saturating_sub(1).max(1);
+    let before_cursor = format!(" › {}", &app.input[..app.cursor]);
+    let (cx, cy) = display_pos(&before_cursor, width);
+    if cy < app.input_scroll {
+        app.input_scroll = cy;
+    } else if cy >= app.input_scroll + visible {
+        app.input_scroll = cy + 1 - visible;
+    }
     let prompt = Paragraph::new(Line::from(vec![
         Span::styled(
             " › ",
@@ -1781,11 +2001,15 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
         ),
         Span::raw(app.input.clone()),
     ]))
-    .block(block);
+    .block(block)
+    .wrap(Wrap { trim: false })
+    .scroll((app.input_scroll, 0));
     frame.render_widget(prompt, area);
     // Курсор на экране — в СИМВОЛАХ (кириллица — 1 колонка, 2 байта).
-    let display_cursor = app.input[..app.cursor].chars().count() as u16;
-    frame.set_cursor_position((area.x + 3 + display_cursor, area.y + 1));
+    frame.set_cursor_position((
+        area.x + cx,
+        area.y + 1 + cy.saturating_sub(app.input_scroll),
+    ));
 }
 
 fn draw_hints(frame: &mut Frame, app: &App, area: Rect) {
@@ -1797,8 +2021,10 @@ fn draw_hints(frame: &mut Frame, app: &App, area: Rect) {
         " ↑↓ — выбор · Space — пометить · Enter — подтвердить · Esc — отмена"
     } else if app.slash_open {
         " ↑↓ — выбор · Tab/Enter — вставить · Esc — закрыть"
+    } else if app.focus == Focus::Log {
+        " журнал в фокусе · ↑↓/PgUp/PgDn/колесо — прокрутка · Esc или клик по вводу — назад"
     } else {
-        " / — команды · Enter — отправить · PgUp/PgDn — журнал · ↑↓ — история · /exit — выход"
+        " Enter — отправить · Alt+Enter — новая строка · колесо/клик — журнал · выделение — Shift+drag · / — команды"
     };
     frame.render_widget(
         Paragraph::new(Span::styled(hints, Style::default().fg(Color::DarkGray))),
@@ -1952,6 +2178,10 @@ mod tests {
             answer_tx: None,
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         };
         let names: Vec<&str> = app.slash_filtered().iter().map(|(n, _)| *n).collect();
@@ -1962,7 +2192,9 @@ mod tests {
 
     /// §20.26: при ширине ≥ 110 рендерится инфо-панель, при узком —
     /// нет (журнал не теряет место).
-    /// Мышь: колесо крутит журнал с той же семантикой, что PageUp/Down.
+    /// Мышь (репорт 2026-08-09): колесо крутит область под указателем —
+    /// журнал с семантикой PageUp/Down, над полем ввода — окно ввода,
+    /// журнал не трогается; клик переводит фокус.
     #[test]
     fn mouse_wheel_scrolls_log() {
         use crossterm::event::MouseEventKind;
@@ -2000,14 +2232,251 @@ mod tests {
             answer_tx: None,
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         };
-        handle_mouse(&mut app, MouseEventKind::ScrollUp);
+        app.log_area = Rect::new(0, 4, 100, 20);
+        app.input_area = Rect::new(0, 25, 100, 3);
+        let at_log = |kind| MouseEvent {
+            kind,
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse(&mut app, at_log(MouseEventKind::ScrollUp));
         assert_eq!(app.scroll, 97);
         assert!(!app.follow_tail);
-        handle_mouse(&mut app, MouseEventKind::ScrollDown);
-        handle_mouse(&mut app, MouseEventKind::ScrollDown);
+        handle_mouse(&mut app, at_log(MouseEventKind::ScrollDown));
+        handle_mouse(&mut app, at_log(MouseEventKind::ScrollDown));
         assert_eq!(app.scroll, 103);
+        // Колесо над полем ввода — крутится окно ввода, журнал на месте
+        // (прежний баг репорта: колесо листало ИСТОРИЮ КОМАНД).
+        let at_input = |kind| MouseEvent {
+            kind,
+            column: 10,
+            row: 26,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse(&mut app, at_input(MouseEventKind::ScrollDown));
+        assert_eq!(app.scroll, 103);
+        assert_eq!(app.input_scroll, 3);
+        handle_mouse(&mut app, at_input(MouseEventKind::ScrollUp));
+        assert_eq!(app.input_scroll, 0);
+        // Клик по журналу — фокус прокрутки; клик по вводу — обратно.
+        handle_mouse(
+            &mut app,
+            at_log(MouseEventKind::Down(crossterm::event::MouseButton::Left)),
+        );
+        assert_eq!(app.focus, Focus::Log);
+        handle_mouse(
+            &mut app,
+            at_input(MouseEventKind::Down(crossterm::event::MouseButton::Left)),
+        );
+        assert_eq!(app.focus, Focus::Input);
+    }
+
+    /// Фокус журнала: ↑↓ листают журнал, печать возвращает фокус и
+    /// символ не теряется, Esc — просто назад в ввод.
+    #[test]
+    fn log_focus_arrows_scroll_and_typing_returns_focus() {
+        let config = Config::default();
+        let (tx, rx) = channel();
+        let mut app = App {
+            config,
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec!["прежняя".into()],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 50,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: Vec::new(),
+            agents: Vec::new(),
+            pending_plugin_install: None,
+            answer_tx: None,
+            tx,
+            rx,
+            focus: Focus::Log,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
+            done: false,
+        };
+        // ↑ в фокусе журнала — прокрутка журнала, НЕ история команд.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.scroll, 49);
+        assert_eq!(app.history_idx, None);
+        assert_eq!(app.focus, Focus::Log);
+        // Печать возвращает фокус, символ доходит до поля ввода.
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('щ'), KeyModifiers::NONE),
+        );
+        assert_eq!(app.focus, Focus::Input);
+        assert_eq!(app.input, "щ");
+        // Esc в фокусе журнала — назад в ввод без побочек.
+        app.focus = Focus::Log;
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.focus, Focus::Input);
+        assert_eq!(app.input, "щ");
+    }
+
+    /// Многострочный ввод (репорт 2026-08-09): Alt+Enter — новая
+    /// строка; вставка сохраняет переводы строк; ↑↓ двигают курсор по
+    /// строкам и НЕ трогают историю команд.
+    #[test]
+    fn multiline_input_editing() {
+        let config = Config::default();
+        let (tx, rx) = channel();
+        let mut app = App {
+            config,
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec!["старое".into()],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: Vec::new(),
+            agents: Vec::new(),
+            pending_plugin_install: None,
+            answer_tx: None,
+            tx,
+            rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
+            done: false,
+        };
+        // Вставка с переводами строк — сохраняются (\r\n → \n).
+        handle_paste(&mut app, "первая\r\nвторая\nтретья");
+        assert_eq!(app.input, "первая\nвторая\nтретья");
+        assert_eq!(app.cursor, app.input.len());
+        // Alt+Enter — ещё одна строка.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        assert!(app.input.ends_with("\n"));
+        // ↑↓ — по строкам буфера, история не тронута.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        assert_eq!(app.history_idx, None);
+        let (row, _col) = cursor_row_col(&app.input, app.cursor);
+        assert_eq!(row, 2); // строка «третья»
+        handle_key(&mut app, KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        let (row, col) = cursor_row_col(&app.input, app.cursor);
+        assert_eq!((row, col), (1, 0));
+        // Вниз — обратно на строку «третья», колонка сохраняется.
+        handle_key(&mut app, KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        let (row, _col) = cursor_row_col(&app.input, app.cursor);
+        assert_eq!(row, 2);
+        // Курсор в конец короткой строки из длинной колонки — зажим.
+        app.input = "длиннющая строка\nк\nхвост".into();
+        app.cursor = 8; // колонка 8 первой строки
+        move_cursor_vertical(&mut app, 1);
+        let (row, col) = cursor_row_col(&app.input, app.cursor);
+        assert_eq!((row, col), (1, 1)); // строка «к» — одна колонка
+    }
+
+    /// Однострочный ввод потока (ключ API/URL плагина) — вставка по-
+    /// прежнему схлопывается в одну строку.
+    #[test]
+    fn paste_into_flow_input_stays_single_line() {
+        let config = Config::default();
+        let (tx, rx) = channel();
+        let mut app = App {
+            config,
+            explicit_config: None,
+            log: vec![],
+            input: String::new(),
+            cursor: 0,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: false,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: Some(Flow::PluginAskRepo {
+                input: String::new(),
+            }),
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: Vec::new(),
+            agents: Vec::new(),
+            pending_plugin_install: None,
+            answer_tx: None,
+            tx,
+            rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
+            done: false,
+        };
+        handle_paste(&mut app, "https://github.com/\nuser/repo");
+        match &app.flow {
+            Some(Flow::PluginAskRepo { input }) => {
+                assert_eq!(input, "https://github.com/ user/repo");
+            }
+            _ => panic!("поток потерян"),
+        }
+    }
+
+    /// display_rows/display_pos: переносы по ширине и переводы строк
+    /// (кириллица — одна колонка).
+    #[test]
+    fn display_math_counts_wraps_and_newlines() {
+        assert_eq!(display_rows(" › ", 10), 1);
+        assert_eq!(display_rows(" › привет", 5), 2); // 9 символов по 5 колонок
+        assert_eq!(display_rows(" › a\nb", 10), 2);
+        assert_eq!(display_pos(" › a\nb", 10), (1, 1));
+        assert_eq!(display_pos(" › привет", 5), (4, 1));
     }
 
     #[test]
@@ -2017,7 +2486,7 @@ mod tests {
 
         let config = Config::default();
         let (tx, rx) = channel();
-        let app = App {
+        let mut app = App {
             config,
             explicit_config: None,
             log: vec![],
@@ -2049,12 +2518,16 @@ mod tests {
             answer_tx: None,
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         };
 
         let wide = TestBackend::new(140, 30);
         let mut terminal = Terminal::new(wide).expect("terminal");
-        terminal.draw(|f| draw(f, &app)).expect("draw wide");
+        terminal.draw(|f| draw(f, &mut app)).expect("draw wide");
         let content: String = terminal
             .backend()
             .buffer()
@@ -2066,7 +2539,7 @@ mod tests {
 
         let narrow = TestBackend::new(90, 30);
         let mut terminal = Terminal::new(narrow).expect("terminal");
-        terminal.draw(|f| draw(f, &app)).expect("draw narrow");
+        terminal.draw(|f| draw(f, &mut app)).expect("draw narrow");
         let content: String = terminal
             .backend()
             .buffer()
@@ -2191,6 +2664,10 @@ mod tests {
             answer_tx: None,
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         };
         app.run_command("skills");
@@ -2250,6 +2727,10 @@ mod tests {
             answer_tx: None,
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         };
         app.run_command("agents");
@@ -2309,6 +2790,10 @@ mod tests {
             answer_tx: None,
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         };
         for c in "https://example.test/plugin".chars() {
@@ -2364,6 +2849,10 @@ mod tests {
             answer_tx: None,
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         };
         handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -2404,6 +2893,10 @@ mod tests {
             answer_tx: None,
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         }
     }
@@ -2412,7 +2905,8 @@ mod tests {
     /// paste шлётся терминалом как синтетический Enter на каждый \n —
     /// `submit()` без этой защиты отправлял бы каждую строку отдельным
     /// сообщением. Событие `Event::Paste` приходит одним куском —
-    /// `handle_paste` обязана схлопнуть переводы строк, не звать submit.
+    /// `handle_paste` сохраняет переводы строк (поле ввода
+    /// многострочное с того же дня), не зовя submit.
     #[test]
     fn handle_paste_inserts_as_single_normalized_message_without_submitting() {
         let (tx, rx) = channel();
@@ -2420,7 +2914,7 @@ mod tests {
 
         handle_paste(&mut app, "## Раздел 1\n\n### Раздел 2\nтело раздела");
 
-        assert_eq!(app.input, "## Раздел 1 ### Раздел 2 тело раздела");
+        assert_eq!(app.input, "## Раздел 1\n\n### Раздел 2\nтело раздела");
         assert_eq!(app.cursor, app.input.len());
         assert!(
             app.conversation.is_empty(),
@@ -2531,6 +3025,10 @@ mod tests {
             answer_tx: None,
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         };
         app.run_command("tools");
@@ -2617,6 +3115,10 @@ mod tests {
             answer_tx: Some(answer_tx),
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         };
         // ↓ ↓ ↓ от «нет» (4) → да(0) → сессия(1) → проект(2); Enter.
@@ -2679,6 +3181,10 @@ mod tests {
             answer_tx: None,
             tx,
             rx,
+            focus: Focus::Input,
+            log_area: Rect::default(),
+            input_area: Rect::default(),
+            input_scroll: 0,
             done: false,
         };
         let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
