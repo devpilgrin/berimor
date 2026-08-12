@@ -22,11 +22,13 @@ use std::time::{Duration, Instant};
 
 /// Кап тела чтения/записи файла и тела HTTP-ответа — защита памяти
 /// процесса (тот же принцип, что size-cap HTTP-провайдера, аудит 3.9).
-const CONTENT_CAP: u64 = 1024 * 1024;
+/// pub(crate): волны A/B/C (spec builtin-tools-waves) — модули
+/// инструментов используют общие капы/хелперы, не дублируя их.
+pub(crate) const CONTENT_CAP: u64 = 1024 * 1024;
 /// Кап числа записей листинга каталога.
 const LIST_CAP: usize = 1000;
 /// Кап stdout/stderr терминальной команды — на поток.
-const TERMINAL_OUTPUT_CAP: u64 = 64 * 1024;
+pub(crate) const TERMINAL_OUTPUT_CAP: u64 = 64 * 1024;
 /// Таймаут терминальной команды: без него зависшая команда повесила бы
 /// весь процесс (движок синхронный).
 const TERMINAL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -183,6 +185,28 @@ fn join_capped(handle: std::thread::JoinHandle<Vec<u8>>) -> Vec<u8> {
         std::thread::sleep(Duration::from_millis(20));
     }
     Vec::new()
+}
+
+/// Свободные хелперы для модулей волн A/B/C (spec
+/// docs/rnd/builtin-tools-waves-spec.md): общая семантика resolve/err
+/// без доступа к приватным полям диспетчера. allow(dead_code) —
+/// до интеграции первой волны (убрать с первым потребителем).
+#[allow(dead_code)]
+pub(crate) fn resolve_from(root: &Path, raw: &str) -> PathBuf {
+    let path = Path::new(raw);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn err_str(tool: &str, reason: impl Into<String>) -> DispatchError {
+    DispatchError {
+        tool: tool.into(),
+        reason: reason.into(),
+    }
 }
 
 impl ToolDispatch for BuiltinToolDispatch {

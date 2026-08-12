@@ -42,6 +42,12 @@ thiserror.workspace = true
 sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.3"
+# Волны встроенных инструментов A/B/C (docs/rnd/builtin-tools-waves-spec.md):
+# files.search. Все три уже в Cargo.lock транзитивно — нового внешнего
+# кода нет (конвенция: grep по локфайлу до добавления).
+walkdir = "2.5.0"
+regex = "1.13.1"
+globset = "0.4.19"
 tokio = { version = "1.53.1", features = ["process", "io-util", "rt"] }
 toml = "1.1.4"
 ratatui = "0.30"
