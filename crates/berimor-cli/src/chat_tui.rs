@@ -53,6 +53,7 @@ type SlashAbout = fn(&i18n::Strings) -> &'static str;
 const SLASH_COMMANDS: &[(&str, SlashAbout)] = &[
     ("/help", |s| s.slash_help),
     ("/config", |s| s.slash_config),
+    ("/config locale", |s| s.slash_config_locale),
     ("/models", |s| s.slash_models),
     ("/models add", |s| s.slash_models_add),
     ("/model", |s| s.slash_model),
@@ -209,6 +210,9 @@ enum Flow {
     PluginRemovePick { names: Vec<String> },
     /// /config locale: пикер из 8 локалей (i18n, 2026-08-09).
     LocalePick,
+    /// /config: меню параметров (2026-08-12: «/config > модалка с
+    /// выбором параметров > Locale > модалка языка»).
+    ConfigMenu,
 }
 
 /// Фокус мыши (репорт 2026-08-09): клик по журналу переводит фокус на
@@ -719,46 +723,28 @@ impl App {
                     self.sys(format!("{name:<14} — {}", about(strings)));
                 }
             }
-            // /config [locale [код]] — эффективная конфигурация, а с
-            // locale — просмотр/смена локали интерфейса (i18n,
-            // 2026-08-09). Код — сразу, без кода — пикер из 8 локалей.
+            // /config — МЕНЮ параметров (директива 2026-08-12: «/config
+            // > модалка > Locale > модалка языка»); показ конфигурации —
+            // один из пунктов. /config locale [код] — шорткат мимо меню.
             cmd if cmd == "config" || cmd.starts_with("config locale") => {
                 let strings = i18n::strings(self.locale);
                 if cmd == "config" {
-                    self.sys(format!(
-                        "{}{}",
-                        strings.sys_config_journal,
-                        self.config.storage_path.display()
-                    ));
-                    self.sys(format!(
-                        "{}{:?}",
-                        strings.sys_config_mode, self.config.confirmation_mode
-                    ));
-                    self.sys(format!(
-                        "{}{}",
-                        strings.sys_config_providers,
-                        self.config.providers.len()
-                    ));
-                    self.sys(format!(
-                        "{}{} ({}) — /config locale",
-                        strings.sys_config_locale,
-                        self.locale.native_name(),
-                        self.locale.code()
-                    ));
+                    let items: Vec<String> = vec![
+                        strings.settings_show.to_string(),
+                        format!(
+                            "{} — {} ({})",
+                            strings.settings_locale,
+                            self.locale.native_name(),
+                            self.locale.code()
+                        ),
+                    ];
+                    self.picker = Some(Picker::new(strings.settings_menu_title, items, false));
+                    self.flow = Some(Flow::ConfigMenu);
                     return;
                 }
                 let arg = cmd.strip_prefix("config locale").unwrap().trim();
                 if arg.is_empty() {
-                    // Пикер: 8 локалей самоназваниями с кодом.
-                    let items: Vec<String> = Locale::ALL
-                        .iter()
-                        .map(|l| format!("{} ({})", l.native_name(), l.code()))
-                        .collect();
-                    let current = Locale::ALL.iter().position(|l| *l == self.locale);
-                    let mut picker = Picker::new(strings.picker_locale, items, false);
-                    picker.state.select(current.or(Some(0)));
-                    self.picker = Some(picker);
-                    self.flow = Some(Flow::LocalePick);
+                    self.open_locale_picker();
                 } else {
                     match Locale::from_code(arg) {
                         Some(locale) => self.apply_locale(locale),
@@ -969,6 +955,46 @@ impl App {
         }
     }
 
+    /// Пикер локалей: 8 самоназваний с кодом, текущая предвыбрана
+    /// (используется из /config locale и из меню /config, 2026-08-12).
+    fn open_locale_picker(&mut self) {
+        let strings = i18n::strings(self.locale);
+        let items: Vec<String> = Locale::ALL
+            .iter()
+            .map(|l| format!("{} ({})", l.native_name(), l.code()))
+            .collect();
+        let current = Locale::ALL.iter().position(|l| *l == self.locale);
+        let mut picker = Picker::new(strings.picker_locale, items, false);
+        picker.state.select(current.or(Some(0)));
+        self.picker = Some(picker);
+        self.flow = Some(Flow::LocalePick);
+    }
+
+    /// Печать эффективной конфигурации в журнал (пункт меню /config).
+    fn print_config_info(&mut self) {
+        let strings = i18n::strings(self.locale);
+        self.sys(format!(
+            "{}{}",
+            strings.sys_config_journal,
+            self.config.storage_path.display()
+        ));
+        self.sys(format!(
+            "{}{:?}",
+            strings.sys_config_mode, self.config.confirmation_mode
+        ));
+        self.sys(format!(
+            "{}{}",
+            strings.sys_config_providers,
+            self.config.providers.len()
+        ));
+        self.sys(format!(
+            "{}{} ({})",
+            strings.sys_config_locale,
+            self.locale.native_name(),
+            self.locale.code()
+        ));
+    }
+
     fn advance_flow(&mut self) {
         let Some(flow) = self.flow.take() else { return };
         let Some(picker) = self.picker.take() else {
@@ -1076,6 +1102,13 @@ impl App {
                 };
                 self.apply_locale(*locale);
             }
+            // Меню параметров /config (2026-08-12): 0 — показать
+            // конфигурацию, 1 — пикер локали (модалка языка).
+            Flow::ConfigMenu => match picker.selected() {
+                Some(0) => self.print_config_info(),
+                Some(1) => self.open_locale_picker(),
+                _ => {}
+            },
             Flow::ExtCatalogPick { kind, names } => {
                 let Some(name) = picker.selected().and_then(|i| names.get(i)).cloned() else {
                     return;
@@ -2383,6 +2416,14 @@ mod tests {
         assert!(names.contains(&"/model"));
         assert!(names.contains(&"/models"));
         assert!(!names.contains(&"/help"));
+        // Подменю (репорт 2026-08-12): «/config » показывает продолжение
+        // «/config locale» (фильтр режет хвостовой пробел — в списке и
+        // само «/config», это норма: два варианта продолжения).
+        let mut app = app;
+        app.input = "/config ".into();
+        let names: Vec<&str> = app.slash_filtered().iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"/config locale"));
+        assert!(names.contains(&"/config"));
     }
 
     /// §20.26: при ширине ≥ 110 рендерится инфо-панель, при узком —
@@ -2709,31 +2750,44 @@ mod tests {
         )));
     }
 
-    /// /config locale (i18n, 2026-08-09): /config показывает текущую
-    /// локаль; неверный код — говорящий отказ БЕЗ смены; без кода —
-    /// пикер из 8 локалей. Запись в конфиг — seam `setup::set_locale_to`
-    /// (покрыт своими тестами), здесь не дёргаем (не портить cwd тестов).
+    /// /config (2026-08-12, директива): меню параметров → пункт Locale
+    /// → пикер из 8 локалей. /config locale xx — говорящий отказ БЕЗ
+    /// смены. Запись в конфиг — seam `setup::set_locale_to` (покрыт
+    /// своими тестами), здесь не дёргаем (не портить cwd тестов).
     #[test]
-    fn config_locale_show_reject_and_picker() {
+    fn config_menu_to_locale_picker_chain() {
         let (tx, rx) = channel();
         let mut app = blank_app(tx, rx);
+        // /config — модалка параметров: показ конфигурации + Locale.
         app.run_command("config");
-        assert!(app.log.iter().any(|l| matches!(
-            l,
-            LogLine::Sys(t) if t.contains("Русский (ru)")
-        )));
+        assert!(matches!(app.flow, Some(Flow::ConfigMenu)));
+        let picker = app.picker.as_ref().expect("меню параметров");
+        assert_eq!(picker.items.len(), 2);
+        assert!(picker.items[1].contains("Русский (ru)"));
+        // Выбор «Locale» — модалка языка (8 локалей, текущая предвыбрана).
+        app.picker.as_mut().unwrap().state.select(Some(1));
+        app.advance_flow();
+        assert!(matches!(app.flow, Some(Flow::LocalePick)));
+        let picker = app.picker.as_ref().expect("пикер локалей");
+        assert_eq!(picker.items.len(), 8);
+        assert!(picker.items[1].contains("English (en)"));
+        app.picker = None;
+        app.flow = None;
+        // Шорткат с мусорным кодом — отказ, локаль не тронута.
         app.run_command("config locale xx");
         assert!(app.log.iter().any(|l| matches!(
             l,
             LogLine::Sys(t) if t.contains("xx") && t.contains("доступны")
         )));
         assert_eq!(app.locale, i18n::Locale::Ru);
-        assert!(app.picker.is_none());
-        app.run_command("config locale");
-        assert!(matches!(app.flow, Some(Flow::LocalePick)));
-        let picker = app.picker.as_ref().expect("пикер локали");
-        assert_eq!(picker.items.len(), 8);
-        assert!(picker.items[1].contains("English (en)"));
+        // Пункт «показать конфигурацию» печатает строки с локалью.
+        app.run_command("config");
+        app.picker.as_mut().unwrap().state.select(Some(0));
+        app.advance_flow();
+        assert!(app.log.iter().any(|l| matches!(
+            l,
+            LogLine::Sys(t) if t.contains("Русский (ru)")
+        )));
     }
 
     #[test]

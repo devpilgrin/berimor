@@ -22,6 +22,7 @@
 use crate::builtin_dispatch::builtin_policies;
 use crate::chat_ui::{self, Theme};
 use crate::config::{self, Config};
+use crate::i18n::{self, Locale};
 use crate::run::{build_executor_bundle, RunError};
 use crate::setup;
 use berimor_context_engine::memory_builder::{FactsSource, MemoryContextBuilder};
@@ -91,6 +92,7 @@ fn print_help() {
     eprintln!("  /tell <id> <текст> — сообщение сессии (персистентная почта)");
     eprintln!("  /broadcast <текст> — сообщение всем живым сессиям");
     eprintln!("  /exit, /quit — завершить (Ctrl+D тоже)");
+    eprintln!("  /config locale <код> — локаль интерфейса TUI (ru, en, de, fr, es, zh-CN, ja, ko)");
     eprintln!("  /mouse, /copy — только в полноэкранном TUI (мышь/буфер обмена);");
     eprintln!("                  в построчном режиме мышь не захватывается");
     eprintln!("[berimor] всё остальное — сообщение агенту.");
@@ -103,6 +105,12 @@ fn print_config(config: &Config) {
     eprintln!("  провайдеров: {}", config.providers.len());
     eprintln!("  заглушек инструментов: {}", config.tool_stubs.len());
     eprintln!("  MCP-серверов: {}", config.mcp_servers.len());
+    let locale = Locale::resolve(config.ui.locale.as_deref());
+    eprintln!(
+        "  локаль интерфейса: {} ({})",
+        locale.native_name(),
+        locale.code()
+    );
 }
 
 fn print_models(config: &Config) {
@@ -639,6 +647,36 @@ fn run_repl(
                 }
                 "config" => {
                     print_config(config);
+                    continue;
+                }
+                // /config locale [код] — в REPL без пикера: код
+                // аргументом, без аргумента — перечень кодов (i18n,
+                // 2026-08-12; меню TUI — палитра `/config ` + пикер).
+                cmd if cmd == "config locale" || cmd.starts_with("config locale ") => {
+                    let arg = cmd.strip_prefix("config locale").unwrap().trim();
+                    let strings = i18n::strings(Locale::resolve(config.ui.locale.as_deref()));
+                    if arg.is_empty() {
+                        eprintln!(
+                            "[berimor] {}ru, en, de, fr, es, zh-CN, ja, ko — /config locale <код>",
+                            strings.sys_config_locale
+                        );
+                    } else {
+                        match Locale::from_code(arg) {
+                            Some(locale) => {
+                                match setup::set_locale_in_local_config(locale.code()) {
+                                    Ok(path) => eprintln!(
+                                        "[berimor] {}{} ({}) {} — {path}",
+                                        strings.sys_config_locale,
+                                        locale.native_name(),
+                                        locale.code(),
+                                        strings.sys_locale_set
+                                    ),
+                                    Err(err) => eprintln!("[berimor] не сохранено: {err}"),
+                                }
+                            }
+                            None => eprintln!("[berimor] {arg} — {}", strings.sys_locale_unknown),
+                        }
+                    }
                     continue;
                 }
                 "skills" => {
