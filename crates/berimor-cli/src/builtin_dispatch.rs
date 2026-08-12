@@ -39,9 +39,14 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 pub const BUILTIN_TOOLS: &[&str] = &[
     "files.read",
     "files.write",
+    "files.edit",
     "files.list",
+    "files.search",
     "terminal.exec",
     "http.fetch",
+    "vcs.git",
+    "snapshot.list",
+    "snapshot.restore",
     // Поручение субагенту (§20.17): само по себе не мутирует; действия
     // ребёнка проходят тот же гейт/подтверждения поштучно.
     "agents.run",
@@ -51,11 +56,16 @@ pub const BUILTIN_TOOLS: &[&str] = &[
 /// декларируется честно — `terminal.exec` всегда «изменяющий» (команда
 /// может иметь побочные эффекты, deny-статика ловит опасные классы, но
 /// не доказывает чистоту), HTTP — только GET, без тела, неизменяющий.
+/// Волны A/C (spec builtin-tools-waves): edit/restore — мутирующие,
+/// search/git/snapshot.list — читающие.
 pub fn builtin_policies() -> Vec<(String, ToolPolicy)> {
     BUILTIN_TOOLS
         .iter()
         .map(|name| {
-            let mutates = matches!(*name, "files.write" | "terminal.exec");
+            let mutates = matches!(
+                *name,
+                "files.write" | "files.edit" | "terminal.exec" | "snapshot.restore"
+            );
             (
                 (*name).to_string(),
                 ToolPolicy {
@@ -189,9 +199,7 @@ fn join_capped(handle: std::thread::JoinHandle<Vec<u8>>) -> Vec<u8> {
 
 /// Свободные хелперы для модулей волн A/B/C (spec
 /// docs/rnd/builtin-tools-waves-spec.md): общая семантика resolve/err
-/// без доступа к приватным полям диспетчера. allow(dead_code) —
-/// до интеграции первой волны (убрать с первым потребителем).
-#[allow(dead_code)]
+/// без доступа к приватным полям диспетчера.
 pub(crate) fn resolve_from(root: &Path, raw: &str) -> PathBuf {
     let path = Path::new(raw);
     if path.is_absolute() {
@@ -201,7 +209,6 @@ pub(crate) fn resolve_from(root: &Path, raw: &str) -> PathBuf {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn err_str(tool: &str, reason: impl Into<String>) -> DispatchError {
     DispatchError {
         tool: tool.into(),
@@ -246,6 +253,14 @@ impl ToolDispatch for BuiltinToolDispatch {
                     ));
                 }
                 let path = self.resolve(raw);
+                // C10 (spec builtin-tools-waves): снапшот существующего
+                // файла ПЕРЕД перезаписью; сбой/пропуск снапшота операцию
+                // не блокирует — пометка в ответе.
+                let snapshot = match crate::builtin_snapshots::take(&self.workspace_root, &path) {
+                    Ok(Some(id)) => json!(id),
+                    Ok(None) => json!("skipped"),
+                    Err(_) => json!("failed"),
+                };
                 // Родитель обязан существовать: молчаливое создание
                 // директорий — неявный побочный эффект, не заказанный
                 // действием (mutates касается файла, не структуры).
@@ -259,8 +274,26 @@ impl ToolDispatch for BuiltinToolDispatch {
                 Ok(json!({
                     "path": raw,
                     "bytes": content.len(),
+                    "snapshot": snapshot,
                 }))
             }
+            // Волны A/C (spec builtin-tools-waves): делегирование модулям.
+            // files.edit — со снапшотом перед перезаписью (как files.write).
+            "files.edit" => {
+                let abs = resolve_from(&self.workspace_root, args["path"].as_str().unwrap_or(""));
+                let snapshot = match crate::builtin_snapshots::take(&self.workspace_root, &abs) {
+                    Ok(Some(id)) => json!(id),
+                    Ok(None) => json!("skipped"),
+                    Err(_) => json!("failed"),
+                };
+                let mut result = crate::builtin_edit::call(&self.workspace_root, args)?;
+                result["snapshot"] = snapshot;
+                Ok(result)
+            }
+            "files.search" => crate::builtin_search::call(&self.workspace_root, args),
+            "vcs.git" => crate::builtin_vcs::call(&self.workspace_root, args),
+            "snapshot.list" => crate::builtin_snapshots::list(&self.workspace_root, args),
+            "snapshot.restore" => crate::builtin_snapshots::restore(&self.workspace_root, args),
             "files.list" => {
                 let raw = args["path"].as_str().unwrap_or(".");
                 let path = self.resolve(raw);
