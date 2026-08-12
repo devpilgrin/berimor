@@ -140,6 +140,14 @@ pub struct MemoryConfig {
     /// модель не скачивается.
     #[serde(default)]
     pub embeddings: bool,
+    /// Запись в память ИНСТРУМЕНТОМ `memory.save` (волна C8, spec
+    /// builtin-tools-waves): как и fact_extraction — доверенная граница,
+    /// включается осознанно. Default `false`: инструмент отвечает
+    /// говорящей ошибкой «запись отключена конфигом». allow(dead_code) —
+    /// читается при интеграции C8 (memory-диспетчер).
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub tool_writes: bool,
     /// Верхняя граница числа фактов в слое `Facts` за один запрос
     /// (аналог `session_search_limit`).
     pub facts_search_limit: usize,
@@ -175,6 +183,7 @@ impl Default for MemoryConfig {
             entity_graph: false,
             fact_extraction: false,
             embeddings: false,
+            tool_writes: false,
             facts_search_limit: 5,
         }
     }

@@ -43,7 +43,13 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "files.list",
     "files.search",
     "terminal.exec",
+    "terminal.start",
+    "terminal.output",
+    "terminal.kill",
     "http.fetch",
+    "web.search",
+    "todo.read",
+    "todo.write",
     "vcs.git",
     "snapshot.list",
     "snapshot.restore",
@@ -56,15 +62,22 @@ pub const BUILTIN_TOOLS: &[&str] = &[
 /// декларируется честно — `terminal.exec` всегда «изменяющий» (команда
 /// может иметь побочные эффекты, deny-статика ловит опасные классы, но
 /// не доказывает чистоту), HTTP — только GET, без тела, неизменяющий.
-/// Волны A/C (spec builtin-tools-waves): edit/restore — мутирующие,
-/// search/git/snapshot.list — читающие.
+/// Волны A/B/C (spec builtin-tools-waves): edit/restore/start/kill —
+/// мутирующие; search/git/web/todo/snapshot.list/output — читающие
+/// (todo — внутренняя бухгалтерия агента в .berimor/, не данные
+/// пользователя, обоснование в builtin_todo).
 pub fn builtin_policies() -> Vec<(String, ToolPolicy)> {
     BUILTIN_TOOLS
         .iter()
         .map(|name| {
             let mutates = matches!(
                 *name,
-                "files.write" | "files.edit" | "terminal.exec" | "snapshot.restore"
+                "files.write"
+                    | "files.edit"
+                    | "terminal.exec"
+                    | "terminal.start"
+                    | "terminal.kill"
+                    | "snapshot.restore"
             );
             (
                 (*name).to_string(),
@@ -83,6 +96,9 @@ pub fn builtin_policies() -> Vec<(String, ToolPolicy)> {
 pub struct BuiltinToolDispatch {
     workspace_root: PathBuf,
     terminal_timeout: Duration,
+    /// Фоновые процессы терминала (волна B6): реестр потокобезопасен,
+    /// живёт столько же, сколько диспетчер (сессия/процесс).
+    bg: crate::builtin_terminal_bg::BgRegistry,
     /// §20.22 v2 шаг 2: контекст сессии для FileTouched/FileObserved —
     /// прикрепляется ПОСЛЕ конструкции (chat/run собирают бандл до того,
     /// как известен session_id). None — события не журналируются (тесты
@@ -102,6 +118,7 @@ impl BuiltinToolDispatch {
         Self {
             workspace_root,
             terminal_timeout: TERMINAL_TIMEOUT,
+            bg: crate::builtin_terminal_bg::BgRegistry::default(),
             session: std::sync::Mutex::new(None),
         }
     }
@@ -150,6 +167,7 @@ impl BuiltinToolDispatch {
         Self {
             workspace_root,
             terminal_timeout: timeout,
+            bg: crate::builtin_terminal_bg::BgRegistry::default(),
             session: std::sync::Mutex::new(None),
         }
     }
@@ -294,6 +312,30 @@ impl ToolDispatch for BuiltinToolDispatch {
             "vcs.git" => crate::builtin_vcs::call(&self.workspace_root, args),
             "snapshot.list" => crate::builtin_snapshots::list(&self.workspace_root, args),
             "snapshot.restore" => crate::builtin_snapshots::restore(&self.workspace_root, args),
+            // Волна B (spec builtin-tools-waves): web-поиск, todo,
+            // фоновый терминал через реестр процессов диспетчера.
+            "web.search" => crate::builtin_websearch::call(&self.workspace_root, args),
+            "todo.read" => crate::builtin_todo::read(&self.workspace_root),
+            "todo.write" => crate::builtin_todo::write(&self.workspace_root, args),
+            "terminal.start" => {
+                let command = args["command"]
+                    .as_str()
+                    .ok_or_else(|| Self::err(tool, "аргумент 'command' обязателен (строка)"))?;
+                self.bg.start(&self.workspace_root, command)
+            }
+            "terminal.output" => {
+                let id = args["id"]
+                    .as_u64()
+                    .ok_or_else(|| Self::err(tool, "аргумент 'id' обязателен (число)"))?;
+                let offset = args["offset"].as_u64().unwrap_or(0) as usize;
+                self.bg.output(id, offset)
+            }
+            "terminal.kill" => {
+                let id = args["id"]
+                    .as_u64()
+                    .ok_or_else(|| Self::err(tool, "аргумент 'id' обязателен (число)"))?;
+                self.bg.kill(id)
+            }
             "files.list" => {
                 let raw = args["path"].as_str().unwrap_or(".");
                 let path = self.resolve(raw);
