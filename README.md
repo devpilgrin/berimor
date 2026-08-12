@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-844%20green-brightgreen)](#инфраструктура-проекта)
+[![Tests](https://img.shields.io/badge/tests-850%20green-brightgreen)](#инфраструктура-проекта)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -73,7 +73,7 @@ Deny-таблица деструктивных операций не переи�
 
 **Rust-workspace по крейту на компонент** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. Гостевой WASM-модуль (`codeact-guest/`) живёт отдельным crate и закоммичен как готовый артефакт — обычная сборка не замедляется.
 
-**Дисциплина проверок.** Каждый релиз: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (844 тестов: юнит, интеграционные, e2e через настоящий бинарник, золотые фикстуры процессов и вредоносных вводов). Критические компоненты проходят обязательное независимое ревью. Полный самостоятельный аудит (`docs/audit-2026-07-31.md`) — **все находки закрыты или осознанно задокументированы**.
+**Дисциплина проверок.** Каждый релиз: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (850 тестов: юнит, интеграционные, e2e через настоящий бинарник, золотые фикстуры процессов и вредоносных вводов). Критические компоненты проходят обязательное независимое ревью. Полный самостоятельный аудит (`docs/audit-2026-07-31.md`) — **все находки закрыты или осознанно задокументированы**.
 
 **Supply chain как у взрослых.** Кросс-платформенные релизы (Linux x64/arm64, macOS arm64, Windows x64) с keyless-подписью cosign/sigstore — приватного ключа не существует нигде. Проверка: `berimor verify <архив>`. npm-публикация с provenance, SBOM (CycloneDX) в пайплайне, самообновление (`berimor self-update`) реализовано на примитивах Process Engine — тот же журнал и восстановление после сбоя, что у обычных процессов, а не ad hoc скрипт.
 
@@ -154,7 +154,7 @@ berimor          # = berimor chat: интерактивный диалог с а
 
 При первом запуске мастер предложит подключить модели из пресетов (Kimi, DeepSeek, OpenAI, Claude через OpenRouter, локальные через Ollama/llama.cpp/LM Studio) — выберите номера или имена, вставьте ключ API (он попадёт в `~/.config/berimor/secrets.env` с правами «только владелец», не в конфиг). Вместо API-ключа можно войти по подписке — `berimor login` (OAuth с PKCE: Claude Pro/Max, ChatGPT Plus/Pro; токены — в том же `secrets.env`, обновление — прозрачно). Позже то же самое — `berimor setup` или прямо в чате командой `/models add`.
 
-Полезные команды чата: `/help`, `/models`, `/skills`, `/config`, `/exit`.
+Полезные команды чата: `/help`, `/models`, `/skills`, `/config`, `/exit`. Локаль интерфейса TUI — `/config locale` (8 языков: ru, en, de, fr, es, zh-CN, ja, ko; выбор сохраняется в локальном конфиге — секция `[ui]`).
 
 Детерминированные процессы (декларативный YAML-план со строгими контрактами — основной «боевой» режим): `berimor run <process.yaml>`. Примеры процессов и конфигураций — в [`fixtures/golden/processes/`](fixtures/golden/processes/) и [`CONTRIBUTING.md`](CONTRIBUTING.md).
 

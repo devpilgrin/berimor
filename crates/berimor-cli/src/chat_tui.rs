@@ -19,6 +19,7 @@
 //!   запирает на одной модели (замечание пользователя §20.14).
 
 use crate::config::{self, Config, ProviderConfig};
+use crate::i18n::{self, Locale};
 use crate::presets::{self, ProviderPreset};
 use crate::run::RunError;
 use crate::setup;
@@ -43,41 +44,32 @@ use std::time::Duration;
 
 /// Slash-команды с описаниями — источник и для автодополнения, и для
 /// /help (одно определение, два потребителя).
-const SLASH_COMMANDS: &[(&str, &str)] = &[
-    ("/help", "список команд"),
-    ("/config", "эффективная конфигурация"),
-    ("/models", "провайдеры моделей"),
-    (
-        "/models add",
-        "мастер: пресеты → живой список моделей → ключ",
-    ),
-    (
-        "/model",
-        "сменить модель сессии (выбор из списка провайдера)",
-    ),
-    ("/tools", "список доступных инструментов"),
-    ("/skills", "список установленных скилов"),
-    ("/skills add", "установить скилл из каталога berimor-skills"),
-    ("/skills remove", "удалить установленный скилл"),
-    ("/agents", "список установленных субагентов"),
-    (
-        "/agents add",
-        "установить субагента из каталога berimor-agents",
-    ),
-    ("/agents remove", "удалить установленного субагента"),
-    ("/plugins", "список установленных плагинов"),
-    (
-        "/plugins add",
-        "установить плагин из доверенного репозитория",
-    ),
-    ("/plugins remove", "удалить установленный плагин"),
-    ("/exit", "завершить"),
-    ("/quit", "завершить"),
-    (
-        "/mouse",
-        "отпустить/захватить мышь (нативное выделение vs колесо)",
-    ),
-    ("/copy", "последний ответ агента — в буфер обмена"),
+/// Описание slash-команды на конкретной локали — поле `Strings`.
+type SlashAbout = fn(&i18n::Strings) -> &'static str;
+
+/// Slash-команды: имя + описание на локали (i18n, 2026-08-09).
+/// Описание — fn-указатель на поле `Strings`: таблица одна на язык,
+/// палитра и /help читают её через `i18n::strings(app.locale)`.
+const SLASH_COMMANDS: &[(&str, SlashAbout)] = &[
+    ("/help", |s| s.slash_help),
+    ("/config", |s| s.slash_config),
+    ("/models", |s| s.slash_models),
+    ("/models add", |s| s.slash_models_add),
+    ("/model", |s| s.slash_model),
+    ("/tools", |s| s.slash_tools),
+    ("/skills", |s| s.slash_skills),
+    ("/skills add", |s| s.slash_skills_add),
+    ("/skills remove", |s| s.slash_skills_remove),
+    ("/agents", |s| s.slash_agents),
+    ("/agents add", |s| s.slash_agents_add),
+    ("/agents remove", |s| s.slash_agents_remove),
+    ("/plugins", |s| s.slash_plugins),
+    ("/plugins add", |s| s.slash_plugins_add),
+    ("/plugins remove", |s| s.slash_plugins_remove),
+    ("/exit", |s| s.slash_exit),
+    ("/quit", |s| s.slash_exit),
+    ("/mouse", |s| s.slash_mouse),
+    ("/copy", |s| s.slash_copy),
 ];
 
 const SPINNER: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -215,6 +207,8 @@ enum Flow {
     PluginAskRepo { input: String },
     /// /plugins remove: пикер из установленных плагинов.
     PluginRemovePick { names: Vec<String> },
+    /// /config locale: пикер из 8 локалей (i18n, 2026-08-09).
+    LocalePick,
 }
 
 /// Фокус мыши (репорт 2026-08-09): клик по журналу переводит фокус на
@@ -288,6 +282,9 @@ struct App {
     /// выделение текста; репорт 2026-08-09: «перестало работать
     /// копирование»). Захвачена по умолчанию — как у Claude Code.
     mouse_capture: bool,
+    /// Локаль интерфейса (i18n, 2026-08-09): `[ui] locale` из конфига,
+    /// иначе окружение, иначе ru. Смена — `/config locale`.
+    locale: Locale,
     /// Области журнала и поля ввода последнего кадра — для hit-test
     /// кликов и колеса (записываются в `draw`, читаются в
     /// `handle_mouse`).
@@ -348,6 +345,7 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
     let config =
         config::load(explicit_config).map_err(|err| RunError::BadInput(err.to_string()))?;
     let (tx, rx) = channel();
+    let locale = Locale::resolve(config.ui.locale.as_deref());
     let mut app = App {
         config,
         explicit_config: explicit_config.map(Path::to_path_buf),
@@ -380,6 +378,7 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         answer_tx: None,
         focus: Focus::Input,
         mouse_capture: true,
+        locale,
         log_area: Rect::default(),
         input_area: Rect::default(),
         input_scroll: 0,
@@ -563,7 +562,7 @@ impl App {
         }
     }
 
-    fn slash_filtered(&self) -> Vec<&'static (&'static str, &'static str)> {
+    fn slash_filtered(&self) -> Vec<&'static (&'static str, SlashAbout)> {
         let typed = self.input.trim_end();
         SLASH_COMMANDS
             .iter()
@@ -689,16 +688,13 @@ impl App {
             "mouse" => {
                 self.mouse_capture = !self.mouse_capture;
                 let mut out = std::io::stdout();
+                let strings = i18n::strings(self.locale);
                 if self.mouse_capture {
                     let _ = out.execute(EnableMouseCapture);
-                    self.sys(
-                        "мышь захвачена: колесо и клик-фокус работают; выделение — Shift+drag",
-                    );
+                    self.sys(strings.sys_mouse_on);
                 } else {
                     let _ = out.execute(DisableMouseCapture);
-                    self.sys(
-                        "мышь отпущена: выделение нативное; колесо недоступно. Вернуть — /mouse",
-                    );
+                    self.sys(strings.sys_mouse_off);
                 }
             }
             // Копирование без выделения: последний ответ агента — в
@@ -708,32 +704,71 @@ impl App {
                     LogLine::Assistant(text) => Some(text.clone()),
                     _ => None,
                 });
+                let strings = i18n::strings(self.locale);
                 match last {
                     Some(text) => match copy_to_clipboard(&text) {
-                        Ok(tool) => {
-                            self.sys(format!("последний ответ скопирован в буфер ({tool})"))
-                        }
-                        Err(err) => self.sys(err),
+                        Some(tool) => self.sys(format!("{} ({tool})", strings.sys_copied)),
+                        None => self.sys(strings.sys_no_clipboard),
                     },
-                    None => self.sys("журнал пуст — нечего копировать"),
+                    None => self.sys(strings.sys_nothing_to_copy),
                 }
             }
             "help" => {
+                let strings = i18n::strings(self.locale);
                 for (name, about) in SLASH_COMMANDS {
-                    self.sys(format!("{name:<12} — {about}"));
+                    self.sys(format!("{name:<14} — {}", about(strings)));
                 }
             }
-            "config" => {
-                self.sys(format!("журнал: {}", self.config.storage_path.display()));
-                self.sys(format!(
-                    "режим подтверждений: {:?}",
-                    self.config.confirmation_mode
-                ));
-                self.sys(format!("провайдеров: {}", self.config.providers.len()));
+            // /config [locale [код]] — эффективная конфигурация, а с
+            // locale — просмотр/смена локали интерфейса (i18n,
+            // 2026-08-09). Код — сразу, без кода — пикер из 8 локалей.
+            cmd if cmd == "config" || cmd.starts_with("config locale") => {
+                let strings = i18n::strings(self.locale);
+                if cmd == "config" {
+                    self.sys(format!(
+                        "{}{}",
+                        strings.sys_config_journal,
+                        self.config.storage_path.display()
+                    ));
+                    self.sys(format!(
+                        "{}{:?}",
+                        strings.sys_config_mode, self.config.confirmation_mode
+                    ));
+                    self.sys(format!(
+                        "{}{}",
+                        strings.sys_config_providers,
+                        self.config.providers.len()
+                    ));
+                    self.sys(format!(
+                        "{}{} ({}) — /config locale",
+                        strings.sys_config_locale,
+                        self.locale.native_name(),
+                        self.locale.code()
+                    ));
+                    return;
+                }
+                let arg = cmd.strip_prefix("config locale").unwrap().trim();
+                if arg.is_empty() {
+                    // Пикер: 8 локалей самоназваниями с кодом.
+                    let items: Vec<String> = Locale::ALL
+                        .iter()
+                        .map(|l| format!("{} ({})", l.native_name(), l.code()))
+                        .collect();
+                    let current = Locale::ALL.iter().position(|l| *l == self.locale);
+                    let mut picker = Picker::new(strings.picker_locale, items, false);
+                    picker.state.select(current.or(Some(0)));
+                    self.picker = Some(picker);
+                    self.flow = Some(Flow::LocalePick);
+                } else {
+                    match Locale::from_code(arg) {
+                        Some(locale) => self.apply_locale(locale),
+                        None => self.sys(format!("{arg} — {}", strings.sys_locale_unknown)),
+                    }
+                }
             }
             "models" => {
                 if self.config.providers.is_empty() {
-                    self.sys("провайдеры не настроены — /models add");
+                    self.sys(i18n::strings(self.locale).sys_providers_empty);
                 }
                 let lines: Vec<String> = self
                     .config
@@ -751,7 +786,7 @@ impl App {
                     .map(|p| format!("{} — {}", p.display, p.about))
                     .collect();
                 self.picker = Some(Picker::new(
-                    "Пресеты (Space — пометить, Enter — подтвердить)",
+                    i18n::strings(self.locale).picker_presets,
                     items,
                     true,
                 ));
@@ -759,7 +794,7 @@ impl App {
             }
             "model" => {
                 if self.config.providers.is_empty() {
-                    self.sys("провайдеры не настроены — /models add");
+                    self.sys(i18n::strings(self.locale).sys_providers_empty);
                     return;
                 }
                 let items: Vec<String> = self
@@ -768,7 +803,11 @@ impl App {
                     .iter()
                     .map(|p| format!("{} — {}", p.name, p.model_id))
                     .collect();
-                self.picker = Some(Picker::new("Провайдер (Enter — выбрать)", items, false));
+                self.picker = Some(Picker::new(
+                    i18n::strings(self.locale).picker_provider,
+                    items,
+                    false,
+                ));
                 self.flow = Some(Flow::SwitchPickProvider);
             }
             "tools" => {
@@ -866,7 +905,7 @@ impl App {
                 }
                 let items = names.clone();
                 self.picker = Some(Picker::new(
-                    "Удалить плагин (Enter — подтвердить)",
+                    i18n::strings(self.locale).picker_remove,
                     items,
                     false,
                 ));
@@ -907,6 +946,29 @@ impl App {
     }
 
     /// Продвижение многошагового сценария после подтверждения пикера.
+    /// Применить локаль интерфейса (i18n, 2026-08-09): на сессию
+    /// сразу + персистентно в локальный конфиг (`[ui] locale`).
+    /// Сбой записи не отменяет смену на сессию — честное сообщение.
+    fn apply_locale(&mut self, locale: Locale) {
+        self.locale = locale;
+        let strings = i18n::strings(locale);
+        match crate::setup::set_locale_in_local_config(locale.code()) {
+            Ok(path) => self.sys(format!(
+                "{}{} ({}) {} — {path}",
+                strings.sys_config_locale,
+                locale.native_name(),
+                locale.code(),
+                strings.sys_locale_set
+            )),
+            Err(err) => self.sys(format!(
+                "{}{} ({}) — на сессию; не сохранено: {err}",
+                strings.sys_config_locale,
+                locale.native_name(),
+                locale.code()
+            )),
+        }
+    }
+
     fn advance_flow(&mut self) {
         let Some(flow) = self.flow.take() else { return };
         let Some(picker) = self.picker.take() else {
@@ -1008,6 +1070,12 @@ impl App {
             }
             Flow::AddAskKey { .. } => {} // обрабатывается в вводе, не пикером
             Flow::PluginAskRepo { .. } => {} // обрабатывается в вводе, не пикером
+            Flow::LocalePick => {
+                let Some(locale) = picker.selected().and_then(|i| Locale::ALL.get(i)) else {
+                    return;
+                };
+                self.apply_locale(*locale);
+            }
             Flow::ExtCatalogPick { kind, names } => {
                 let Some(name) = picker.selected().and_then(|i| names.get(i)).cloned() else {
                     return;
@@ -1171,7 +1239,11 @@ impl App {
             return;
         }
         let items = names.clone();
-        self.picker = Some(Picker::new("Удалить (Enter — подтвердить)", items, false));
+        self.picker = Some(Picker::new(
+            i18n::strings(self.locale).picker_remove,
+            items,
+            false,
+        ));
         self.flow = Some(Flow::ExtRemovePick { kind, names });
     }
 
@@ -1570,8 +1642,9 @@ fn point_in_rect(area: Rect, x: u16, y: u16) -> bool {
 
 /// Буфер обмена — внешней утилитой, без новых зависимостей (репорт
 /// 2026-08-09, /copy): Wayland — wl-copy, X11 — xclip/xsel, macOS —
-/// pbcopy. Ошибка — говорящая строка для sys-сообщения, не паника.
-fn copy_to_clipboard(text: &str) -> Result<&'static str, String> {
+/// pbcopy. Some(утилита) при успехе, None — говорящая строка локали
+/// на стороне вызывающего (`sys_no_clipboard`).
+fn copy_to_clipboard(text: &str) -> Option<&'static str> {
     use std::io::Write;
     use std::process::{Command, Stdio};
     let candidates: [(&str, &[&str]); 4] = [
@@ -1594,10 +1667,10 @@ fn copy_to_clipboard(text: &str) -> Result<&'static str, String> {
             let _ = stdin.write_all(text.as_bytes());
         }
         if matches!(child.wait(), Ok(status) if status.success()) {
-            return Ok(prog);
+            return Some(prog);
         }
     }
-    Err("буфер обмена недоступен: не найдено wl-copy/xclip/xsel/pbcopy".into())
+    None
 }
 
 /// Байтовые сдвиги начал логических строк (разделитель — '\n').
@@ -1736,13 +1809,18 @@ fn draw(frame: &mut Frame, app: &mut App) {
         draw_picker(frame, picker);
     }
     if let Some(Flow::AddAskKey { key_env, input, .. }) = &app.flow {
-        draw_key_prompt(frame, key_env, input.len());
+        draw_key_prompt(frame, key_env, input.len(), i18n::strings(app.locale));
     }
     if let Some(Flow::PluginAskRepo { input }) = &app.flow {
-        draw_plugin_repo_prompt(frame, input);
+        draw_plugin_repo_prompt(frame, input, i18n::strings(app.locale));
     }
     if let Some(prompt) = &app.confirm_prompt {
-        draw_confirm(frame, prompt, app.confirm_selection);
+        draw_confirm(
+            frame,
+            prompt,
+            app.confirm_selection,
+            i18n::strings(app.locale),
+        );
     }
 }
 
@@ -1792,23 +1870,31 @@ fn draw_side_panel(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-fn draw_confirm(frame: &mut Frame, prompt: &str, selection: usize) {
+fn draw_confirm(frame: &mut Frame, prompt: &str, selection: usize, strings: &i18n::Strings) {
     let area = centered_rect(78, 30, frame.area());
     let mut lines: Vec<Line> = prompt
         .lines()
         .map(|l| Line::from(format!(" {l}")))
         .collect();
     lines.push(Line::from(""));
-    // 0=да 1=сессия 2=проект 3=нет; выбранный — инверсией.
-    const OPTIONS: [(&str, &str, Color); 5] = [
-        (" да [y] ", "разрешить", Color::Green),
-        (" сессия [с] ", "до конца сессии", Color::Cyan),
-        (" проект [п] ", "инструмент — в .berimor/allow", Color::Cyan),
-        (" всё [в] ", "ВСЁ для проекта", Color::Cyan),
-        (" нет [n] ", "отказ", Color::Red),
+    // 0=да 1=сессия 2=проект 3=всё 4=нет; выбранный — инверсией.
+    let options: [(&str, &str, Color); 5] = [
+        (strings.confirm_yes, strings.confirm_yes_hint, Color::Green),
+        (
+            strings.confirm_session,
+            strings.confirm_session_hint,
+            Color::Cyan,
+        ),
+        (
+            strings.confirm_project,
+            strings.confirm_project_hint,
+            Color::Cyan,
+        ),
+        (strings.confirm_all, strings.confirm_all_hint, Color::Cyan),
+        (strings.confirm_no, strings.confirm_no_hint, Color::Red),
     ];
     let mut spans: Vec<Span> = Vec::new();
-    for (i, (label, hint, color)) in OPTIONS.iter().enumerate() {
+    for (i, (label, hint, color)) in options.iter().enumerate() {
         if i > 0 {
             spans.push(Span::raw(" "));
         }
@@ -1829,7 +1915,7 @@ fn draw_confirm(frame: &mut Frame, prompt: &str, selection: usize) {
         }
     }
     spans.push(Span::styled(
-        "  ←→/Tab — выбор, Enter — активировать",
+        strings.confirm_nav,
         Style::default().fg(Color::DarkGray),
     ));
     lines.push(Line::from(spans));
@@ -1837,7 +1923,7 @@ fn draw_confirm(frame: &mut Frame, prompt: &str, selection: usize) {
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow))
-            .title(" подтверждение действия "),
+            .title(strings.confirm_title),
     );
     frame.render_widget(Clear, area);
     frame.render_widget(modal, area);
@@ -1854,7 +1940,12 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         .map(|p| format!("{}:{}", p.name, p.model_id))
         .collect();
     let spinner = if app.busy {
-        format!(" {} думаю…", SPINNER[app.spinner_frame % SPINNER.len()])
+        let strings = i18n::strings(app.locale);
+        format!(
+            "{}{}",
+            SPINNER[app.spinner_frame % SPINNER.len()],
+            strings.header_thinking
+        )
     } else {
         String::new()
     };
@@ -1869,13 +1960,19 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(spinner, Style::default().fg(Color::Magenta)),
         ]),
         Line::from(vec![
-            Span::styled(" область: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                i18n::strings(app.locale).header_workspace,
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(workspace),
         ]),
         Line::from(vec![
-            Span::styled(" модели: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                i18n::strings(app.locale).header_models,
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw(if models.is_empty() {
-                "не настроены — /models add".to_string()
+                i18n::strings(app.locale).header_models_empty.to_string()
             } else {
                 models.join("  ")
             }),
@@ -2093,20 +2190,21 @@ fn draw_input(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_hints(frame: &mut Frame, app: &App, area: Rect) {
+    let strings = i18n::strings(app.locale);
     let hints = if app.confirm_prompt.is_some() {
-        " ←→ — выбор · Enter — активировать · y/д/n/н — сразу · Esc — нет"
+        strings.hint_confirm
     } else if app.busy {
-        " агент работает… · Ctrl+C — выход"
+        strings.hint_busy
     } else if app.picker.is_some() {
-        " ↑↓ — выбор · Space — пометить · Enter — подтвердить · Esc — отмена"
+        strings.hint_picker
     } else if app.slash_open {
-        " ↑↓ — выбор · Tab/Enter — вставить · Esc — закрыть"
+        strings.hint_slash
     } else if app.focus == Focus::Log {
-        " журнал в фокусе · ↑↓/PgUp/PgDn/колесо — прокрутка · Esc или клик по вводу — назад"
+        strings.hint_log_focus
     } else if !app.mouse_capture {
-        " мышь отпущена — выделение нативное · /mouse — вернуть колесо · /copy — ответ в буфер"
+        strings.hint_mouse_off
     } else {
-        " Enter — отправить · Alt+Enter — новая строка · колесо/клик — журнал · выделение — Shift+drag · / — команды"
+        strings.hint_default
     };
     frame.render_widget(
         Paragraph::new(Span::styled(hints, Style::default().fg(Color::DarkGray))),
@@ -2123,12 +2221,17 @@ fn draw_slash_popup(frame: &mut Frame, app: &App, input_area: Rect) {
         width: 60.min(input_area.width.saturating_sub(4)),
         height,
     };
+    let strings = i18n::strings(app.locale);
     let items: Vec<ListItem> = filtered
         .iter()
-        .map(|(name, about)| ListItem::new(format!("{name:<12} {about}")))
+        .map(|(name, about)| ListItem::new(format!("{name:<12} {}", about(strings))))
         .collect();
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("команды"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(strings.slash_help),
+        )
         .highlight_style(Style::default().bg(Color::DarkGray));
     let mut state = app.slash_state;
     frame.render_widget(Clear, area);
@@ -2170,33 +2273,41 @@ fn draw_picker(frame: &mut Frame, picker: &Picker) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-fn draw_key_prompt(frame: &mut Frame, key_env: &str, input_len: usize) {
+fn draw_key_prompt(frame: &mut Frame, key_env: &str, input_len: usize, strings: &i18n::Strings) {
     let area = centered_rect(60, 20, frame.area());
     let prompt = Paragraph::new(vec![
-        Line::from(format!(" Ключ API ({key_env}):")),
+        Line::from(format!("{} ({key_env}):", strings.key_label)),
         Line::from(format!(" {}", "*".repeat(input_len))),
         Line::from(Span::styled(
-            " Enter — сохранить · Esc — пропустить",
+            strings.key_hint,
             Style::default().fg(Color::DarkGray),
         )),
     ])
-    .block(Block::default().borders(Borders::ALL).title(" секрет "));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(strings.secret_title),
+    );
     frame.render_widget(Clear, area);
     frame.render_widget(prompt, area);
 }
 
 /// /plugins add: ввод URL — не маскируется (не секрет).
-fn draw_plugin_repo_prompt(frame: &mut Frame, input: &str) {
+fn draw_plugin_repo_prompt(frame: &mut Frame, input: &str, strings: &i18n::Strings) {
     let area = centered_rect(60, 20, frame.area());
     let prompt = Paragraph::new(vec![
-        Line::from(" URL репозитория плагина:"),
+        Line::from(format!(" {}", strings.plugin_repo_label)),
         Line::from(format!(" {input}")),
         Line::from(Span::styled(
-            " Enter — установить (приостановит TUI на время установки) · Esc — отмена",
+            strings.plugin_repo_hint,
             Style::default().fg(Color::DarkGray),
         )),
     ])
-    .block(Block::default().borders(Borders::ALL).title(" плагин "));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(strings.plugin_title),
+    );
     frame.render_widget(Clear, area);
     frame.render_widget(prompt, area);
 }
@@ -2262,6 +2373,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2317,6 +2429,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2402,6 +2515,7 @@ mod tests {
             rx,
             focus: Focus::Log,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2467,6 +2581,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2541,6 +2656,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2593,6 +2709,33 @@ mod tests {
         )));
     }
 
+    /// /config locale (i18n, 2026-08-09): /config показывает текущую
+    /// локаль; неверный код — говорящий отказ БЕЗ смены; без кода —
+    /// пикер из 8 локалей. Запись в конфиг — seam `setup::set_locale_to`
+    /// (покрыт своими тестами), здесь не дёргаем (не портить cwd тестов).
+    #[test]
+    fn config_locale_show_reject_and_picker() {
+        let (tx, rx) = channel();
+        let mut app = blank_app(tx, rx);
+        app.run_command("config");
+        assert!(app.log.iter().any(|l| matches!(
+            l,
+            LogLine::Sys(t) if t.contains("Русский (ru)")
+        )));
+        app.run_command("config locale xx");
+        assert!(app.log.iter().any(|l| matches!(
+            l,
+            LogLine::Sys(t) if t.contains("xx") && t.contains("доступны")
+        )));
+        assert_eq!(app.locale, i18n::Locale::Ru);
+        assert!(app.picker.is_none());
+        app.run_command("config locale");
+        assert!(matches!(app.flow, Some(Flow::LocalePick)));
+        let picker = app.picker.as_ref().expect("пикер локали");
+        assert_eq!(picker.items.len(), 8);
+        assert!(picker.items[1].contains("English (en)"));
+    }
+
     #[test]
     fn side_panel_renders_only_when_wide() {
         use ratatui::backend::TestBackend;
@@ -2634,6 +2777,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2781,6 +2925,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2845,6 +2990,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2909,6 +3055,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -2969,6 +3116,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -3014,6 +3162,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -3147,6 +3296,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -3238,6 +3388,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,
@@ -3305,6 +3456,7 @@ mod tests {
             rx,
             focus: Focus::Input,
             mouse_capture: true,
+            locale: i18n::Locale::Ru,
             log_area: Rect::default(),
             input_area: Rect::default(),
             input_scroll: 0,

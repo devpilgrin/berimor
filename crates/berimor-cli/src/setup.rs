@@ -39,6 +39,78 @@ pub fn pin_model_to_local_config(provider: &ProviderConfig) -> Result<String, Se
     pin_model_to(&path, provider)
 }
 
+/// Локаль интерфейса — в ЛОКАЛЬНЫЙ конфиг (`[ui] locale`, i18n
+/// 2026-08-09): та же текстовая дисциплина, что pin_model_to — секция
+/// `[ui]` дописывается/строка заменяется, чужие секции и комментарии
+/// не трогаем. Возвращает путь файла для сообщения.
+pub fn set_locale_in_local_config(code: &str) -> Result<String, SetupError> {
+    let path = config::default_config_path();
+    set_locale_to(&path, code)
+}
+
+fn set_locale_to(local_path: &Path, code: &str) -> Result<String, SetupError> {
+    let existing = std::fs::read_to_string(local_path).unwrap_or_default();
+    let updated = upsert_key_in_section(&existing, "[ui]", "locale", code);
+    // .berimor/ может ещё не существовать (первая запись в новый проект).
+    if let Some(parent) = local_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(local_path, updated)?;
+    Ok(local_path.display().to_string())
+}
+
+/// Upsert `key = "value"` в секции `[section]` TOML-текста: секция
+/// есть — замена/добавление строки внутри неё, нет — дописываем
+/// секцию в конец. Блок = строки после заголовка `[...]` до следующего
+/// заголовка (приём той же семьи, что replace_model_id_in_block).
+fn upsert_key_in_section(text: &str, section: &str, key: &str, value: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut in_target = false;
+    let mut found_section = false;
+    let mut wrote_key = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            if in_target && !wrote_key {
+                out.push(format!("{key} = \"{value}\""));
+                wrote_key = true;
+            }
+            in_target = trimmed == section;
+            found_section |= in_target;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_target
+            && trimmed.starts_with(key)
+            && trimmed[key.len()..].trim_start().starts_with('=')
+        {
+            if !wrote_key {
+                out.push(format!("{key} = \"{value}\""));
+                wrote_key = true;
+            }
+            continue; // старую строку ключа пропускаем (замена)
+        }
+        out.push(line.to_string());
+    }
+    if in_target && !wrote_key {
+        out.push(format!("{key} = \"{value}\""));
+    }
+    if !found_section {
+        if !out.last().map(|l| l.is_empty()).unwrap_or(true) {
+            out.push(String::new());
+        }
+        out.push(section.to_string());
+        out.push(format!("{key} = \"{value}\""));
+    }
+    let mut result = out.join("\n");
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
 fn pin_model_to(local_path: &Path, provider: &ProviderConfig) -> Result<String, SetupError> {
     let existing = std::fs::read_to_string(local_path).unwrap_or_default();
     let needle = format!("name = \"{}\"", provider.name);
@@ -404,5 +476,53 @@ mod tests {
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600, "владелец-only: {mode:o}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// i18n (2026-08-09): `[ui] locale` дописывается в пустой файл,
+    /// заменяется в существующей секции, чужие секции и комментарии
+    /// целы; распарсенный конфиг видит локаль.
+    #[test]
+    fn set_locale_upserts_ui_section_preserving_others() {
+        let dir = std::env::temp_dir().join(format!("berimor-locale-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+
+        // Первый случай: файла нет — создаётся с секцией [ui].
+        set_locale_to(&path, "en").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("[ui]\nlocale = \"en\""), "{text}");
+
+        // Чужой контент + смена значения: комментарий и providers целы.
+        std::fs::write(
+            &path,
+            "# комментарий оператора\n[[providers]]\nname = \"deepseek\"\nmodel_id = \"deepseek-v4\"\ntier = \"strong\"\n\n[ui]\nlocale = \"en\"\n",
+        )
+        .unwrap();
+        set_locale_to(&path, "ja").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# комментарий оператора"), "{text}");
+        assert!(text.contains("[[providers]]"), "{text}");
+        assert!(text.contains("locale = \"ja\""), "{text}");
+        assert!(!text.contains("locale = \"en\""), "{text}");
+
+        let parsed: config::PartialConfig = toml::from_str(&text).unwrap();
+        assert_eq!(parsed.ui.and_then(|ui| ui.locale).as_deref(), Some("ja"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Upsert добавляет ключ в секцию, где его ещё нет (не только
+    /// заменяет), и не задевает одноимённый префикс ключа.
+    #[test]
+    fn upsert_key_adds_missing_and_ignores_prefix_lookalike() {
+        let text = "[ui]\nlocales_note = \"не трогать\"\n\n[serve]\ntoken_env = \"X\"\n";
+        let out = upsert_key_in_section(text, "[ui]", "locale", "ko");
+        assert!(out.contains("locales_note = \"не трогать\""), "{out}");
+        assert!(out.contains("locale = \"ko\""), "{out}");
+        assert!(out.contains("[serve]\ntoken_env = \"X\""), "{out}");
+        // Ключ добавлен внутрь [ui], а не после [serve].
+        let ui_pos = out.find("[ui]").unwrap();
+        let locale_pos = out.find("locale = \"ko\"").unwrap();
+        let serve_pos = out.find("[serve]").unwrap();
+        assert!(ui_pos < locale_pos && locale_pos < serve_pos, "{out}");
     }
 }

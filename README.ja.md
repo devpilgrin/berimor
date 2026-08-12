@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-844%20green-brightgreen)](#プロジェクトのインフラ)
+[![Tests](https://img.shields.io/badge/tests-850%20green-brightgreen)](#プロジェクトのインフラ)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -73,7 +73,7 @@ Berimor は逆の前提に基づいて構築されています：**モデルに�
 
 **コンポーネントごとに 1 クレートの Rust workspace**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。ゲスト WASM モジュール（`codeact-guest/`）は独立した crate として存在し、ビルド済みアーティファクトとしてコミットされています——通常のビルドは遅くなりません。
 
-**チェックの規律。** すべてのリリースで：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（844 テスト：ユニット、統合、実バイナリ経由の e2e、プロセスと悪意ある入力のゴールデンフィクスチャ）。重要コンポーネントは必須の独立レビューを通ります。完全な独立監査（`docs/audit-2026-07-31.md`）——**すべての指摘は解決済みか、意図的に文書化済み**。
+**チェックの規律。** すべてのリリースで：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（850 テスト：ユニット、統合、実バイナリ経由の e2e、プロセスと悪意ある入力のゴールデンフィクスチャ）。重要コンポーネントは必須の独立レビューを通ります。完全な独立監査（`docs/audit-2026-07-31.md`）——**すべての指摘は解決済みか、意図的に文書化済み**。
 
 **大人のサプライチェーン。** クロスプラットフォームリリース（Linux x64/arm64、macOS arm64、Windows x64）に cosign/sigstore キーレス署名——秘密鍵はどこにも存在しません。検証：`berimor verify <アーカイブ>`。npm 公開は provenance 付き、パイプラインに SBOM（CycloneDX）、セルフアップデート（`berimor self-update`）は Process Engine のプリミティブ上に実装——通常のプロセスと同じジャーナルと障害復旧で、アドホックなスクリプトではありません。
 
@@ -152,7 +152,7 @@ berimor          # = berimor chat：エージェントとの対話型チャッ�
 
 初回起動時、ウィザードがプリセットからモデルを接続するよう提案します（Kimi、DeepSeek、OpenAI、OpenRouter 経由の Claude、Ollama/llama.cpp/LM Studio 経由のローカルモデル）——番号または名前を選び、API キーを貼り付けてください（`~/.config/berimor/secrets.env` に「所有者のみ」権限で保存され、設定ファイルには入りません）。API キーの代わりにサブスクリプションでログインすることもできます——`berimor login`（PKCE 付き OAuth：Claude Pro/Max、ChatGPT Plus/Pro；トークンは同じ `secrets.env` に保存され、更新は透過的）。後から同じことをするには `berimor setup`、またはチャット内で直接 `/models add` コマンドを使います。
 
-便利なチャットコマンド：`/help`、`/models`、`/skills`、`/config`、`/exit`。
+便利なチャットコマンド：`/help`、`/models`、`/skills`、`/config`、`/exit`。TUI の表示言語は `/config locale`(8 言語: ru, en, de, fr, es, zh-CN, ja, ko。選択はローカル設定の `[ui]` セクションに保存されます)。
 
 決定論的プロセス（厳格なコントラクトを持つ宣言的 YAML プラン——主要な「実戦」モード）：`berimor run <process.yaml>`。プロセスと設定の例は [`fixtures/golden/processes/`](fixtures/golden/processes/) と [`CONTRIBUTING.md`](CONTRIBUTING.md) にあります。
 

@@ -14,7 +14,7 @@ Agente universal para LLM con núcleo determinista: el enrutamiento de tareas, l
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-844%20green-brightgreen)](#infraestructura-del-proyecto)
+[![Tests](https://img.shields.io/badge/tests-850%20green-brightgreen)](#infraestructura-del-proyecto)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -73,7 +73,7 @@ Todo esto se instala con un solo comando — desde el catálogo o **cualquier re
 
 **Workspace Rust con un crate por componente** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. El módulo WASM invitado (`codeact-guest/`) vive como un crate separado y está commiteado como artefacto listo — el build normal no se ralentiza.
 
-**Disciplina de verificación.** Cada release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (844 tests: unitarios, de integración, e2e a través del binario real, fixtures golden de procesos y de entradas maliciosas). Los componentes críticos pasan una revisión independiente obligatoria. Auditoría completa e independiente (`docs/audit-2026-07-31.md`) — **todos los hallazgos están cerrados o documentados conscientemente**.
+**Disciplina de verificación.** Cada release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (850 tests: unitarios, de integración, e2e a través del binario real, fixtures golden de procesos y de entradas maliciosas). Los componentes críticos pasan una revisión independiente obligatoria. Auditoría completa e independiente (`docs/audit-2026-07-31.md`) — **todos los hallazgos están cerrados o documentados conscientemente**.
 
 **Supply chain como la gente seria.** Releases multiplataforma (Linux x64/arm64, macOS arm64, Windows x64) con firma keyless cosign/sigstore — la clave privada no existe en ningún sitio. Verificación: `berimor verify <archivo>`. Publicación npm con provenance, SBOM (CycloneDX) en el pipeline, la autoactualización (`berimor self-update`) está implementada sobre las primitivas del Process Engine — el mismo registro y la misma recuperación tras fallo que los procesos ordinarios, no un script ad hoc.
 
@@ -152,7 +152,7 @@ berimor          # = berimor chat: diálogo interactivo con el agente
 
 En el primer arranque, el asistente propondrá conectar modelos desde presets (Kimi, DeepSeek, OpenAI, Claude a través de OpenRouter, locales a través de Ollama/llama.cpp/LM Studio) — elige números o nombres, pega la clave de API (irá a `~/.config/berimor/secrets.env` con permisos «solo propietario», no a la config). En lugar de una clave de API, se puede iniciar sesión con una suscripción — `berimor login` (OAuth con PKCE: Claude Pro/Max, ChatGPT Plus/Pro; los tokens van al mismo `secrets.env`, la renovación es transparente). Más tarde, lo mismo — `berimor setup` o directamente en el chat con el comando `/models add`.
 
-Comandos útiles del chat: `/help`, `/models`, `/skills`, `/config`, `/exit`.
+Comandos útiles del chat: `/help`, `/models`, `/skills`, `/config`, `/exit`. El idioma de la interfaz TUI — `/config locale` (8 idiomas: ru, en, de, fr, es, zh-CN, ja, ko; la elección se guarda en la configuración local, sección `[ui]`).
 
 Procesos deterministas (plan YAML declarativo con contratos estrictos — el principal modo «de combate»): `berimor run <process.yaml>`. Ejemplos de procesos y configuraciones — en [`fixtures/golden/processes/`](fixtures/golden/processes/) y [`CONTRIBUTING.md`](CONTRIBUTING.md).
 

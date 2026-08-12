@@ -224,6 +224,17 @@ pub struct Config {
     pub auto_confirm: Vec<String>,
     #[serde(default)]
     pub serve: ServeConfig,
+    /// Интерфейс (2026-08-09): `[ui] locale = "en"` — локаль TUI из 8
+    /// (см. `i18n::Locale`); не задана — локаль окружения, затем ru.
+    #[serde(default)]
+    pub ui: UiConfig,
+}
+
+/// Секция `[ui]` конфигурации: настройки интерфейса (пока — локаль).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct UiConfig {
+    pub locale: Option<String>,
 }
 
 impl Default for Config {
@@ -239,6 +250,7 @@ impl Default for Config {
             secret_envs: Vec::new(),
             auto_confirm: Vec::new(),
             serve: ServeConfig::default(),
+            ui: UiConfig::default(),
         }
     }
 }
@@ -319,6 +331,7 @@ pub struct PartialConfig {
     #[serde(default)]
     pub auto_confirm: Vec<String>,
     pub serve: Option<ServeConfig>,
+    pub ui: Option<UiConfig>,
 }
 
 impl PartialConfig {
@@ -429,6 +442,9 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
         secret_envs,
         auto_confirm,
         serve: local.serve.or(global.serve).unwrap_or(defaults.serve),
+        // `[ui]` — как `[memory]`: секция заменяется целиком, локальный
+        // слой сильнее (осознанное упрощение, задокументировано здесь).
+        ui: local.ui.or(global.ui).unwrap_or(defaults.ui),
     }
 }
 

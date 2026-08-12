@@ -22,6 +22,7 @@ mod chat_ui;
 mod config;
 mod daemon;
 mod ext_cmd;
+mod i18n;
 mod mcp_dispatch;
 mod memory;
 mod oauth;
