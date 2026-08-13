@@ -56,6 +56,10 @@ pub fn call(sessions_dir: &Path, args: &Value) -> Result<Value, DispatchError> {
     if limit == 0 {
         return Ok(json!({ "matches": [] }));
     }
+    // LOW #13 ревью 2026-08-13: потолок лимита — как MAX_LIMIT у
+    // files.search/web.search (ответ не раздувается без контроля).
+    const MAX_LIMIT: usize = 200;
+    let limit = limit.min(MAX_LIMIT);
     let role_filter = match args.get("role") {
         None => None,
         Some(v) => {
@@ -100,8 +104,10 @@ pub fn call(sessions_dir: &Path, args: &Value) -> Result<Value, DispatchError> {
     let mut matches = Vec::new();
     'files: for path in files {
         // Нечитаемый файл пропускаем — как и битую строку: лента
-        // UX-контекст, частичный ответ полезнее отказа.
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        // UX-контекст, частичный ответ полезнее отказа. LOW #13 ревью
+        // 2026-08-13: чтение с капом CONTENT_CAP (ленты растут
+        // бесконечно), не весь файл в память без потолка.
+        let Ok(text) = crate::builtin_dispatch::read_string_capped(&path) else {
             continue;
         };
         let file = path

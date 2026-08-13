@@ -23,13 +23,21 @@ use crate::builtin_dispatch::{err_str, resolve_from, CONTENT_CAP};
 /// Имя инструмента — фигурирует в DispatchError.tool.
 const TOOL: &str = "files.edit";
 
-/// Точка входа инструмента. `root` — канонизированный корень workspace
-/// (относительные пути резолвятся от него, выход за корень уже отклонён
-/// гейтом). `args`: `{path, old_string, new_string, replace_all?}`.
-/// allow(dead_code) — до интеграции родителем (ветка в builtin_dispatch),
-/// по образцу pub(crate)-хелперов resolve_from/err_str; убрать с первым
-/// потребителем.
-pub fn call(root: &Path, args: &Value) -> Result<Value, DispatchError> {
+/// Результат валидации: всё, что нужно для применения правки.
+struct Validated {
+    raw: String,
+    path: std::path::PathBuf,
+    content: String,
+    old: String,
+    new: String,
+    replace_all: bool,
+    occurrences: usize,
+}
+
+/// Разбор аргументов + чтение файла + проверка якоря. Общий шаг для
+/// `call` и `precheck` (ревью 2026-08-13 MEDIUM #4: снапшот снимается
+/// только ПОСЛЕ валидации — отказные вызовы не крутят ротацию).
+fn validate(root: &Path, args: &Value) -> Result<Validated, DispatchError> {
     let raw = args["path"]
         .as_str()
         .ok_or_else(|| err_str(TOOL, "аргумент 'path' обязателен (строка)"))?;
@@ -90,24 +98,48 @@ pub fn call(root: &Path, args: &Value) -> Result<Value, DispatchError> {
             ),
         ));
     }
+    Ok(Validated {
+        raw: raw.to_string(),
+        path,
+        content,
+        old: old.to_string(),
+        new: new.to_string(),
+        replace_all,
+        occurrences,
+    })
+}
+
+/// Точка входа инструмента. `root` — канонизированный корень workspace
+/// (относительные пути резолвятся от него, выход за корень уже отклонён
+/// гейтом). `args`: `{path, old_string, new_string, replace_all?}`.
+pub fn call(root: &Path, args: &Value) -> Result<Value, DispatchError> {
+    let v = validate(root, args)?;
     // replacen/replace байтобезопасны для UTF-8 (границы совпадений —
     // границы подстроки old).
-    let updated = if replace_all {
-        content.replace(old, new)
+    let updated = if v.replace_all {
+        v.content.replace(&v.old, &v.new)
     } else {
-        content.replacen(old, new, 1)
+        v.content.replacen(&v.old, &v.new, 1)
     };
-    std::fs::write(&path, &updated).map_err(|e| {
+    std::fs::write(&v.path, &updated).map_err(|e| {
         err_str(
             TOOL,
-            format!("не удалось записать '{}': {e}", path.display()),
+            format!("не удалось записать '{}': {e}", v.path.display()),
         )
     })?;
     Ok(json!({
-        "path": raw,
-        "replacements": occurrences,
+        "path": v.raw,
+        "replacements": v.occurrences,
         "bytes": updated.len(),
     }))
+}
+
+/// Предвалидация БЕЗ записи (ревью 2026-08-13 MEDIUM #4): диспетчер
+/// снимает снапшот только после неё — отказные вызовы (якорь не
+/// найден/неуникален, не UTF-8, кап) не должны крутить ротацию.
+/// Дублирует чтение файла (≤ CONTENT_CAP) — цена корректности.
+pub(crate) fn precheck(root: &Path, args: &Value) -> Result<(), DispatchError> {
+    validate(root, args).map(|_| ())
 }
 
 #[cfg(test)]

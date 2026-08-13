@@ -291,16 +291,25 @@ fn percent_decode(text: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'%' if i + 2 < bytes.len() => match u8::from_str_radix(&text[i + 1..i + 3], 16) {
-                Ok(b) => {
-                    out.push(b);
-                    i += 3;
+            b'%' if i + 2 < bytes.len() => {
+                // XL-ревью 2026-08-13 HIGH #1: срез `&text[i+1..i+3]`
+                // падал на границе UTF-8 («%aп» — сетевой ввод, воркер
+                // умирал паникой). Парсим ТОЛЬКО из байтов: не-ASCII
+                // пара — не hex, '%' уходит литералом.
+                let parsed = std::str::from_utf8(&bytes[i + 1..i + 3])
+                    .ok()
+                    .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+                match parsed {
+                    Some(b) => {
+                        out.push(b);
+                        i += 3;
+                    }
+                    None => {
+                        out.push(b'%');
+                        i += 1;
+                    }
                 }
-                Err(_) => {
-                    out.push(b'%');
-                    i += 1;
-                }
-            },
+            }
             b'+' => {
                 out.push(b' ');
                 i += 1;
@@ -332,6 +341,15 @@ fn url_encode(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // XL-ревью 2026-08-13 HIGH #1: «%a<кириллица>» не должна паниковать.
+    #[test]
+    fn percent_decode_survives_utf8_boundary_after_hex_prefix() {
+        let decoded = percent_decode("%aп");
+        assert!(decoded.starts_with('%'), "{decoded}");
+        assert_eq!(percent_decode("%41%42"), "AB");
+        assert_eq!(percent_decode("%zz"), "%zz");
+    }
     use std::io::Write;
     use std::sync::{Arc, Mutex};
 

@@ -48,6 +48,11 @@ const TOOL_KILL: &str = "terminal.kill";
 /// Кап кольцевого буфера в байтах (usize-форма TERMINAL_OUTPUT_CAP).
 const RING_CAP: usize = TERMINAL_OUTPUT_CAP as usize;
 
+/// Лимит живых записей реестра (ревью 2026-08-13 MEDIUM #5): без него
+/// долгая сессия с частыми terminal.start раздувала память (завершённые
+/// записи вечно держали до 2×RING_CAP буферов).
+const MAX_PROCS: usize = 32;
+
 /// Кольцевой буфер одного потока: при переполнении дропается голова,
 /// остаётся хвост длиной не больше RING_CAP + флаг truncated.
 #[derive(Default)]
@@ -74,11 +79,13 @@ fn push_capped(buf: &mut StreamBuf, chunk: &[u8]) {
 }
 
 /// Живая запись реестра: дочерний процесс + разделяемые с
-/// потоками-читателями кольцевые буферы.
+/// потоками-читателями кольцевые буферы + хэндлы читателей (ревью
+/// MEDIUM #6: при «завершён» ждём их — иначе хвост усечён).
 struct BgProc {
     child: Child,
     stdout: Arc<Mutex<StreamBuf>>,
     stderr: Arc<Mutex<StreamBuf>>,
+    readers: Vec<std::thread::JoinHandle<()>>,
 }
 
 /// Потокобезопасный реестр фоновых процессов (контракт B6): поле
@@ -96,12 +103,39 @@ impl BgRegistry {
         self.counter.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// Запустить `sh -c <command>` с рабочим каталогом `root`,
-    /// stdout/stderr читаются потоками-читателями в кольцевые буферы.
-    /// Ответ `{id}`.
+    /// Запустить оболочку с командой в каталоге `root`, stdout/stderr
+    /// читаются потоками-читателями в кольцевые буферы. Ответ `{id}`.
+    /// Оболочка — как у terminal.exec: sh -c / cmd /C (LOW #15 ревью).
     pub fn start(&self, root: &Path, command: &str) -> Result<Value, DispatchError> {
-        let mut child = Command::new("sh")
-            .arg("-c")
+        // Кап реестра (MEDIUM #5): при давлении сначала вытесняем
+        // завершённые записи; все живые — говорящая ошибка.
+        {
+            let mut procs = self.procs.lock().expect("мьютекс реестра не отравлен");
+            if procs.len() >= MAX_PROCS {
+                let finished: Vec<u64> = procs
+                    .iter_mut()
+                    .filter_map(|(id, p)| matches!(p.child.try_wait(), Ok(Some(_))).then_some(*id))
+                    .collect();
+                for id in finished {
+                    procs.remove(&id);
+                }
+                if procs.len() >= MAX_PROCS {
+                    return Err(err_str(
+                        TOOL_START,
+                        format!(
+                            "лимит фоновых процессов ({MAX_PROCS}) — завершите лишние terminal.kill"
+                        ),
+                    ));
+                }
+            }
+        }
+        let (shell, flag) = if cfg!(windows) {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
+        let mut child = Command::new(shell)
+            .arg(flag)
             .arg(command)
             .current_dir(root)
             .stdout(Stdio::piped())
@@ -111,8 +145,10 @@ impl BgRegistry {
 
         let stdout = Arc::new(Mutex::new(StreamBuf::default()));
         let stderr = Arc::new(Mutex::new(StreamBuf::default()));
-        spawn_reader(child.stdout.take().expect("stdout перенаправлен"), &stdout);
-        spawn_reader(child.stderr.take().expect("stderr перенаправлен"), &stderr);
+        let readers = vec![
+            spawn_reader(child.stdout.take().expect("stdout перенаправлен"), &stdout),
+            spawn_reader(child.stderr.take().expect("stderr перенаправлен"), &stderr),
+        ];
 
         let id = self.next_id();
         self.procs
@@ -124,6 +160,7 @@ impl BgRegistry {
                     child,
                     stdout,
                     stderr,
+                    readers,
                 },
             );
         Ok(json!({ "id": id }))
@@ -141,6 +178,18 @@ impl BgRegistry {
             Ok(None) => true,
             Err(e) => return Err(err_str(TOOL_OUTPUT, format!("wait: {e}"))),
         };
+        if !running {
+            // MEDIUM #6: try_wait сказал «завершён», но читатели могут
+            // ещё сливать остаток трубы — ждём их (≤1 с). Завершение
+            // потока — точка синхронизации: после is_finished его
+            // записи в буфер видны под мьютексом.
+            for _ in 0..20 {
+                if proc.readers.iter().all(|h| h.is_finished()) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
         let (stdout, out_truncated) = {
             let buf = proc.stdout.lock().expect("мьютекс буфера не отравлен");
             (tail_from(&buf.data, offset), buf.truncated)
@@ -185,7 +234,12 @@ impl BgRegistry {
 /// Отсоединённый поток-читатель: гоняет куски трубы в кольцевой
 /// буфер до EOF. Завершится сам, когда труба закроется (конец
 /// процесса или закрытие дескрипторов при kill).
-fn spawn_reader(mut pipe: impl Read + Send + 'static, buf: &Arc<Mutex<StreamBuf>>) {
+/// Читатель потока в кольцевой буфер до EOF/ошибки. Хэндл возвращается:
+/// при «процесс завершён» вызывающий ждёт is_finished (ревью MEDIUM #6).
+fn spawn_reader(
+    mut pipe: impl Read + Send + 'static,
+    buf: &Arc<Mutex<StreamBuf>>,
+) -> std::thread::JoinHandle<()> {
     let buf = Arc::clone(buf);
     std::thread::spawn(move || {
         let mut chunk = [0u8; 8192];
@@ -198,7 +252,7 @@ fn spawn_reader(mut pipe: impl Read + Send + 'static, buf: &Arc<Mutex<StreamBuf>
                 }
             }
         }
-    });
+    })
 }
 
 /// Строка из хвоста буфера от байтового offset (offset за пределами

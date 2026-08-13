@@ -68,6 +68,10 @@ pub struct MemoryToolDispatch<'a> {
     pub allow_writes: bool,
     /// Внутренняя цепочка для всех прочих инструментов.
     pub inner: &'a dyn ToolDispatch,
+    /// Реестр маскировки секретов (ревью 2026-08-13 MEDIUM #10): без
+    /// него секрет из content memory.save писался в SQLite открытым.
+    /// None — пустой реестр (обратная совместимость проводки).
+    pub masker: Option<&'a berimor_secrets::Masker>,
 }
 
 impl MemoryToolDispatch<'_> {
@@ -221,8 +225,16 @@ impl MemoryToolDispatch<'_> {
                 Ok(json!({"status": "duplicate", "id": existing.0}))
             }
             Resolution::New => {
-                // Пустой реестр секретов — оговорка в doc модуля (S5).
-                let masker = berimor_secrets::Masker::new();
+                // MEDIUM #10: реальный реестр маскировки из проводки;
+                // без него секреты писались в хранилище открытым.
+                let empty_masker;
+                let masker = match self.masker {
+                    Some(m) => m,
+                    None => {
+                        empty_masker = berimor_secrets::Masker::new();
+                        &empty_masker
+                    }
+                };
                 // Id — от маскированных полей, детерминирован (как в
                 // записном пути run): повторное сохранение того же факта
                 // упирается в Duplicate по хэшу, а не плодит записи.
@@ -237,7 +249,7 @@ impl MemoryToolDispatch<'_> {
                 ));
                 // Канал — недоверенный: content порождён моделью (та же
                 // оценка, что у фактов из FactProposalBatch в run).
-                let fact = StoredFact::new(id, &proposal, false, &masker);
+                let fact = StoredFact::new(id, &proposal, false, masker);
                 let record = FactRecord {
                     id: fact.id.0.clone(),
                     subject: fact.subject.clone(),
@@ -335,6 +347,7 @@ mod tests {
             storage_path: path.to_path_buf(),
             allow_writes,
             inner,
+            masker: None,
         }
     }
 

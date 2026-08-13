@@ -82,6 +82,19 @@ pub fn write(root: &Path, args: &Value) -> Result<Value, DispatchError> {
     let items = args["items"]
         .as_array()
         .ok_or_else(|| err_str(WRITE_TOOL, "аргумент 'items' обязателен (массив)"))?;
+    // LOW #17 ревью 2026-08-13: капы — как CONTENT_CAP у остальных
+    // инструментов (список — служебный, а не склад данных).
+    const MAX_ITEMS: usize = 100;
+    const MAX_CONTENT_CHARS: usize = 4096;
+    if items.len() > MAX_ITEMS {
+        return Err(err_str(
+            WRITE_TOOL,
+            format!(
+                "не более {MAX_ITEMS} элементов списка (получено {})",
+                items.len()
+            ),
+        ));
+    }
     let mut seen_ids: HashSet<&str> = HashSet::with_capacity(items.len());
     let mut normalized = Vec::with_capacity(items.len());
     for item in items {
@@ -103,6 +116,12 @@ pub fn write(root: &Path, args: &Value) -> Result<Value, DispatchError> {
                 format!("элемент '{id}': поле 'content' обязательно (строка)"),
             )
         })?;
+        if content.chars().count() > MAX_CONTENT_CHARS {
+            return Err(err_str(
+                WRITE_TOOL,
+                format!("элемент '{id}': content длиннее {MAX_CONTENT_CHARS} символов"),
+            ));
+        }
         let status = item["status"].as_str().ok_or_else(|| {
             err_str(
                 WRITE_TOOL,

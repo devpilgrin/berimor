@@ -70,6 +70,13 @@ pub const BUILTIN_TOOLS: &[&str] = &[
 /// мутирующие; search/git/web/todo/snapshot.list/output — читающие
 /// (todo — внутренняя бухгалтерия агента в .berimor/, не данные
 /// пользователя, обоснование в builtin_todo).
+///
+/// mutates=false у todo.write/memory.save — ОСОЗНАННО (ревью 2026-08-13
+/// MEDIUM #9): запись идёт во внутреннюю бухгалтерию
+/// (`.berimor/todo.json`, факты SQLite), не в файлы пользователя —
+/// прецедент chat_history. Следствие: в режиме подтверждений Deny эти
+/// записи остаются разрешёнными — агент может организовывать собственную
+/// работу, но не трогать дерево.
 pub fn builtin_policies() -> Vec<(String, ToolPolicy)> {
     BUILTIN_TOOLS
         .iter()
@@ -238,6 +245,15 @@ pub(crate) fn err_str(tool: &str, reason: impl Into<String>) -> DispatchError {
     }
 }
 
+/// Чтение файла с капом CONTENT_CAP — свободная форма ассоциированной
+/// `BuiltinToolDispatch::read_string_capped` для модулей волн (ревью
+/// 2026-08-13 LOW #13: session.search читает ленты с потолком).
+pub(crate) fn read_string_capped(path: &Path) -> std::io::Result<String> {
+    let file = std::fs::File::open(path)?;
+    let (text, _truncated) = BuiltinToolDispatch::read_string_capped(file, CONTENT_CAP)?;
+    Ok(text)
+}
+
 impl ToolDispatch for BuiltinToolDispatch {
     fn call(&self, tool: &str, args: &Value) -> Result<Value, DispatchError> {
         match tool {
@@ -300,8 +316,11 @@ impl ToolDispatch for BuiltinToolDispatch {
                 }))
             }
             // Волны A/C (spec builtin-tools-waves): делегирование модулям.
-            // files.edit — со снапшотом перед перезаписью (как files.write).
+            // files.edit — со снапшотом перед перезаписью (как files.write);
+            // снапшот ПОСЛЕ валидации правки (ревью 2026-08-13 MEDIUM #4:
+            // отказные вызовы не должны крутить ротацию снапшотов).
             "files.edit" => {
+                crate::builtin_edit::precheck(&self.workspace_root, args)?;
                 let abs = resolve_from(&self.workspace_root, args["path"].as_str().unwrap_or(""));
                 let snapshot = match crate::builtin_snapshots::take(&self.workspace_root, &abs) {
                     Ok(Some(id)) => json!(id),

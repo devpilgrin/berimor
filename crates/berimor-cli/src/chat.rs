@@ -367,6 +367,7 @@ pub(crate) fn execute_turn(
         storage_path: config.storage_path.clone(),
         allow_writes: config.memory.tool_writes,
         inner: bundle.dispatch.as_ref(),
+        masker: Some(bundle.masker.as_ref()),
     };
     let tui_asker = ask_rx.map(|rx| TuiAsker {
         tx: tx.clone(),
@@ -549,6 +550,7 @@ fn run_repl(
         storage_path: config.storage_path.clone(),
         allow_writes: config.memory.tool_writes,
         inner: bundle.dispatch.as_ref(),
+        masker: Some(bundle.masker.as_ref()),
     };
     let repl_stdin_asker = crate::builtin_human::StdinAsker;
     let ask_dispatch_repl = crate::builtin_human::HumanAskDispatch {

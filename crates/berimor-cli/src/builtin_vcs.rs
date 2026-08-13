@@ -68,7 +68,11 @@ pub fn call(root: &Path, args: &Value) -> Result<Value, DispatchError> {
             argv.extend(["status".into(), "--short".into()]);
         }
         "diff" => {
-            argv.push("diff".into());
+            argv.extend([
+                "diff".into(),
+                "--no-ext-diff".into(),
+                "--no-textconv".into(),
+            ]);
             if let Some(r) = git_ref {
                 argv.push(r.to_string());
             }
@@ -87,6 +91,7 @@ pub fn call(root: &Path, args: &Value) -> Result<Value, DispatchError> {
             argv.extend([
                 "log".into(),
                 "--oneline".into(),
+                "--no-textconv".into(),
                 "-n".into(),
                 limit.to_string(),
             ]);
@@ -95,7 +100,11 @@ pub fn call(root: &Path, args: &Value) -> Result<Value, DispatchError> {
             }
         }
         "show" => {
-            argv.push("show".into());
+            argv.extend([
+                "show".into(),
+                "--no-ext-diff".into(),
+                "--no-textconv".into(),
+            ]);
             // ref обязателен семантически, default HEAD (спека A3).
             argv.push(git_ref.unwrap_or("HEAD").to_string());
             if let Some(p) = path {
@@ -117,13 +126,24 @@ pub fn call(root: &Path, args: &Value) -> Result<Value, DispatchError> {
 /// (паттерн читателей с капом СРАЗУ + try_wait+kill из terminal.exec:
 /// многословный git не съест память процесса до срабатывания таймаута).
 fn run_git(root: &Path, argv: &[String]) -> Result<Value, DispatchError> {
+    // XL-ревью 2026-08-13 MEDIUM #7: «читающие» операции могут
+    // исполнять хелперы репозитория (core.fsmonitor — произвольная
+    // команда, diff.external, textconv) и переписывать .git/index на
+    // задекларированном read-only инструменте. fsmonitor глушится
+    // `-c`-переопределением (пустое diff.external= git пытается
+    // ЗАПУСТИТЬ — не отключить: выключение только флагами операций
+    // --no-ext-diff/--no-textconv ниже), блокировки — env.
+    let mut full_argv: Vec<String> = vec!["-c".into(), "core.fsmonitor=".into()];
+    full_argv.extend_from_slice(argv);
     let mut child = Command::new("git")
-        .args(argv)
+        .args(&full_argv)
         .current_dir(root)
         // Локаль принудительно C: распознавание «не репозиторий» идёт по
         // английскому тексту stderr, локализованный git ломал бы
         // диагностику (поймано тестом: русская сборка git).
         .env("LC_ALL", "C")
+        // Без оппортунистических обновлений .git/index (status/diff).
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

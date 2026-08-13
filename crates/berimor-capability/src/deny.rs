@@ -113,6 +113,41 @@ pub struct DenyMatch {
     pub evidence: String,
 }
 
+/// Контрольные файлы гейта (XL-ревью 2026-08-13 HIGH #2): allow-лист
+/// (`*` = авто-подтверждение ВСЕХ мутаций) — обычный файл внутри
+/// workspace; однажды подтверждённый files.write мог молча выписать
+/// агенту `*` — персистентная эскалация. Запись в контрольные файлы
+/// запрещена безусловно (чтение — свободно, секретов там нет).
+const CONTROL_FILES: &[&str] = &[".berimor/allow", ".berimor-allow"];
+
+/// Цель PATH_KEYS — контрольный файл гейта? Относительные цели — от
+/// корня области; `./`-префикс не должен обходить правило.
+fn is_control_path(text: &str, workspace_root: &Path) -> bool {
+    let trimmed = text.trim().trim_start_matches("./");
+    let path = Path::new(trimmed);
+    let rel = path.strip_prefix(workspace_root).unwrap_or(path);
+    CONTROL_FILES.iter().any(|name| rel == Path::new(name))
+}
+
+/// Команда пишет в контрольный файл? Только с оператором записи рядом:
+/// `cat .berimor/allow` — легитимное чтение, `echo '*' > .berimor/allow`
+/// — самоназначение разрешений. Подстроки — тот же приём, что и в
+/// остальной deny-таблице (ложные срабатывания дешевле пропусков).
+fn analyze_control_file_write(text: &str) -> Option<DenyMatch> {
+    const WRITE_OPS: &[&str] = &[
+        ">", "tee", "sed -i", "dd ", "truncate", "install ", "cp ", "mv ", "rsync",
+    ];
+    for name in CONTROL_FILES {
+        if text.contains(name) && WRITE_OPS.iter().any(|op| text.contains(op)) {
+            return Some(DenyMatch {
+                class: ForbiddenClass::PrivilegeEscalation,
+                evidence: text.chars().take(120).collect(),
+            });
+        }
+    }
+    None
+}
+
 /// Анализирует предложенное действие по deny-таблице. `Some` — безусловный
 /// запрет; `None` — deny-статика не против (подтверждение по режиму —
 /// следующий слой, S4). `workspace_root` — канонический корень рабочей
@@ -125,6 +160,13 @@ pub fn analyze(action: &ProposedAction, workspace_root: &Path) -> Option<DenyMat
     let mut commands = Vec::new();
     collect_commands(&action.args, &mut commands);
     for form in &commands {
+        if let CommandForm::Text(text) = form {
+            // Запись в контрольные файлы гейта — до общего разбора:
+            // безусловный запрет независимо от формы команды.
+            if let Some(m) = analyze_control_file_write(text) {
+                return Some(m);
+            }
+        }
         let found = match form {
             CommandForm::Text(text) => analyze_command(text, workspace_root),
             CommandForm::Argv(items) => analyze_argv(items, workspace_root),
@@ -140,11 +182,19 @@ pub fn analyze(action: &ProposedAction, workspace_root: &Path) -> Option<DenyMat
         // эвристикой имени инструмента — флаг мог быть неизвестен
         // вызывающему (находка m10 XL-ревью).
         let mutating = action.mutates || looks_mutating(&action.tool);
-        if mutating && key_matches(&key, PATH_KEYS) && !path_within(&text, workspace_root) {
-            return Some(DenyMatch {
-                class: ForbiddenClass::DeletionOutsideWorkspace,
-                evidence: text,
-            });
+        if mutating && key_matches(&key, PATH_KEYS) {
+            if is_control_path(&text, workspace_root) {
+                return Some(DenyMatch {
+                    class: ForbiddenClass::PrivilegeEscalation,
+                    evidence: text,
+                });
+            }
+            if !path_within(&text, workspace_root) {
+                return Some(DenyMatch {
+                    class: ForbiddenClass::DeletionOutsideWorkspace,
+                    evidence: text,
+                });
+            }
         }
     }
     None
@@ -1129,6 +1179,45 @@ mod tests {
             mutates: false,
         };
         assert!(analyze(&action, Path::new("/workspace")).is_none());
+    }
+
+    // XL-ревью 2026-08-13 HIGH #2: контрольные файлы гейта.
+    #[test]
+    fn control_file_write_via_files_tool_is_denied() {
+        for target in [".berimor/allow", ".berimor-allow", "./.berimor/allow"] {
+            let action = ProposedAction {
+                tool: "files.write".into(),
+                args: json!({"path": target, "content": "*\n"}),
+                mutates: true,
+            };
+            let m = analyze(&action, Path::new("/workspace")).unwrap();
+            assert_eq!(m.class, ForbiddenClass::PrivilegeEscalation, "{target}");
+        }
+    }
+
+    #[test]
+    fn control_file_write_via_shell_is_denied_read_is_free() {
+        let write = ProposedAction {
+            tool: "terminal.exec".into(),
+            args: json!({"command": "echo '*' > .berimor/allow"}),
+            mutates: true,
+        };
+        let m = analyze(&write, Path::new("/workspace")).unwrap();
+        assert_eq!(m.class, ForbiddenClass::PrivilegeEscalation);
+        // Чтение контрольного файла — легитимно (секретов там нет).
+        let read = ProposedAction {
+            tool: "terminal.exec".into(),
+            args: json!({"command": "cat .berimor/allow"}),
+            mutates: true,
+        };
+        assert!(analyze(&read, Path::new("/workspace")).is_none());
+        // Обычный файл рядом — не цель правила.
+        let normal = ProposedAction {
+            tool: "files.write".into(),
+            args: json!({"path": "src/allow.rs", "content": "x"}),
+            mutates: true,
+        };
+        assert!(analyze(&normal, Path::new("/workspace")).is_none());
     }
 
     #[test]

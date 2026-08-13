@@ -213,6 +213,7 @@ pub fn run(
         storage_path: config.storage_path.clone(),
         allow_writes: config.memory.tool_writes,
         inner: bundle.dispatch.as_ref(),
+        masker: Some(bundle.masker.as_ref()),
     };
     let ask_dispatch = crate::builtin_human::HumanAskDispatch {
         asker: &stdin_asker,

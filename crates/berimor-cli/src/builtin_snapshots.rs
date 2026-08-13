@@ -91,6 +91,14 @@ pub fn take(root: &Path, abs_path: &Path) -> Result<Option<String>, DispatchErro
     let id = snapshot_id();
     let dest_dir = snapshots_root(root).join(&id);
     let dest = dest_dir.join(&dest_rel);
+    // Повторный take того же файла в ту же секунду (та же метка) НЕ
+    // перезаписывает снапшот: ценно ПЕРВОЕ состояние за секунду —
+    // «откат к началу пачки» (регрессия XL-ревью 2026-08-13: restore
+    // делает pre-take текущего состояния (LOW #14) и при совпадении
+    // метки затирал источник до копирования).
+    if dest.exists() {
+        return Ok(Some(id));
+    }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| err_str("snapshot", format!("каталог снапшота: {e}")))?;
@@ -142,10 +150,12 @@ pub fn list(root: &Path, args: &Value) -> Result<Value, DispatchError> {
         .map(|id| {
             let mut paths: Vec<String> = Vec::new();
             collect_files(&base.join(&id), &base.join(&id), &mut paths);
-            json!({"id": id, "paths": paths})
+            // LOW #16 ревью 2026-08-13: поле ts (метка = `<ts>-<hex>`).
+            let ts = id.split('-').next().unwrap_or_default();
+            json!({"id": id, "ts": ts, "paths": paths})
         })
         .collect();
-    Ok(json!({"snapshots": items}))
+    Ok(json!({ "snapshots": items }))
 }
 
 fn collect_files(dir: &Path, base: &Path, out: &mut Vec<String>) {
@@ -167,11 +177,14 @@ pub fn restore(root: &Path, args: &Value) -> Result<Value, DispatchError> {
     let id = args["id"]
         .as_str()
         .ok_or_else(|| err_str("snapshot.restore", "аргумент 'id' обязателен (строка)"))?;
-    // Метка — имя каталога: разделители запрещены (выход за корень).
-    if id.contains(['/', '\\']) || id.contains("..") {
+    // Метка — имя каталога: разделители запрещены (выход за корень);
+    // пустые/точечные значения — тоже (ревью 2026-08-13 MEDIUM #3:
+    // join("") — сам корень снапшотов, «restore» материализовал бы
+    // все метки мусорными каталогами в workspace).
+    if id.is_empty() || id == "." || id.contains(['/', '\\']) || id.contains("..") {
         return Err(err_str(
             "snapshot.restore",
-            "недопустимый id снапшота (разделители/точки)",
+            "недопустимый id снапшота (пустой/разделители/точки)",
         ));
     }
     let src_dir = snapshots_root(root).join(id);
@@ -195,6 +208,12 @@ pub fn restore(root: &Path, args: &Value) -> Result<Value, DispatchError> {
             continue; // внешние файлы обратно не восстанавливаем никогда
         }
         let dest = resolve_from(root, &rel);
+        // LOW #14 ревью 2026-08-13: откат — тоже мутация: текущее
+        // состояние цели уходит в снапшот, иначе ошибочный restore
+        // необратим (сбой снапшота откат не останавливает).
+        if dest.is_file() {
+            let _ = take(root, &dest);
+        }
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| err_str("snapshot.restore", format!("каталог назначения: {e}")))?;

@@ -60,7 +60,12 @@ pub fn call(root: &Path, args: &Value) -> Result<Value, DispatchError> {
 
     // Детерминизм ответа: обход сортируется — walkdir порядок зависит
     // от ФС, а golden-тесты и повторяемость движка требуют стабильности.
+    // XL-ревью 2026-08-13 MEDIUM #8: кап числа файлов — единственный
+    // потолок синхронного обхода (таймаута у инструмента нет);
+    // переполнение — маркер в skipped, не молчаливый урезанный ответ.
+    const MAX_WALK_FILES: usize = 200_000;
     let mut files: Vec<PathBuf> = Vec::new();
+    let mut walk_capped = false;
     for entry in WalkDir::new(&base)
         .into_iter()
         .filter_entry(|e| !is_skipped_dir(e))
@@ -68,12 +73,22 @@ pub fn call(root: &Path, args: &Value) -> Result<Value, DispatchError> {
         let entry = entry.map_err(|e| err_str(TOOL, format!("обход каталога: {e}")))?;
         if entry.file_type().is_file() {
             files.push(entry.into_path());
+            if files.len() >= MAX_WALK_FILES {
+                walk_capped = true;
+                break;
+            }
         }
     }
     files.sort();
 
     let mut matches: Vec<Value> = Vec::new();
     let mut skipped: Vec<Value> = Vec::new();
+    if walk_capped {
+        skipped.push(json!({
+            "path": "(обход)",
+            "reason": format!("лимит {MAX_WALK_FILES} файлов — дерево обойдено не полностью"),
+        }));
+    }
     let mut truncated = false;
 
     match mode {
@@ -141,14 +156,17 @@ pub fn call(root: &Path, args: &Value) -> Result<Value, DispatchError> {
     }))
 }
 
-/// Скрытые каталоги (`.git` в том числе) и `target` не обходятся:
-/// служебные данные VCS и сборочные артефакты — шум для поиска.
+/// Скрытые каталоги (`.git` в том числе), `target` и `node_modules` не
+/// обходятся: build-артефакты и вендорные зависимости — шум для поиска
+/// по коду (ревью 2026-08-13 MEDIUM #8: node_modules с сотнями тысяч
+/// файлов вешал синхронный обход на минуты). Корень (depth 0) — не
+/// каталог для пропуска.
 fn is_skipped_dir(entry: &walkdir::DirEntry) -> bool {
     if entry.depth() == 0 || !entry.file_type().is_dir() {
         return false;
     }
     let name = entry.file_name().to_string_lossy();
-    name.starts_with('.') || name == "target"
+    name.starts_with('.') || name == "target" || name == "node_modules"
 }
 
 /// Путь относительно корня рабочей области — единый вид для ответа и
