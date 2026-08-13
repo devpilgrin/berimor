@@ -69,6 +69,42 @@ Working memory compacts when the budget overflows. Episodic — full-text search
 
 All of this installs with a single command — from a catalogue or **any git repository**: `berimor skill install code-review-ru --from https://github.com/...`.
 
+## Capabilities
+
+### Built-in tools
+
+The tools are built into the binary (not plugins); every call passes the capability gate: **mutating** calls (marked with *) require confirmation according to the gate mode, read-only ones execute without questions.
+
+| Group | Tools | What they do |
+|---|---|---|
+| Files | `files.read`, `files.list`, `files.write`*, `files.edit`* | read/list; full-file write; pinpoint edit by string anchor (old_string → new_string, uniqueness check) |
+| Search | `files.search`, `session.search` | regex over file contents (with line numbers and context) or glob over names — `.git`/`target`/`node_modules` are skipped; substring search over past session transcripts with excerpts |
+| VCS | `vcs.git` | git status/diff/log/show — read-only: repository helpers (fsmonitor, external diff, textconv) are disabled, arbitrary flags are not accepted |
+| Terminal | `terminal.exec`*, `terminal.start`*, `terminal.output`, `terminal.kill` | command with timeout and output cap; background processes with polling and kill (up to 32 concurrently) |
+| Network | `http.fetch`, `web.search` | GET with body cap and network gate; DuckDuckGo search results (title/link/snippet) |
+| Memory | `memory.search`, `memory.save` | semantic memory fact search; saving a fact with deduplication — disabled by default (enable consciously: `[memory] tool_writes = true`), secrets are masked before saving |
+| Organization | `todo.read`, `todo.write`, `human.ask` | session task list (stored in `.berimor/todo.json`); asking the user a question right from the agent loop |
+| Snapshots | `snapshot.list`, `snapshot.restore`* | automatically: before every file overwrite its state is saved (rotation 50); list — labels and paths, restore — rollback (itself snapshotted too) |
+| Subagents | `agents.run` | delegating to a nested agent with rights intersection |
+
+Beyond the built-ins — plugin and MCP server tools (same gate policy). Full list in chat: the startup line "tools: …".
+
+### Chat menu (TUI)
+
+Type `/` — the palette shows commands with descriptions in the interface language and filters as you type. Submenus work via space: `/config ` shows the continuations.
+
+| Command | What it does |
+|---|---|
+| `/help` | command list |
+| `/models` | providers: list, `/models add` — wizard (presets → choice → key/OAuth), removal — via picker with confirmation |
+| `/skills`, `/agents` | skills and subagents (global/project), open a skill with Enter on its row |
+| `/config` | **settings menu**: shows the effective configuration and the "Interface locale" item (with the current value) → language choice from 8 (ru, en, de, fr, es, zh-CN, ja, ko). Saved to the local config (`[ui]`), takes effect immediately. Shortcut: `/config locale ja` |
+| `/mouse` | mouse toggle: captured — the wheel scrolls the journal, clicking the journal gives it scroll focus; released — native terminal selection/copy (when captured, selection is via Shift) |
+| `/copy` | last agent reply — to clipboard (wl-copy/xclip/xsel/pbcopy) |
+| `/clear`, `/exit` | clear the dialog journal; quit |
+
+The rest of the interface: **confirmation modals** for dangerous actions (options "once / for the rest of the session / for the project" — choose with the ←→↑↓ arrows, y/n — instantly); **agent questions** (`human.ask`) — a free-input modal, Enter — answer, Esc — decline; **multiline input** — Alt+Enter inserts a line break, the field grows up to a third of the screen, clipboard paste is a single event; **mouse** — wheel and click-focus (see `/mouse`).
+
 ## Project infrastructure
 
 **Rust workspace with one crate per component** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. The guest WASM module (`codeact-guest/`) lives as a separate crate and is committed as a ready-made artifact — normal builds are not slowed down.

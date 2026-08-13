@@ -69,6 +69,42 @@ La memoria de trabajo se compacta al desbordar el presupuesto. La episódica —
 
 Todo esto se instala con un solo comando — desde el catálogo o **cualquier repositorio git**: `berimor skill install code-review-ru --from https://github.com/...`.
 
+## Capacidades
+
+### Herramientas integradas
+
+Las herramientas están integradas en el binario (no son plugins), todas las llamadas pasan por la barrera de capabilities: las **mutantes** (marcadas con *) requieren confirmación según el modo de la barrera, las de lectura se ejecutan sin preguntas.
+
+| Grupo | Herramientas | Qué hacen |
+|---|---|---|
+| Archivos | `files.read`, `files.list`, `files.write`*, `files.edit`* | lectura/listado; escritura completa; edición puntual por ancla de texto (old_string → new_string, control de unicidad) |
+| Búsqueda | `files.search`, `session.search` | regex sobre el contenido de archivos (con números de línea y contexto) o glob por nombres — se omiten `.git`/`target`/`node_modules`; subcadena en los hilos de sesiones pasadas con extracto |
+| VCS | `vcs.git` | git status/diff/log/show — solo lectura: los helpers del repositorio (fsmonitor, diff externo, textconv) están desactivados, no se aceptan flags arbitrarios |
+| Terminal | `terminal.exec`*, `terminal.start`*, `terminal.output`, `terminal.kill` | comando con timeout y tope de salida; procesos en segundo plano con sondeo y detención (hasta 32 simultáneos) |
+| Red | `http.fetch`, `web.search` | GET con tope de cuerpo y barrera de red; resultados de búsqueda de DuckDuckGo (título/enlace/fragmento) |
+| Memoria | `memory.search`, `memory.save` | búsqueda de hechos en la memoria semántica; escritura de un hecho con deduplicación — desactivada por defecto (se activa conscientemente: `[memory] tool_writes = true`), los secretos se enmascaran antes de la escritura |
+| Organización | `todo.read`, `todo.write`, `human.ask` | lista de tareas de la sesión (se guarda en `.berimor/todo.json`); pregunta al usuario directamente desde el bucle agéntico |
+| Snapshots | `snapshot.list`, `snapshot.restore`* | automático: antes de cada reescritura de un archivo se guarda su estado (rotación de 50); list — etiquetas y rutas, restore — reversión (también con snapshot) |
+| Subagentes | `agents.run` | encargo a un agente anidado con intersección de derechos |
+
+Además de las integradas — herramientas de plugins y servidores MCP (la misma política de barrera). La lista completa en el chat: la línea de inicio «herramientas: …».
+
+### Menú del chat (TUI)
+
+Escribe `/` — la paleta muestra los comandos con descripciones en el idioma de la interfaz y filtra a medida que escribes. Los submenús funcionan con el espacio: `/config ` muestra las continuaciones.
+
+| Comando | Qué hace |
+|---|---|
+| `/help` | lista de comandos |
+| `/models` | proveedores: lista, `/models add` — asistente (presets → elección → clave/OAuth), eliminación — mediante un selector con confirmación |
+| `/skills`, `/agents` | skills y subagentes (globales/del proyecto), un skill — Enter sobre la línea |
+| `/config` | **menú de parámetros**: muestra la configuración efectiva y el ítem «Localización de la interfaz» (con el valor actual) → elección del idioma entre 8 (ru, en, de, fr, es, zh-CN, ja, ko). Se guarda en la config local (`[ui]`), surte efecto de inmediato. Atajo: `/config locale ja` |
+| `/mouse` | interruptor del ratón: capturado — la rueda desplaza el registro, un clic en el registro da el foco de desplazamiento; liberado — selección/copiado nativos del terminal (con captura, la selección — vía Shift) |
+| `/copy` | última respuesta del agente — al portapapeles (wl-copy/xclip/xsel/pbcopy) |
+| `/clear`, `/exit` | limpieza del registro del diálogo; salida |
+
+El resto en la interfaz: **modales de confirmación** de acciones peligrosas (opciones «una vez / hasta el final de la sesión / para el proyecto» — elección con las flechas ←→↑↓, y/n — inmediato); **preguntas del agente** (`human.ask`) — modal con entrada libre, Enter — responder, Esc — rechazar; **entrada multilínea** — Alt+Enter inserta un salto de línea, el campo crece hasta un tercio de la pantalla, el pegado desde el portapapeles — en un solo evento; **ratón** — rueda y foco al clic (ver `/mouse`).
+
 ## Infraestructura del proyecto
 
 **Workspace Rust con un crate por componente** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. El módulo WASM invitado (`codeact-guest/`) vive como un crate separado y está commiteado como artefacto listo — el build normal no se ralentiza.

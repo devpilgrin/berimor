@@ -69,6 +69,42 @@ Berimor는 정반대의 전제 위에 세워졌습니다: **모델에게 오케�
 
 이 모든 것을 한 명령으로 설치할 수 있습니다 — 카탈로그에서, 또는 **임의의 git 저장소**에서: `berimor skill install code-review-ru --from https://github.com/...`.
 
+## 기능
+
+### 내장 도구
+
+도구는 바이너리에 내장되어 있으며(플러그인 아님) 모든 호출은 capability 게이트를 통과합니다: **변경형**(* 표시)은 게이트 모드에 따라 확인이 필요하고, 읽기형은 확인 없이 실행됩니다.
+
+| 그룹 | 도구 | 하는 일 |
+|---|---|---|
+| 파일 | `files.read`, `files.list`, `files.write`*, `files.edit`* | 읽기/목록; 전체 쓰기; 문자열 앵커로 정밀 편집(old_string → new_string, 유일성 검사) |
+| 검색 | `files.search`, `session.search` | 파일 내용에 대한 regex(줄 번호와 컨텍스트 포함) 또는 파일 이름에 대한 glob — `.git`/`target`/`node_modules`는 건너뜀; 과거 세션 피드의 부분 문자열 검색(발췌 포함) |
+| VCS | `vcs.git` | git status/diff/log/show — 읽기 전용: 저장소 헬퍼(fsmonitor, 외부 diff, textconv)가 비활성화되며 임의의 플래그를 받지 않음 |
+| 터미널 | `terminal.exec`*, `terminal.start`*, `terminal.output`, `terminal.kill` | 타임아웃과 출력 상한이 있는 명령; 폴링과 중지가 가능한 백그라운드 프로세스(동시 최대 32개) |
+| 네트워크 | `http.fetch`, `web.search` | 본문 상한과 네트워크 게이트가 있는 GET; DuckDuckGo 검색 결과(제목/링크/스니펫) |
+| 메모리 | `memory.search`, `memory.save` | 시맨틱 메모리 사실 검색; 중복 제거가 있는 사실 쓰기 — 기본적으로 꺼져 있음(명시적으로 활성화: `[memory] tool_writes = true`), 시크릿은 쓰기 전에 마스킹됨 |
+| 조직 | `todo.read`, `todo.write`, `human.ask` | 세션 작업 목록(`.berimor/todo.json`에 저장); 에이전트 루프에서 사용자에게 직접 질문 |
+| 스냅샷 | `snapshot.list`, `snapshot.restore`* | 자동: 파일을 덮어쓸 때마다 상태 저장(50개 로테이션); list — 레이블과 경로, restore — 롤백(자체도 스냅샷과 함께) |
+| 서브에이전트 | `agents.run` | 권한 교집합으로 중첩 에이전트에 위임 |
+
+내장 도구 외에 플러그인과 MCP 서버의 도구(동일한 게이트 정책)가 있습니다. 채팅에서의 전체 목록: 시작 줄 "도구: …".
+
+### 채팅 메뉴 (TUI)
+
+`/`를 입력하면 — 팔레트가 인터페이스 언어로 된 설명과 함께 명령을 보여주고 입력에 따라 필터링합니다. 하위 메뉴는 스페이스로 펼칩니다: `/config `가 이어지는 항목을 보여줍니다.
+
+| 명령 | 하는 일 |
+|---|---|
+| `/help` | 명령 목록 |
+| `/models` | 프로바이더: 목록, `/models add` — 마법사(프리셋 → 선택 → 키/OAuth), 삭제 — 확인이 있는 피커를 통해 |
+| `/skills`, `/agents` | 스킬과 서브에이전트(전역/프로젝트), 줄에서 Enter로 상세 보기 |
+| `/config` | **설정 메뉴**: 유효 설정 표시 및 "인터페이스 언어" 항목(현재 값 포함) → 8개 언어 중 선택(ru, en, de, fr, es, zh-CN, ja, ko). 로컬 설정(`[ui]`)에 저장되며 즉시 적용. 단축키: `/config locale ja` |
+| `/mouse` | 마우스 토글: 캡처 시 — 휠로 저널 스크롤, 저널 클릭으로 스크롤 포커스; 해제 시 — 터미널 네이티브 선택/복사(캡처 시 선택은 Shift 사용) |
+| `/copy` | 에이전트의 마지막 답변을 클립보드로(wl-copy/xclip/xsel/pbcopy) |
+| `/clear`, `/exit` | 대화 저널 지우기; 종료 |
+
+인터페이스의 나머지: 위험한 작업의 **확인 모달**(옵션 "한 번만 / 세션 끝까지 / 이 프로젝트" — ←→↑↓ 화살표로 선택, y/n — 즉시); **에이전트 질문**(`human.ask`) — 자유 입력 모달, Enter — 답변, Esc — 거부; **여러 줄 입력** — Alt+Enter로 줄 바꿈, 필드는 화면의 3분의 1까지 커지며 클립보드 붙여넣기는 하나의 이벤트로 삽입; **마우스** — 휠과 클릭 포커스(`/mouse` 참조).
+
 ## 프로젝트 인프라
 
 **컴포넌트당 하나의 크레이트로 구성된 Rust workspace** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. 게스트 WASM 모듈(`codeact-guest/`)은 별도의 crate로 존재하며 빌드된 아티팩트로 커밋되어 있습니다 — 일반 빌드가 느려지지 않습니다.

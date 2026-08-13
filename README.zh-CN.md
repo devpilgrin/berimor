@@ -69,6 +69,42 @@ Berimor 建立在相反的假设之上：**不能把编排（orchestration）交
 
 这一切都可以用一条命令安装——来自目录或**任意 git 仓库**：`berimor skill install code-review-ru --from https://github.com/...`。
 
+## 功能
+
+### 内置工具
+
+工具内置于二进制文件中（非插件），所有调用都经过 capability 门控：**修改型**（标记 *）按门控模式需要确认，只读型直接执行。
+
+| 分组 | 工具 | 作用 |
+|---|---|---|
+| 文件 | `files.read`、`files.list`、`files.write`*、`files.edit`* | 读取/列目录；整体写入；按字符串锚点精确编辑（old_string → new_string，唯一性校验） |
+| 搜索 | `files.search`、`session.search` | 对文件内容做 regex（带行号和上下文）或对文件名做 glob——跳过 `.git`/`target`/`node_modules`；对历史会话内容做子串搜索并返回摘录 |
+| VCS | `vcs.git` | git status/diff/log/show——只读：仓库辅助功能（fsmonitor、外部 diff、textconv）已禁用，不接受任意标志 |
+| 终端 | `terminal.exec`*、`terminal.start`*、`terminal.output`、`terminal.kill` | 带超时和输出上限的命令执行；可轮询和停止的后台进程（最多 32 个并发） |
+| 网络 | `http.fetch`、`web.search` | 带响应体上限和网络门控的 GET；DuckDuckGo 搜索结果（标题/链接/摘要） |
+| 记忆 | `memory.search`、`memory.save` | 语义记忆事实搜索；带去重的事实写入——默认关闭（需显式开启：`[memory] tool_writes = true`），写入前秘密会被掩码 |
+| 组织 | `todo.read`、`todo.write`、`human.ask` | 会话任务列表（存于 `.berimor/todo.json`）；在智能体循环中直接向用户提问 |
+| 快照 | `snapshot.list`、`snapshot.restore`* | 自动：每次覆盖文件前保存其状态（轮换 50 份）；list——标签与路径，restore——回滚（自身也会先生成快照） |
+| 子智能体 | `agents.run` | 以权限交集委托给嵌套智能体 |
+
+除内置工具外，还有插件和 MCP 服务器提供的工具（同一门控策略）。聊天中的完整列表：启动行“工具：…”。
+
+### 聊天菜单 (TUI)
+
+输入 `/`——命令面板会显示带界面语言描述的命令，并随输入过滤。子菜单用空格展开：`/config ` 显示后续选项。
+
+| 命令 | 作用 |
+|---|---|
+| `/help` | 命令列表 |
+| `/models` | 提供商：列表，`/models add`——向导（预设 → 选择 → 密钥/OAuth），删除——通过带确认的选择器 |
+| `/skills`、`/agents` | 技能与子智能体（全局/项目），按 Enter 查看行内容 |
+| `/config` | **参数菜单**：显示生效配置和“界面语言”项（含当前值）→ 从 8 种语言中选择（ru, en, de, fr, es, zh-CN, ja, ko）。保存到本地配置（`[ui]`），立即生效。快捷方式：`/config locale ja` |
+| `/mouse` | 鼠标开关：捕获时——滚轮滚动日志，点击日志获得滚动焦点；释放时——终端原生选择/复制（捕获时按住 Shift 选择） |
+| `/copy` | 将智能体最后一条回复复制到剪贴板（wl-copy/xclip/xsel/pbcopy） |
+| `/clear`、`/exit` | 清空对话日志；退出 |
+
+界面中的其余部分：危险操作的**确认模态框**（选项“仅此一次 / 本会话内 / 本项目”——用 ←→↑↓ 箭头选择，y/n——立即确认）；**智能体提问**（`human.ask`）——自由输入的模态框，Enter——回答，Esc——拒绝；**多行输入**——Alt+Enter 换行，输入框最高扩展到屏幕的三分之一，剪贴板粘贴作为单个事件插入；**鼠标**——滚轮与点击聚焦（见 `/mouse`）。
+
 ## 项目基础设施
 
 **Rust workspace，每个组件一个 crate**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。Guest WASM 模块（`codeact-guest/`）作为独立的 crate 存在，并以预构建产物提交——常规构建不会变慢。

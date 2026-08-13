@@ -69,6 +69,42 @@ La mémoire de travail se compacte en cas de dépassement du budget. L'épisodiq
 
 Tout cela s'installe en une seule commande — depuis le catalogue ou **n'importe quel dépôt git** : `berimor skill install code-review-ru --from https://github.com/...`.
 
+## Fonctionnalités
+
+### Outils intégrés
+
+Les outils sont intégrés au binaire (pas des plugins), tous les appels passent par la barrière de capabilities : les outils **mutants** (marqués d'un *) exigent une confirmation selon le mode de la barrière, les outils de lecture s'exécutent sans question.
+
+| Groupe | Outils | Ce qu'ils font |
+|---|---|---|
+| Fichiers | `files.read`, `files.list`, `files.write`*, `files.edit`* | lecture/listage ; écriture complète ; modification ciblée par ancre textuelle (old_string → new_string, contrôle d'unicité) |
+| Recherche | `files.search`, `session.search` | regex sur le contenu des fichiers (avec numéros de lignes et contexte) ou glob sur les noms — `.git`/`target`/`node_modules` sont ignorés ; sous-chaîne dans les fils des sessions passées avec extrait |
+| VCS | `vcs.git` | git status/diff/log/show — lecture seule : les helpers du dépôt (fsmonitor, diff externe, textconv) sont désactivés, les flags arbitraires ne sont pas acceptés |
+| Terminal | `terminal.exec`*, `terminal.start`*, `terminal.output`, `terminal.kill` | commande avec timeout et plafond de sortie ; processus en arrière-plan avec polling et arrêt (jusqu'à 32 simultanés) |
+| Réseau | `http.fetch`, `web.search` | GET avec plafond de corps et barrière réseau ; résultats de recherche DuckDuckGo (titre/lien/extrait) |
+| Mémoire | `memory.search`, `memory.save` | recherche de faits en mémoire sémantique ; écriture d'un fait avec déduplication — désactivée par défaut (activation consciente : `[memory] tool_writes = true`), les secrets sont masqués avant l'écriture |
+| Organisation | `todo.read`, `todo.write`, `human.ask` | liste des tâches de la session (stockée dans `.berimor/todo.json`) ; question à l'utilisateur directement depuis la boucle agentique |
+| Snapshots | `snapshot.list`, `snapshot.restore`* | automatique : avant chaque réécriture d'un fichier, son état est sauvegardé (rotation de 50) ; list — étiquettes et chemins, restore — retour en arrière (lui-même avec snapshot) |
+| Sous-agents | `agents.run` | délégation à un agent imbriqué avec intersection des droits |
+
+Au-delà des outils intégrés — les outils des plugins et des serveurs MCP (même politique de barrière). La liste complète dans le chat : la ligne de démarrage « outils : … ».
+
+### Menu du chat (TUI)
+
+Tapez `/` — la palette affiche les commandes avec des descriptions dans la langue de l'interface et filtre au fur et à mesure de la saisie. Les sous-menus s'ouvrent par l'espace : `/config ` montre les continuations.
+
+| Commande | Ce qu'elle fait |
+|---|---|
+| `/help` | liste des commandes |
+| `/models` | fournisseurs : liste, `/models add` — assistant (préréglages → choix → clé/OAuth), suppression — via un sélecteur avec confirmation |
+| `/skills`, `/agents` | skills et sous-agents (globaux/projet), un skill — Entrée sur la ligne |
+| `/config` | **menu des paramètres** : affichage de la configuration effective et item « Locale de l'interface » (avec la valeur courante) → choix de la langue parmi 8 (ru, en, de, fr, es, zh-CN, ja, ko). Enregistré dans la config locale (`[ui]`), effet immédiat. Raccourci : `/config locale ja` |
+| `/mouse` | bascule de la souris : capturée — la molette fait défiler le journal, un clic sur le journal donne le focus de défilement ; relâchée — sélection/copie natives du terminal (lors de la capture, la sélection se fait via Maj) |
+| `/copy` | dernière réponse de l'agent — dans le presse-papiers (wl-copy/xclip/xsel/pbcopy) |
+| `/clear`, `/exit` | effacement du journal de dialogue ; sortie |
+
+Le reste dans l'interface : **modales de confirmation** des actions dangereuses (options « une fois / jusqu'à la fin de la session / pour le projet » — choix par les flèches ←→↑↓, y/n — immédiat) ; **questions de l'agent** (`human.ask`) — modale avec saisie libre, Entrée — répondre, Échap — refuser ; **saisie multiligne** — Alt+Entrée saute une ligne, le champ grandit jusqu'à un tiers de l'écran, le collage depuis le presse-papiers — en un seul événement ; **souris** — molette et focus au clic (voir `/mouse`).
+
 ## Infrastructure du projet
 
 **Workspace Rust à raison d'un crate par composant** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. Le module WASM invité (`codeact-guest/`) vit comme un crate séparé et est commité en tant qu'artefact prêt à l'emploi — le build normal n'est pas ralenti.

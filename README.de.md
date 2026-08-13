@@ -69,6 +69,42 @@ Der Arbeitsspeicher wird bei Budgetüberschreitung kompaktiert. Episodisch — V
 
 All das installiert sich mit einem einzigen Befehl — aus dem Katalog oder aus **beliebigen git-Repositories**: `berimor skill install code-review-ru --from https://github.com/...`.
 
+## Fähigkeiten
+
+### Eingebaute Werkzeuge
+
+Die Werkzeuge sind im Binary eingebaut (keine Plugins); jeder Aufruf durchläuft das Capability-Gate: **mutierende** Aufrufe (mit * markiert) erfordern je nach Gate-Modus eine Bestätigung, lesende werden ohne Rückfrage ausgeführt.
+
+| Gruppe | Werkzeuge | Was sie tun |
+|---|---|---|
+| Dateien | `files.read`, `files.list`, `files.write`*, `files.edit`* | lesen/auflisten; komplettes Schreiben; punktuelle Bearbeitung per String-Anker (old_string → new_string, Eindeutigkeitsprüfung) |
+| Suche | `files.search`, `session.search` | Regex über Dateiinhalte (mit Zeilennummern und Kontext) oder Glob über Namen — `.git`/`target`/`node_modules` werden übersprungen; Teilstringsuche über die Verläufe früherer Sitzungen mit Auszug |
+| VCS | `vcs.git` | git status/diff/log/show — nur lesend: Repository-Helfer (fsmonitor, externes Diff, textconv) sind deaktiviert, beliebige Flags werden nicht angenommen |
+| Terminal | `terminal.exec`*, `terminal.start`*, `terminal.output`, `terminal.kill` | Befehl mit Timeout und Ausgabebegrenzung; Hintergrundprozesse mit Polling und Stopp (bis zu 32 gleichzeitig) |
+| Netzwerk | `http.fetch`, `web.search` | GET mit Body-Limit und Netzwerk-Gate; DuckDuckGo-Suchergebnisse (Titel/Link/Snippet) |
+| Speicher | `memory.search`, `memory.save` | Suche nach Fakten im semantischen Speicher; Speichern eines Fakts mit Deduplizierung — standardmäßig deaktiviert (bewusst aktivieren: `[memory] tool_writes = true`), Geheimnisse werden vor dem Speichern maskiert |
+| Organisation | `todo.read`, `todo.write`, `human.ask` | Aufgabenliste der Sitzung (gespeichert in `.berimor/todo.json`); Frage an den Nutzer direkt aus der Agentenschleife |
+| Snapshots | `snapshot.list`, `snapshot.restore`* | automatisch: vor jedem Überschreiben einer Datei wird ihr Zustand gespeichert (Rotation 50); list — Label und Pfade, restore — Zurücksetzen (selbst ebenfalls mit Snapshot) |
+| Subagenten | `agents.run` | Beauftragung eines verschachtelten Agenten mit Rechte-Schnittmenge |
+
+Über die eingebauten hinaus — Werkzeuge von Plugins und MCP-Servern (gleiche Gate-Politik). Die vollständige Liste im Chat: die Startzeile „Werkzeuge: …".
+
+### Chat-Menü (TUI)
+
+Geben Sie `/` ein — die Palette zeigt Befehle mit Beschreibungen in der Sprache der Oberfläche und filtert während der Eingabe. Untermenüs funktionieren per Leertaste: `/config ` zeigt die Fortsetzungen.
+
+| Befehl | Was er tut |
+|---|---|
+| `/help` | Befehlsliste |
+| `/models` | Provider: Liste, `/models add` — Assistent (Presets → Auswahl → Schlüssel/OAuth), Entfernen — über Picker mit Bestätigung |
+| `/skills`, `/agents` | Skills und Subagenten (global/projektbezogen), Skill per Enter auf der Zeile öffnen |
+| `/config` | **Einstellungsmenü**: Anzeige der effektiven Konfiguration und der Punkt „Sprache der Oberfläche" (mit dem aktuellen Wert) → Sprachauswahl aus 8 (ru, en, de, fr, es, zh-CN, ja, ko). Wird in der lokalen Konfiguration gespeichert (`[ui]`), wirkt sofort. Shortcut: `/config locale ja` |
+| `/mouse` | Maus-Umschalter: gefangen — das Rad scrollt das Journal, ein Klick ins Journal gibt ihm den Scroll-Fokus; freigegeben — native Terminal-Markierung/Kopieren (bei gefangener Maus Markierung per Shift) |
+| `/copy` | letzte Agentenantwort — in die Zwischenablage (wl-copy/xclip/xsel/pbcopy) |
+| `/clear`, `/exit` | Journal des Dialogs leeren; Beenden |
+
+Der Rest der Oberfläche: **Bestätigungs-Modals** für gefährliche Aktionen (Optionen „einmal / bis zum Ende der Sitzung / für das Projekt" — Auswahl per Pfeiltasten ←→↑↓, y/n — sofort); **Fragen des Agenten** (`human.ask`) — Modal mit freier Eingabe, Enter — antworten, Esc — ablehnen; **mehrzeilige Eingabe** — Alt+Enter fügt einen Zeilenumbruch ein, das Feld wächst bis zu einem Drittel des Bildschirms, Einfügen aus der Zwischenablage — als ein einziges Ereignis; **Maus** — Rad und Klick-Fokus (siehe `/mouse`).
+
 ## Projektinfrastruktur
 
 **Rust-Workspace mit einem Crate pro Komponente** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. Das WASM-Gastmodul (`codeact-guest/`) lebt als separates Crate und ist als fertiges Artefakt eingecheckt — der normale Build wird nicht verlangsamt.
