@@ -65,7 +65,7 @@ Berimor 建立在相反的假设之上：**不能把编排（orchestration）交
 - **技能**（SKILL.md）——聊天中的专家角色：触发由代码完成（而非模型），工具上限由调度器过滤器保证。
 - **子智能体**（agent.yaml）——嵌套的智能体循环，拥有独立的预算和日志；子级权限 = 与父级权限的交集，无法扩大。嵌套派生仅在显式 `allow_spawn: true` 时允许，深度由代码限制。
 - **插件**——隔离进程，带 ACL 清单和 sigstore 无钥匙签名：从可信列表安装并做 TOFU 确认，如同 SSH。
-- **MCP**——通过开放协议 Model Context Protocol 接入的外部工具服务器（官方 Rust SDK rmcp，ADR-0023）：在配置中以 `[[mcp_servers]]` 小节连接，排在内置工具和插件之后进入统一调度器，并通过与任何流程步骤相同的 capability 门控。反过来也成立：Berimor 也可以通过 MCP 对外提供自己的工具。
+- **MCP**——通过开放协议 Model Context Protocol 接入的外部工具服务器（官方 Rust SDK rmcp，ADR-0023）：在配置中以 `[[mcp_servers]]` 小节连接，排在内置工具和插件之后进入统一调度器，并通过与任何流程步骤相同的 capability 门控。反过来也成立：Berimor 也可以通过 MCP 对外提供自己的工具。带有现成配置块的服务器精选清单见 [`docs/mcp-servers.md`](docs/mcp-servers.md)。
 
 这一切都可以用一条命令安装——来自目录或**任意 git 仓库**：`berimor skill install code-review-ru --from https://github.com/...`。
 

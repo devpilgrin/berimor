@@ -65,7 +65,7 @@ Working memory compacts when the budget overflows. Episodic — full-text search
 - **Skills** (SKILL.md) — expert roles for chat: triggering is done by code (not the model); the tool ceiling is enforced by the dispatcher's filter.
 - **Subagents** (agent.yaml) — a nested agent loop with its own budget and journal; the child's rights = the intersection with the parent's rights; they cannot expand. Nested spawning requires explicit `allow_spawn: true`; depth is limited by code.
 - **Plugins** — isolated processes with an ACL manifest and keyless sigstore signing: installation from a trusted list with TOFU confirmation, like SSH.
-- **MCP** — external tool servers over the open Model Context Protocol (official Rust SDK rmcp, ADR-0023): they connect via a `[[mcp_servers]]` section in the config, join the shared dispatcher after the built-in tools and plugins, and pass the same capability gate as any process step. It works the other way too: Berimor can expose its own tools over MCP.
+- **MCP** — external tool servers over the open Model Context Protocol (official Rust SDK rmcp, ADR-0023): they connect via a `[[mcp_servers]]` section in the config, join the shared dispatcher after the built-in tools and plugins, and pass the same capability gate as any process step. It works the other way too: Berimor can expose its own tools over MCP. A curated list of servers with ready-made config blocks — [`docs/mcp-servers.md`](docs/mcp-servers.md).
 
 All of this installs with a single command — from a catalogue or **any git repository**: `berimor skill install code-review-ru --from https://github.com/...`.
 

@@ -65,7 +65,7 @@ Berimor는 정반대의 전제 위에 세워졌습니다: **모델에게 오케�
 - **스킬**(SKILL.md) — 채팅용 전문가 역할: 트리거는 코드로(모델이 아니라), 도구 상한은 디스패처 필터로 보장.
 - **서브에이전트**(agent.yaml) — 자체 예산과 저널을 가진 중첩 에이전트 루프; 자식의 권한 = 부모 권한과의 교집합이며 확장 불가. 중첩 스폰은 명시적 `allow_spawn: true`일 때만 가능하며 깊이는 코드로 제한.
 - **플러그인** — ACL 매니페스트와 sigstore 키리스 서명을 갖춘 격리 프로세스: SSH처럼 신뢰 목록에서 설치하고 TOFU 확인.
-- **MCP** — 개방형 프로토콜 Model Context Protocol을 통한 외부 도구 서버(공식 Rust SDK rmcp, ADR-0023): 설정의 `[[mcp_servers]]` 섹션으로 연결되며, 내장 도구와 플러그인 뒤의 공통 디스패처에 등록되고 모든 프로세스 단계와 동일한 capability 게이트를 통과합니다. 반대 방향으로도 동작합니다: Berimor는 자체 도구를 MCP로 제공할 수 있습니다.
+- **MCP** — 개방형 프로토콜 Model Context Protocol을 통한 외부 도구 서버(공식 Rust SDK rmcp, ADR-0023): 설정의 `[[mcp_servers]]` 섹션으로 연결되며, 내장 도구와 플러그인 뒤의 공통 디스패처에 등록되고 모든 프로세스 단계와 동일한 capability 게이트를 통과합니다. 반대 방향으로도 동작합니다: Berimor는 자체 도구를 MCP로 제공할 수 있습니다. 준비된 구성 블록이 있는 엄선된 서버 목록 — [`docs/mcp-servers.md`](docs/mcp-servers.md).
 
 이 모든 것을 한 명령으로 설치할 수 있습니다 — 카탈로그에서, 또는 **임의의 git 저장소**에서: `berimor skill install code-review-ru --from https://github.com/...`.
 
