@@ -105,6 +105,62 @@ Tapez `/` — la palette affiche les commandes avec des descriptions dans la lan
 
 Le reste dans l'interface : **modales de confirmation** des actions dangereuses (options « une fois / jusqu'à la fin de la session / pour le projet » — choix par les flèches ←→↑↓, y/n — immédiat) ; **questions de l'agent** (`human.ask`) — modale avec saisie libre, Entrée — répondre, Échap — refuser ; **saisie multiligne** — Alt+Entrée saute une ligne, le champ grandit jusqu'à un tiers de l'écran, le collage depuis le presse-papiers — en un seul événement ; **souris** — molette et focus au clic (voir `/mouse`).
 
+## Processus : agents en graphe
+
+Le principal mode « de combat » de berimor est le **processus** : un plan YAML déclaratif qui s'exécute comme un graphe. C'est la même approche que celle des « agents en graphe » (LangGraph et consorts) : les nœuds sont des étapes, les arêtes sont des transitions, l'état est un objet partagé ; la différence est que la topologie et le routage de berimor sont déterministes — **le modèle ne choisit jamais la branche** : il peut proposer une valeur via un contrat strict, mais c'est le code qui route (invariant I1).
+
+**Nœuds du graphe** (types d'étapes d'un processus) :
+
+| Nœud | Rôle |
+|---|---|
+| `sequential` | étape ordinaire — passage à la suivante |
+| `tool` | appel d'outil (les arguments sont des gabarits issus de l'état) |
+| `llm_structured` | appel du modèle avec contrat de réponse strict (JSON Schema — rejeté jusqu'à acceptation) |
+| `codeact` | programme du modèle dans un bac à sable WASM (QuickJS, fuel, liste blanche d'appels) |
+| `agent_step` | boucle libre « raisonnement → action → observation » comme nœud : `max_turns`, autocritique et « propose—exécute—vérifie » en option |
+| `branch` | arêtes conditionnelles : `on` — champ de l'état, `cases` — branches selon les valeurs |
+| `loop` | boucle sur condition |
+| `parallel` | branches parallèles avec barrière de join |
+| `human_gate` | pause pour l'humain : raison, timeout, politique de timeout (fail/branche/escalade) |
+| `checkpoint` | point de reprise explicite |
+
+Le journal d'événements couvre le checkpointing avec marge : toute exécution peut reprendre exactement à l'endroit de l'interruption et reproduire l'état à tout moment (replay).
+
+**Les idiomes de graphe comme processus.** Les patterns classiques (routing, prompt chaining, parallelization, orchestrator-workers, evaluator-optimizer) s'expriment sans nouveau code : `llm_structured` écrit une décision de routage dans l'état → `branch` route selon la valeur validée ; evaluator-optimizer est un `loop` avec verdict ; orchestrator-workers est `parallel` + join. Des exemples de processus sont dans [`fixtures/golden/processes/`](fixtures/golden/processes/).
+
+### Architecture de l'agent
+
+```mermaid
+flowchart TD
+    U["Utilisateur / planification / HTTP"] --> CLI["berimor CLI<br/>(chat · run · serve · daemon)"]
+    CLI --> PE["Process Engine<br/>graphe de processus : branch · loop · parallel · join"]
+    CLI --> EX["Boucle libre<br/>agent_step"]
+    PE --> MED["Mediation<br/>validation des contrats"]
+    EX --> MED
+    MED --> GATE["Capability Gate<br/>deny statique → jail → confirmation"]
+    GATE --> TOOLS["Outils<br/>intégrés → plugins → MCP"]
+    PE --> J[("Journal d'événements SQLite<br/>resume · replay · audit")]
+    EX --> J
+    MED --> MEM[("Mémoire : épisodique FTS5,<br/>sémantique, graphe d'entités")]
+    PE --> POOL["Model Pool<br/>fournisseurs · tiers · failover"]
+    EX --> POOL
+    POOL --> LLM["LLM : cloud et locaux"]
+```
+
+### Exemple de graphe de processus (evaluator-optimizer)
+
+```mermaid
+flowchart LR
+    A["llm_structured :<br/>brouillon"] --> B["llm_structured :<br/>évaluation par contrat"]
+    B --> C{"branch on: verdict"}
+    C -->|"pas acceptable"| A
+    C -->|"acceptable"| D["human_gate :<br/>publier ?"]
+    D --> E["tool : écriture du résultat"]
+    E --> F["checkpoint"]
+```
+
+Le modèle propose un `verdict` — mais seule une valeur ayant passé le contrat arrivera dans `cases` ; le choix de la branche est calculé par le code.
+
 ## Infrastructure du projet
 
 **Workspace Rust à raison d'un crate par composant** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. Le module WASM invité (`codeact-guest/`) vit comme un crate séparé et est commité en tant qu'artefact prêt à l'emploi — le build normal n'est pas ralenti.

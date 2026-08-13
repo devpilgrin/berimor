@@ -105,6 +105,62 @@ Berimor は逆の前提に基づいて構築されています：**モデルに�
 
 インターフェースのその他：危険な操作の**確認モーダル**（選択肢「1 回だけ / セッション終了まで / このプロジェクト」—— ←→↑↓ キーで選択、y/n——即時）；**エージェントの質問**（`human.ask`）——自由入力のモーダル、Enter——回答、Esc——拒否；**複数行入力**——Alt+Enter で改行、フィールドは画面の 3 分の 1 まで拡大、クリップボードからの貼り付けは 1 イベントとして挿入；**マウス**——ホイールとクリックフォーカス（`/mouse` 参照）。
 
+## プロセス：グラフエージェント
+
+berimor の主な「実戦」モードは**プロセス**——グラフとして実行される宣言的な YAML プランです。これは「グラフエージェント」（LangGraph など）と同じアプローチです：ノードはステップ、エッジは遷移、状態は共有オブジェクト。違いは、berimor ではトポロジーとルーティングが決定的であること——**モデルはブランチを決して選びません**：厳密なコントラクトを通じて値を提案することはできますが、ルーティングはコードが行います（不変条件 I1）。
+
+**グラフのノード**（プロセスステップの種類）：
+
+| ノード | 用途 |
+|---|---|
+| `sequential` | 通常のステップ——次へ遷移 |
+| `tool` | ツール呼び出し（引数は状態からのテンプレート） |
+| `llm_structured` | 厳密な応答コントラクト付きのモデル呼び出し（JSON Schema——受理されるまで拒否される） |
+| `codeact` | WASM サンドボックス内のモデルプログラム（QuickJS、燃料、呼び出しホワイトリスト） |
+| `agent_step` | 「推論 → 行動 → 観察」の自由ループをノードとして：`max_turns`、オプションで自己批評と「提案—実行—検証」 |
+| `branch` | 条件付きエッジ：`on`——状態フィールド、`cases`——値ごとのブランチ |
+| `loop` | 条件によるループ |
+| `parallel` | join バリア付きの並列ブランチ |
+| `human_gate` | 人間による一時停止：理由、タイムアウト、タイムアウトポリシー（fail/ブランチ/エスカレーション） |
+| `checkpoint` | 明示的な復旧ポイント |
+
+イベントジャーナルはチェックポイントを余裕をもってカバーします：どの実行も中断した場所から正確に再開でき、任意の時点の状態を再生（replay）できます。
+
+**プロセスとしてのグラフイディオム。** 古典的なパターン（routing、prompt chaining、parallelization、orchestrator-workers、evaluator-optimizer）は新しいコードなしで表現できます：`llm_structured` がルーティング決定を状態に書き込み → `branch` が検証済みの値でルーティング；evaluator-optimizer は verdict 付きの `loop`；orchestrator-workers は `parallel` + join。プロセスの例は [`fixtures/golden/processes/`](fixtures/golden/processes/) にあります。
+
+### エージェントのアーキテクチャ
+
+```mermaid
+flowchart TD
+    U["ユーザー / スケジュール / HTTP"] --> CLI["berimor CLI<br/>(chat · run · serve · daemon)"]
+    CLI --> PE["Process Engine<br/>プロセスグラフ：branch · loop · parallel · join"]
+    CLI --> EX["自由ループ<br/>agent_step"]
+    PE --> MED["Mediation<br/>コントラクト検証"]
+    EX --> MED
+    MED --> GATE["Capability Gate<br/>deny 静的ルール → jail → 確認"]
+    GATE --> TOOLS["ツール<br/>内蔵 → プラグイン → MCP"]
+    PE --> J[("イベントジャーナル SQLite<br/>resume · replay · 監査")]
+    EX --> J
+    MED --> MEM[("メモリ：エピソード FTS5、<br/>セマンティック、エンティティグラフ")]
+    PE --> POOL["Model Pool<br/>プロバイダ · ティア · failover"]
+    EX --> POOL
+    POOL --> LLM["LLM：クラウドとローカル"]
+```
+
+### プロセスグラフの例（evaluator-optimizer）
+
+```mermaid
+flowchart LR
+    A["llm_structured:<br/>ドラフト"] --> B["llm_structured:<br/>コントラクトによる評価"]
+    B --> C{"branch on: verdict"}
+    C -->|"不適格"| A
+    C -->|"適格"| D["human_gate:<br/>公開？"]
+    D --> E["tool: 結果の記録"]
+    E --> F["checkpoint"]
+```
+
+モデルは `verdict` を提案します——しかし `cases` に入るのはコントラクトを通過した値だけです。ブランチの選択はコードが計算します。
+
 ## プロジェクトのインフラ
 
 **コンポーネントごとに 1 クレートの Rust workspace**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。ゲスト WASM モジュール（`codeact-guest/`）は独立した crate として存在し、ビルド済みアーティファクトとしてコミットされています——通常のビルドは遅くなりません。

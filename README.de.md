@@ -105,6 +105,62 @@ Geben Sie `/` ein — die Palette zeigt Befehle mit Beschreibungen in der Sprach
 
 Der Rest der Oberfläche: **Bestätigungs-Modals** für gefährliche Aktionen (Optionen „einmal / bis zum Ende der Sitzung / für das Projekt" — Auswahl per Pfeiltasten ←→↑↓, y/n — sofort); **Fragen des Agenten** (`human.ask`) — Modal mit freier Eingabe, Enter — antworten, Esc — ablehnen; **mehrzeilige Eingabe** — Alt+Enter fügt einen Zeilenumbruch ein, das Feld wächst bis zu einem Drittel des Bildschirms, Einfügen aus der Zwischenablage — als ein einziges Ereignis; **Maus** — Rad und Klick-Fokus (siehe `/mouse`).
 
+## Prozesse: Graphen-Agenten
+
+Der zentrale „Kampfmodus" von berimor ist der **Prozess**: ein deklarativer YAML-Plan, der als Graph ausgeführt wird. Das ist derselbe Ansatz wie bei „Graphen-Agenten" (LangGraph und Ähnliche): Knoten sind Schritte, Kanten sind Übergänge, der Zustand ist ein geteiltes Objekt; der Unterschied: Topologie und Routing sind bei berimor deterministisch — **das Modell wählt niemals den Zweig**: es kann über einen strengen Vertrag einen Wert vorschlagen, das Routing übernimmt Code (Invariante I1).
+
+**Graphknoten** (Typen von Prozessschritten):
+
+| Knoten | Zweck |
+|---|---|
+| `sequential` | normaler Schritt — Übergang zum nächsten |
+| `tool` | Werkzeugaufruf (Argumente — Vorlagen aus dem Zustand) |
+| `llm_structured` | Modellaufruf mit strengem Antwortvertrag (JSON Schema — wird bis zur Annahme abgelehnt) |
+| `codeact` | Modellprogramm in der WASM-Sandbox (QuickJS, Fuel, Aufruf-Whitelist) |
+| `agent_step` | freier „Denken → Handeln → Beobachten"-Zyklus als Knoten: `max_turns`, optional Selbstkritik und „vorschlagen—ausführen—prüfen" |
+| `branch` | bedingte Kanten: `on` — Zustandsfeld, `cases` — Zweige nach Werten |
+| `loop` | Schleife über eine Bedingung |
+| `parallel` | parallele Zweige mit Join-Barriere |
+| `human_gate` | Pause für einen Menschen: Grund, Timeout, Timeout-Politik (fail/Zweig/Eskalation) |
+| `checkpoint` | expliziter Wiederherstellungspunkt |
+
+Das Ereignisjournal deckt das Checkpointing mit Reserve ab: Jeder Lauf kann exakt an der Stelle des Abbruchs fortgesetzt und der Zustand zu jedem Zeitpunkt reproduziert werden (Replay).
+
+**Graphen-Idiome als Prozesse.** Die klassischen Muster (Routing, Prompt Chaining, Parallelisierung, Orchestrator-Workers, Evaluator-Optimizer) lassen sich ohne neuen Code ausdrücken: `llm_structured` schreibt die Routing-Entscheidung in den Zustand → `branch` routet nach dem validierten Wert; Evaluator-Optimizer ist ein `loop` mit Verdikt; Orchestrator-Workers ist `parallel` + Join. Prozessbeispiele — in [`fixtures/golden/processes/`](fixtures/golden/processes/).
+
+### Agentenarchitektur
+
+```mermaid
+flowchart TD
+    U["Benutzer / Zeitplan / HTTP"] --> CLI["berimor CLI<br/>(chat · run · serve · daemon)"]
+    CLI --> PE["Process Engine<br/>Prozessgraph: branch · loop · parallel · join"]
+    CLI --> EX["Freier Zyklus<br/>agent_step"]
+    PE --> MED["Mediation<br/>Vertragsvalidierung"]
+    EX --> MED
+    MED --> GATE["Capability Gate<br/>Deny-Statik → Jail → Bestätigung"]
+    GATE --> TOOLS["Werkzeuge<br/>eingebaute → Plugins → MCP"]
+    PE --> J[("Ereignisjournal SQLite<br/>Resume · Replay · Audit")]
+    EX --> J
+    MED --> MEM[("Gedächtnis: episodisch FTS5,<br/>semantisch, Entitätengraph")]
+    PE --> POOL["Model Pool<br/>Provider · Tiers · Failover"]
+    EX --> POOL
+    POOL --> LLM["LLM: Cloud und lokal"]
+```
+
+### Beispiel für einen Prozessgraphen (Evaluator-Optimizer)
+
+```mermaid
+flowchart LR
+    A["llm_structured:<br/>Entwurf"] --> B["llm_structured:<br/>Bewertung nach Vertrag"]
+    B --> C{"branch on: verdict"}
+    C -->|"nicht gut genug"| A
+    C -->|"gut genug"| D["human_gate:<br/>veröffentlichen?"]
+    D --> E["tool: Ergebnis schreiben"]
+    E --> F["checkpoint"]
+```
+
+Das Modell schlägt das `verdict` vor — aber in `cases` landet nur ein Wert, der den Vertrag passiert hat; die Wahl des Zweigs berechnet Code.
+
 ## Projektinfrastruktur
 
 **Rust-Workspace mit einem Crate pro Komponente** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. Das WASM-Gastmodul (`codeact-guest/`) lebt als separates Crate und ist als fertiges Artefakt eingecheckt — der normale Build wird nicht verlangsamt.

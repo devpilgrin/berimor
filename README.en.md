@@ -105,6 +105,62 @@ Type `/` — the palette shows commands with descriptions in the interface langu
 
 The rest of the interface: **confirmation modals** for dangerous actions (options "once / for the rest of the session / for the project" — choose with the ←→↑↓ arrows, y/n — instantly); **agent questions** (`human.ask`) — a free-input modal, Enter — answer, Esc — decline; **multiline input** — Alt+Enter inserts a line break, the field grows up to a third of the screen, clipboard paste is a single event; **mouse** — wheel and click-focus (see `/mouse`).
 
+## Processes: graph agents
+
+Berimor's main "combat" mode is a **process**: a declarative YAML plan executed as a graph. This is the same approach as "graph agents" (LangGraph and the like): nodes are steps, edges are transitions, state is a shared object; the difference is that berimor's topology and routing are deterministic — **the model never picks a branch**: it can propose a value through a strict contract, and code does the routing (invariant I1).
+
+**Graph nodes** (process step types):
+
+| Node | Purpose |
+|---|---|
+| `sequential` | a regular step — moves on to the next one |
+| `tool` | tool call (arguments are templates from state) |
+| `llm_structured` | model call with a strict response contract (JSON Schema — rejected until accepted) |
+| `codeact` | the model's program in a WASM sandbox (QuickJS, fuel, call allowlist) |
+| `agent_step` | a free-form "reasoning → action → observation" loop as a node: `max_turns`, optionally self-critique and "propose—execute—verify" |
+| `branch` | conditional edges: `on` — a state field, `cases` — branches by value |
+| `loop` | a loop over a condition |
+| `parallel` | parallel branches with a join barrier |
+| `human_gate` | pause for a human: reason, timeout, timeout policy (fail/branch/escalation) |
+| `checkpoint` | an explicit restore point |
+
+The event journal covers checkpointing with a margin: any run can be resumed exactly from the point of interruption, and the state can be reproduced at any moment (replay).
+
+**Graph idioms as processes.** The classic patterns (routing, prompt chaining, parallelization, orchestrator-workers, evaluator-optimizer) are expressed without new code: `llm_structured` writes the routing decision into state → `branch` routes by the validated value; evaluator-optimizer is a `loop` with a verdict; orchestrator-workers is `parallel` + join. Process examples are in [`fixtures/golden/processes/`](fixtures/golden/processes/).
+
+### Agent architecture
+
+```mermaid
+flowchart TD
+    U["User / schedule / HTTP"] --> CLI["berimor CLI<br/>(chat · run · serve · daemon)"]
+    CLI --> PE["Process Engine<br/>process graph: branch · loop · parallel · join"]
+    CLI --> EX["Free-form loop<br/>agent_step"]
+    PE --> MED["Mediation<br/>contract validation"]
+    EX --> MED
+    MED --> GATE["Capability Gate<br/>static deny → jail → confirmation"]
+    GATE --> TOOLS["Tools<br/>built-ins → plugins → MCP"]
+    PE --> J[("Event journal SQLite<br/>resume · replay · audit")]
+    EX --> J
+    MED --> MEM[("Memory: episodic FTS5,<br/>semantic, entity graph")]
+    PE --> POOL["Model Pool<br/>providers · tiers · failover"]
+    EX --> POOL
+    POOL --> LLM["LLM: cloud and local"]
+```
+
+### Example process graph (evaluator-optimizer)
+
+```mermaid
+flowchart LR
+    A["llm_structured:<br/>draft"] --> B["llm_structured:<br/>contract-based evaluation"]
+    B --> C{"branch on: verdict"}
+    C -->|"not good enough"| A
+    C -->|"good enough"| D["human_gate:<br/>publish?"]
+    D --> E["tool: write result"]
+    E --> F["checkpoint"]
+```
+
+The model proposes the `verdict` — but only a value that passed the contract makes it into `cases`; code computes the branch choice.
+
 ## Project infrastructure
 
 **Rust workspace with one crate per component** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. The guest WASM module (`codeact-guest/`) lives as a separate crate and is committed as a ready-made artifact — normal builds are not slowed down.

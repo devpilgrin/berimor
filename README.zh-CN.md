@@ -105,6 +105,62 @@ Berimor 建立在相反的假设之上：**不能把编排（orchestration）交
 
 界面中的其余部分：危险操作的**确认模态框**（选项“仅此一次 / 本会话内 / 本项目”——用 ←→↑↓ 箭头选择，y/n——立即确认）；**智能体提问**（`human.ask`）——自由输入的模态框，Enter——回答，Esc——拒绝；**多行输入**——Alt+Enter 换行，输入框最高扩展到屏幕的三分之一，剪贴板粘贴作为单个事件插入；**鼠标**——滚轮与点击聚焦（见 `/mouse`）。
 
+## 流程：图智能体
+
+berimor 的主要“实战”模式是**流程**：一个以图形式执行的声明式 YAML 计划。这与“图智能体”（LangGraph 等）的思路相同：节点是步骤，边是转移，状态是共享对象；不同之处在于 berimor 的拓扑和路由是确定性的——**模型从不选择分支**：它只能通过严格契约提出一个值，而路由由代码完成（不变量 I1）。
+
+**图的节点**（流程步骤的类型）：
+
+| 节点 | 用途 |
+|---|---|
+| `sequential` | 普通步骤——转移到下一步 |
+| `tool` | 调用工具（参数是来自状态的模板） |
+| `llm_structured` | 带严格响应契约的模型调用（JSON Schema——未通过前一律拒绝） |
+| `codeact` | 在 WASM 沙箱中运行的模型程序（QuickJS、燃料、调用白名单） |
+| `agent_step` | 作为节点的自由“推理 → 行动 → 观察”循环：`max_turns`，可选自我批评与“提议—执行—验证” |
+| `branch` | 条件边：`on`——状态字段，`cases`——按值分支 |
+| `loop` | 按条件的循环 |
+| `parallel` | 带 join 屏障的并行分支 |
+| `human_gate` | 人工暂停：原因、超时、超时策略（fail/分支/升级） |
+| `checkpoint` | 显式恢复点 |
+
+事件日志充裕地覆盖了检查点机制：任何运行都可以从中断处精确继续，并将状态重放到任意时刻（replay）。
+
+**图习语即流程。** 经典模式（routing、prompt chaining、parallelization、orchestrator-workers、evaluator-optimizer）无需新代码即可表达：`llm_structured` 将路由决策写入状态 → `branch` 按已验证的值路由；evaluator-optimizer 是带 verdict 的 `loop`；orchestrator-workers 是 `parallel` + join。流程示例见 [`fixtures/golden/processes/`](fixtures/golden/processes/)。
+
+### 智能体架构
+
+```mermaid
+flowchart TD
+    U["用户 / 定时任务 / HTTP"] --> CLI["berimor CLI<br/>(chat · run · serve · daemon)"]
+    CLI --> PE["Process Engine<br/>流程图：branch · loop · parallel · join"]
+    CLI --> EX["自由循环<br/>agent_step"]
+    PE --> MED["Mediation<br/>契约验证"]
+    EX --> MED
+    MED --> GATE["Capability Gate<br/>deny 静态规则 → jail → 确认"]
+    GATE --> TOOLS["工具<br/>内置 → 插件 → MCP"]
+    PE --> J[("事件日志 SQLite<br/>resume · replay · 审计")]
+    EX --> J
+    MED --> MEM[("记忆：情节式 FTS5、<br/>语义式、实体图")]
+    PE --> POOL["Model Pool<br/>提供商 · 层级 · failover"]
+    EX --> POOL
+    POOL --> LLM["LLM：云端与本地"]
+```
+
+### 流程图示例（evaluator-optimizer）
+
+```mermaid
+flowchart LR
+    A["llm_structured:<br/>草稿"] --> B["llm_structured:<br/>按契约评估"]
+    B --> C{"branch on: verdict"}
+    C -->|"不合格"| A
+    C -->|"合格"| D["human_gate:<br/>发布？"]
+    D --> E["tool: 写入结果"]
+    E --> F["checkpoint"]
+```
+
+模型提出 `verdict`——但只有契约通过的值才会进入 `cases`；分支选择由代码计算。
+
 ## 项目基础设施
 
 **Rust workspace，每个组件一个 crate**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。Guest WASM 模块（`codeact-guest/`）作为独立的 crate 存在，并以预构建产物提交——常规构建不会变慢。

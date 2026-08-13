@@ -105,6 +105,62 @@ Berimor는 정반대의 전제 위에 세워졌습니다: **모델에게 오케�
 
 인터페이스의 나머지: 위험한 작업의 **확인 모달**(옵션 "한 번만 / 세션 끝까지 / 이 프로젝트" — ←→↑↓ 화살표로 선택, y/n — 즉시); **에이전트 질문**(`human.ask`) — 자유 입력 모달, Enter — 답변, Esc — 거부; **여러 줄 입력** — Alt+Enter로 줄 바꿈, 필드는 화면의 3분의 1까지 커지며 클립보드 붙여넣기는 하나의 이벤트로 삽입; **마우스** — 휠과 클릭 포커스(`/mouse` 참조).
 
+## 프로세스: 그래프 에이전트
+
+berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 실행되는 선언적 YAML 계획입니다. 이는 '그래프 에이전트'(LangGraph 등)와 같은 접근 방식입니다: 노드는 단계, 엣지는 전이, 상태는 공유 객체입니다. 차이점은 berimor에서는 토폴로지와 라우팅이 결정적이라는 점입니다 — **모델은 절대 분기를 선택하지 않습니다**: 엄격한 계약을 통해 값을 제안할 수 있을 뿐이며, 라우팅은 코드가 수행합니다(불변 조건 I1).
+
+**그래프 노드**(프로세스 단계의 유형):
+
+| 노드 | 용도 |
+|---|---|
+| `sequential` | 일반 단계 — 다음으로 전이 |
+| `tool` | 도구 호출(인수는 상태의 템플릿) |
+| `llm_structured` | 엄격한 응답 계약이 있는 모델 호출(JSON Schema — 수락될 때까지 거부) |
+| `codeact` | WASM 샌드박스의 모델 프로그램(QuickJS, 연료, 호출 화이트리스트) |
+| `agent_step` | '추론 → 행동 → 관찰' 자유 루프를 노드로: `max_turns`, 선택적 자기비판과 '제안—실행—검증' |
+| `branch` | 조건부 엣지: `on` — 상태 필드, `cases` — 값에 따른 분기 |
+| `loop` | 조건에 따른 루프 |
+| `parallel` | join 배리어가 있는 병렬 분기 |
+| `human_gate` | 사람을 위한 일시 정지: 사유, 타임아웃, 타임아웃 정책(fail/분기/에스컬레이션) |
+| `checkpoint` | 명시적 복구 지점 |
+
+이벤트 저널은 체크포인팅을 여유 있게 커버합니다: 모든 실행을 중단된 지점에서 정확히 이어갈 수 있고 임의 시점의 상태를 재생(replay)할 수 있습니다.
+
+**프로세스로서의 그래프 이디엄.** 고전적 패턴(routing, prompt chaining, parallelization, orchestrator-workers, evaluator-optimizer)은 새 코드 없이 표현됩니다: `llm_structured`가 라우팅 결정을 상태에 기록 → `branch`가 검증된 값으로 라우팅; evaluator-optimizer는 verdict가 있는 `loop`; orchestrator-workers는 `parallel` + join. 프로세스 예제는 [`fixtures/golden/processes/`](fixtures/golden/processes/)에 있습니다.
+
+### 에이전트 아키텍처
+
+```mermaid
+flowchart TD
+    U["사용자 / 스케줄 / HTTP"] --> CLI["berimor CLI<br/>(chat · run · serve · daemon)"]
+    CLI --> PE["Process Engine<br/>프로세스 그래프: branch · loop · parallel · join"]
+    CLI --> EX["자유 루프<br/>agent_step"]
+    PE --> MED["Mediation<br/>계약 검증"]
+    EX --> MED
+    MED --> GATE["Capability Gate<br/>deny 정적 규칙 → jail → 확인"]
+    GATE --> TOOLS["도구<br/>내장 → 플러그인 → MCP"]
+    PE --> J[("이벤트 저널 SQLite<br/>resume · replay · 감사")]
+    EX --> J
+    MED --> MEM[("메모리: 에피소드 FTS5,<br/>시맨틱, 엔티티 그래프")]
+    PE --> POOL["Model Pool<br/>프로바이더 · 티어 · failover"]
+    EX --> POOL
+    POOL --> LLM["LLM: 클라우드와 로컬"]
+```
+
+### 프로세스 그래프 예시 (evaluator-optimizer)
+
+```mermaid
+flowchart LR
+    A["llm_structured:<br/>초안"] --> B["llm_structured:<br/>계약에 따른 평가"]
+    B --> C{"branch on: verdict"}
+    C -->|"부적합"| A
+    C -->|"적합"| D["human_gate:<br/>게시?"]
+    D --> E["tool: 결과 기록"]
+    E --> F["checkpoint"]
+```
+
+모델은 `verdict`를 제안하지만 — `cases`에 들어가는 것은 계약을 통과한 값뿐이며, 분기 선택은 코드가 계산합니다.
+
 ## 프로젝트 인프라
 
 **컴포넌트당 하나의 크레이트로 구성된 Rust workspace** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. 게스트 WASM 모듈(`codeact-guest/`)은 별도의 crate로 존재하며 빌드된 아티팩트로 커밋되어 있습니다 — 일반 빌드가 느려지지 않습니다.
