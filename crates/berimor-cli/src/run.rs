@@ -204,6 +204,21 @@ pub fn run(
         secrets: bundle.masker.as_ref(),
     };
 
+    // human.ask (B7): вопрос человеку из агентного цикла — в `berimor
+    // run`/REPL ответ читается из stdin (StdinAsker); TUI подменяет
+    // asker'а каналом в execute_turn. memory.* (C8) — обёртка с путём
+    // хранилища и флагом `[memory] tool_writes` (доверенная граница).
+    let stdin_asker = crate::builtin_human::StdinAsker;
+    let memory_dispatch = crate::builtin_memory::MemoryToolDispatch {
+        storage_path: config.storage_path.clone(),
+        allow_writes: config.memory.tool_writes,
+        inner: bundle.dispatch.as_ref(),
+    };
+    let ask_dispatch = crate::builtin_human::HumanAskDispatch {
+        asker: &stdin_asker,
+        inner: &memory_dispatch,
+    };
+
     let agent_step = AgentStepExecutor {
         pool: &bundle.pool,
         providers: &providers,
@@ -212,7 +227,7 @@ pub fn run(
         gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
         confirmer: bundle.confirmer.as_ref(),
-        dispatch: bundle.dispatch.as_ref(),
+        dispatch: &ask_dispatch,
         secrets: bundle.masker.as_ref(),
         on_tool_turn: None,
         on_provider_switch: None,

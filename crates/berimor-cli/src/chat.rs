@@ -221,6 +221,30 @@ impl berimor_executors::tool_only::ConfirmationHandler for TuiConfirmer<'_> {
     }
 }
 
+/// human.ask в TUI (B7, spec builtin-tools-waves): вопрос — модал с
+/// полем ввода (WorkerMsg::AskRequest), ответ ждём блокируясь в воркере
+/// — тот же канальный паттерн, что TuiConfirmer. Смерть канала —
+/// ошибка asker'а (инструмент получает DispatchError, цикл не висит).
+struct TuiAsker {
+    tx: std::sync::mpsc::Sender<crate::chat_tui::WorkerMsg>,
+    // Mutex: mpsc::Receiver не Sync, а HumanAsker требует Send+Sync.
+    answer_rx: std::sync::Mutex<std::sync::mpsc::Receiver<Result<String, String>>>,
+}
+
+impl crate::builtin_human::HumanAsker for TuiAsker {
+    fn ask(&self, question: &str) -> Result<String, String> {
+        self.tx
+            .send(crate::chat_tui::WorkerMsg::AskRequest(question.to_string()))
+            .map_err(|_| "канал UI закрыт".to_string())?;
+        let rx = self
+            .answer_rx
+            .lock()
+            .map_err(|_| "блокировка канала ответа".to_string())?;
+        rx.recv()
+            .map_err(|_| "канал ответа UI закрыт".to_string())?
+    }
+}
+
 /// Триггер скилла → расширенное сообщение + потолок + имя (общий для
 /// TUI и REPL — §20.16; триггер вычисляет код, не модель).
 pub(crate) fn resolve_skill_trigger(
@@ -264,15 +288,23 @@ impl berimor_executors::tool_only::ToolDispatch for CeilingDispatch<'_> {
     }
 }
 
+/// Каналы ответов UI на ход (TUI): подтверждения гейта и ответы
+/// human.ask. None-поля — REPL/пайпы (TerminalConfirmer/StdinAsker).
+pub(crate) struct TurnChannels {
+    pub answer_rx: Option<std::sync::mpsc::Receiver<crate::chat_tui::ConfirmAnswer>>,
+    pub ask_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
+}
+
 pub(crate) fn execute_turn(
     config: &Config,
     conversation: Vec<Value>,
     message: String,
     tx: std::sync::mpsc::Sender<crate::chat_tui::WorkerMsg>,
-    answer_rx: Option<std::sync::mpsc::Receiver<crate::chat_tui::ConfirmAnswer>>,
+    channels: TurnChannels,
     session_grants: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     tool_ceiling: Option<Vec<String>>,
 ) -> Result<String, String> {
+    let TurnChannels { answer_rx, ask_rx } = channels;
     let bundle = build_executor_bundle(config).map_err(|err| err.to_string())?;
     let storage = SqliteEventLog::open(&config.storage_path).map_err(|err| err.to_string())?;
     let providers = bundle.providers();
@@ -317,10 +349,6 @@ pub(crate) fn execute_turn(
             crate::chat_ui::summarize_args(args)
         )));
     };
-    let ceiling_dispatch = tool_ceiling.as_deref().map(|allowed| CeilingDispatch {
-        inner: bundle.dispatch.as_ref(),
-        allowed,
-    });
     let tui_confirmer = answer_rx.map(|rx| TuiConfirmer {
         masker: bundle.masker.as_ref(),
         tx: tx.clone(),
@@ -331,6 +359,31 @@ pub(crate) fn execute_turn(
         Some(tui) => tui,
         None => bundle.confirmer.as_ref(),
     };
+    // human.ask (B7): обёртка диспетчера — TUI-asker при живом канале,
+    // иначе stdin (REPL/пайпы, прецедент TerminalConfirmer). memory.*
+    // (C8) — обёртка с путём хранилища и флагом `[memory] tool_writes`.
+    let stdin_asker = crate::builtin_human::StdinAsker;
+    let memory_dispatch = crate::builtin_memory::MemoryToolDispatch {
+        storage_path: config.storage_path.clone(),
+        allow_writes: config.memory.tool_writes,
+        inner: bundle.dispatch.as_ref(),
+    };
+    let tui_asker = ask_rx.map(|rx| TuiAsker {
+        tx: tx.clone(),
+        answer_rx: std::sync::Mutex::new(rx),
+    });
+    let asker_ref: &dyn crate::builtin_human::HumanAsker = match &tui_asker {
+        Some(a) => a,
+        None => &stdin_asker,
+    };
+    let ask_dispatch = crate::builtin_human::HumanAskDispatch {
+        asker: asker_ref,
+        inner: &memory_dispatch,
+    };
+    let ceiling_dispatch = tool_ceiling.as_deref().map(|allowed| CeilingDispatch {
+        inner: &ask_dispatch,
+        allowed,
+    });
     let agent = AgentStepExecutor {
         pool: &bundle.pool,
         providers: &providers,
@@ -342,7 +395,7 @@ pub(crate) fn execute_turn(
         dispatch: ceiling_dispatch
             .as_ref()
             .map(|d| d as &dyn berimor_executors::tool_only::ToolDispatch)
-            .unwrap_or(bundle.dispatch.as_ref()),
+            .unwrap_or(&ask_dispatch),
         secrets: bundle.masker.as_ref(),
         on_tool_turn: Some(&on_tool_turn),
         on_provider_switch: None,
@@ -490,6 +543,19 @@ fn run_repl(
         chat_ui::print_tool_turn(&theme, tool, &chat_ui::summarize_args(args), ok);
     };
 
+    // REPL-ветка: те же обёртки, что у TUI (B7 human.ask — StdinAsker,
+    // C8 memory.* — флаг `[memory] tool_writes`).
+    let repl_memory_dispatch = crate::builtin_memory::MemoryToolDispatch {
+        storage_path: config.storage_path.clone(),
+        allow_writes: config.memory.tool_writes,
+        inner: bundle.dispatch.as_ref(),
+    };
+    let repl_stdin_asker = crate::builtin_human::StdinAsker;
+    let ask_dispatch_repl = crate::builtin_human::HumanAskDispatch {
+        asker: &repl_stdin_asker,
+        inner: &repl_memory_dispatch,
+    };
+
     let agent = AgentStepExecutor {
         pool: &bundle.pool,
         providers: &providers,
@@ -498,7 +564,7 @@ fn run_repl(
         gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
         confirmer: bundle.confirmer.as_ref(),
-        dispatch: bundle.dispatch.as_ref(),
+        dispatch: &ask_dispatch_repl,
         secrets: bundle.masker.as_ref(),
         on_tool_turn: Some(&on_tool_turn),
         on_provider_switch: None,
@@ -754,7 +820,7 @@ fn run_repl(
         let spinner = chat_ui::Spinner::start(&theme, "berimor думает…");
         // Потолок скилла — per-turn агент с фильтром диспетча (§20.16).
         let ceiling_dispatch = turn.1.as_deref().map(|allowed| CeilingDispatch {
-            inner: bundle.dispatch.as_ref(),
+            inner: &ask_dispatch_repl,
             allowed,
         });
         let outcome = match &ceiling_dispatch {

@@ -50,6 +50,10 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "web.search",
     "todo.read",
     "todo.write",
+    "human.ask",
+    "memory.search",
+    "memory.save",
+    "session.search",
     "vcs.git",
     "snapshot.list",
     "snapshot.restore",
@@ -335,6 +339,27 @@ impl ToolDispatch for BuiltinToolDispatch {
                     .as_u64()
                     .ok_or_else(|| Self::err(tool, "аргумент 'id' обязателен (число)"))?;
                 self.bg.kill(id)
+            }
+            // B7: human.ask исполняет обёртка HumanAskDispatch (у неё
+            // asker-канал); до встроенного диспетчера вызов доходит
+            // только без обёртки — говорящая ошибка, не молчание.
+            "human.ask" => Err(Self::err(
+                tool,
+                "human.ask требует обёртки asker (HumanAskDispatch) — диспетчер собран без неё",
+            )),
+            // C8: memory.* исполняет MemoryToolDispatch (нужен путь к
+            // хранилищу и флаг записи) — та же дисциплина обёртки.
+            "memory.search" | "memory.save" => Err(Self::err(
+                tool,
+                "memory.* требует обёртки MemoryToolDispatch — диспетчер собран без неё",
+            )),
+            // C9: каталог лент сессий — глобальный слой конфигурации;
+            // отсутствие каталога — пустой результат, не ошибка.
+            "session.search" => {
+                let dir = crate::config::global_dir()
+                    .map(|d| d.join("sessions"))
+                    .unwrap_or_default();
+                crate::builtin_sessions_search::call(&dir, args)
             }
             "files.list" => {
                 let raw = args["path"].as_str().unwrap_or(".");

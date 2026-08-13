@@ -101,6 +101,9 @@ pub(crate) enum WorkerMsg {
     /// Служебная строка в ленту (failover провайдера и т.п.).
     Sys(String),
     ConfirmRequest(String),
+    /// human.ask (B7): вопрос агента к человеку — модал с полем ввода;
+    /// ответ возвращается по каналу хода (`ask_answer_tx`).
+    AskRequest(String),
     Reply(Result<String, String>),
 }
 
@@ -280,6 +283,12 @@ struct App {
     pending_plugin_install: Option<String>,
     /// Ответ воркеру на подтверждение (канал создаётся на ход).
     answer_tx: Option<Sender<ConfirmAnswer>>,
+    /// human.ask (B7): активный вопрос агента (модал с вводом), буфер
+    /// ответа и канал ответа воркеру (создаётся на ход, как answer_tx;
+    /// НЕ take при ответе — вопросов за ход может быть несколько).
+    ask_prompt: Option<String>,
+    ask_input: String,
+    ask_answer_tx: Option<Sender<Result<String, String>>>,
     /// Фокус мыши: журнал (прокрутка) или поле ввода (по умолчанию).
     focus: Focus,
     /// Мышь захвачена (колесо/клик) или отпущена (`/mouse` — нативное
@@ -380,6 +389,9 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         agents: crate::agents::load_all(&std::env::current_dir().unwrap_or_default()),
         pending_plugin_install: None,
         answer_tx: None,
+        ask_prompt: None,
+        ask_input: String::new(),
+        ask_answer_tx: None,
         focus: Focus::Input,
         mouse_capture: true,
         locale,
@@ -472,6 +484,10 @@ fn event_loop(
                 WorkerMsg::Sys(text) => app.sys(text),
                 WorkerMsg::ConfirmRequest(prompt) => {
                     app.confirm_prompt = Some(prompt);
+                }
+                WorkerMsg::AskRequest(question) => {
+                    app.ask_prompt = Some(question);
+                    app.ask_input.clear();
                 }
                 WorkerMsg::Reply(Ok(reply)) => {
                     app.busy = false;
@@ -665,6 +681,10 @@ impl App {
         // TUI), UI отвечает; живёт до конца хода.
         let (answer_tx, answer_rx) = channel::<ConfirmAnswer>();
         self.answer_tx = Some(answer_tx);
+        // Канал ответов human.ask (B7): воркер шлёт вопрос (модал с
+        // вводом в TUI), UI возвращает строку/отмену; живёт до конца хода.
+        let (ask_tx, ask_rx) = channel::<Result<String, String>>();
+        self.ask_answer_tx = Some(ask_tx);
         let session_grants = self.session_grants.clone();
         std::thread::spawn(move || {
             let reply = crate::chat::execute_turn(
@@ -672,7 +692,10 @@ impl App {
                 conversation,
                 message,
                 tx.clone(),
-                Some(answer_rx),
+                crate::chat::TurnChannels {
+                    answer_rx: Some(answer_rx),
+                    ask_rx: Some(ask_rx),
+                },
                 session_grants,
                 tool_ceiling,
             );
@@ -1446,6 +1469,35 @@ fn handle_key(app: &mut App, key: KeyEvent) {
         return;
     }
 
+    // Модал human.ask (B7): свободный ответ текстом. Enter — отправить
+    // ответ воркеру, Esc — отмена (инструмент получает ошибку, цикл
+    // агента не висит). Канал НЕ забирается (take) — вопросов за ход
+    // может быть несколько.
+    if app.ask_prompt.is_some() {
+        match key.code {
+            KeyCode::Enter => {
+                let answer = std::mem::take(&mut app.ask_input);
+                app.ask_prompt = None;
+                if let Some(tx) = &app.ask_answer_tx {
+                    let _ = tx.send(Ok(answer));
+                }
+            }
+            KeyCode::Esc => {
+                app.ask_prompt = None;
+                app.ask_input.clear();
+                if let Some(tx) = &app.ask_answer_tx {
+                    let _ = tx.send(Err("отменено пользователем".to_string()));
+                }
+            }
+            KeyCode::Char(c) => app.ask_input.push(c),
+            KeyCode::Backspace => {
+                app.ask_input.pop();
+            }
+            _ => {}
+        }
+        return;
+    }
+
     // Фокус на журнале (клик мышью, репорт 2026-08-09): стрелки ↑↓
     // листают ЖУРНАЛ, а не историю команд поля ввода; Esc — назад в
     // ввод; любая печать/Enter возвращает фокус и обрабатывается уже
@@ -1855,6 +1907,9 @@ fn draw(frame: &mut Frame, app: &mut App) {
             i18n::strings(app.locale),
         );
     }
+    if let Some(question) = &app.ask_prompt {
+        draw_ask(frame, question, &app.ask_input, i18n::strings(app.locale));
+    }
 }
 
 /// §20.26: инфо-панель сессии — данные только из App (кадр дешёвый,
@@ -2226,6 +2281,8 @@ fn draw_hints(frame: &mut Frame, app: &App, area: Rect) {
     let strings = i18n::strings(app.locale);
     let hints = if app.confirm_prompt.is_some() {
         strings.hint_confirm
+    } else if app.ask_prompt.is_some() {
+        strings.ask_hint
     } else if app.busy {
         strings.hint_busy
     } else if app.picker.is_some() {
@@ -2345,6 +2402,38 @@ fn draw_plugin_repo_prompt(frame: &mut Frame, input: &str, strings: &i18n::Strin
     frame.render_widget(prompt, area);
 }
 
+/// Модал human.ask (B7): вопрос агента со свободным вводом ответа.
+fn draw_ask(frame: &mut Frame, question: &str, input: &str, strings: &i18n::Strings) {
+    let area = centered_rect(70, 30, frame.area());
+    let mut lines: Vec<Line> = question
+        .lines()
+        .map(|l| Line::from(format!(" {l}")))
+        .collect();
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(" › ", Style::default().fg(Color::Green)),
+        Span::raw(input.to_string()),
+    ]));
+    lines.push(Line::from(Span::styled(
+        strings.ask_hint,
+        Style::default().fg(Color::DarkGray),
+    )));
+    let modal = Paragraph::new(lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(strings.ask_title),
+    );
+    frame.render_widget(Clear, area);
+    frame.render_widget(modal, area);
+    // Курсор в конец поля ввода (в символах — кириллица 1 колонка).
+    let cursor_x = area.x + 3 + input.chars().count() as u16;
+    frame.set_cursor_position((
+        cursor_x.min(area.x + area.width - 2),
+        area.y + area.height - 3,
+    ));
+}
+
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -2402,6 +2491,9 @@ mod tests {
             agents: Vec::new(),
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -2466,6 +2558,9 @@ mod tests {
             agents: Vec::new(),
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -2552,6 +2647,9 @@ mod tests {
             agents: Vec::new(),
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Log,
@@ -2618,6 +2716,9 @@ mod tests {
             agents: Vec::new(),
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -2693,6 +2794,9 @@ mod tests {
             agents: Vec::new(),
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -2748,6 +2852,43 @@ mod tests {
             l,
             LogLine::Sys(t) if t.contains("нечего копировать")
         )));
+    }
+
+    /// Модал human.ask (B7): символы в буфер, Enter — Ok(строка) в
+    /// канал и закрытие; Esc — Err(отмена). Канал НЕ забирается —
+    /// вопросов за ход может быть несколько.
+    #[test]
+    fn ask_modal_input_enter_esc() {
+        let (ask_tx, ask_rx) = channel::<Result<String, String>>();
+        let (tx, rx) = channel();
+        let mut app = blank_app(tx, rx);
+        app.ask_answer_tx = Some(ask_tx);
+        app.ask_prompt = Some("как звать?".to_string());
+        for c in "вася".chars() {
+            handle_key(
+                &mut app,
+                KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+            );
+        }
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+        );
+        handle_key(
+            &mut app,
+            KeyEvent::new(KeyCode::Char('я'), KeyModifiers::NONE),
+        );
+        handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.ask_prompt.is_none());
+        assert!(matches!(ask_rx.try_recv(), Ok(Ok(ref a)) if a == "вася"));
+        assert!(
+            app.ask_answer_tx.is_some(),
+            "канал жив для следующего вопроса"
+        );
+        // Второй вопрос — Esc: отмена доезжает как ошибка asker'а.
+        app.ask_prompt = Some("ещё вопрос".to_string());
+        handle_key(&mut app, KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(ask_rx.try_recv(), Ok(Err(_))));
     }
 
     /// /config (2026-08-12, директива): меню параметров → пункт Locale
@@ -2827,6 +2968,9 @@ mod tests {
             agents: Vec::new(),
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -2975,6 +3119,9 @@ mod tests {
             agents: Vec::new(),
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -3040,6 +3187,9 @@ mod tests {
             }],
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -3105,6 +3255,9 @@ mod tests {
             agents: vec![],
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -3166,6 +3319,9 @@ mod tests {
             agents: vec![],
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -3212,6 +3368,9 @@ mod tests {
             agents: vec![],
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -3346,6 +3505,9 @@ mod tests {
             agents: Vec::new(),
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -3438,6 +3600,9 @@ mod tests {
             agents: Vec::new(),
             pending_plugin_install: None,
             answer_tx: Some(answer_tx),
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,
@@ -3506,6 +3671,9 @@ mod tests {
             agents: Vec::new(),
             pending_plugin_install: None,
             answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
             tx,
             rx,
             focus: Focus::Input,

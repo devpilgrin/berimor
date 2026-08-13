@@ -143,10 +143,8 @@ pub struct MemoryConfig {
     /// Запись в память ИНСТРУМЕНТОМ `memory.save` (волна C8, spec
     /// builtin-tools-waves): как и fact_extraction — доверенная граница,
     /// включается осознанно. Default `false`: инструмент отвечает
-    /// говорящей ошибкой «запись отключена конфигом». allow(dead_code) —
-    /// читается при интеграции C8 (memory-диспетчер).
+    /// говорящей ошибкой «запись отключена конфигом».
     #[serde(default)]
-    #[allow(dead_code)]
     pub tool_writes: bool,
     /// Верхняя граница числа фактов в слое `Facts` за один запрос
     /// (аналог `session_search_limit`).
