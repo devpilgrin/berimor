@@ -55,10 +55,25 @@ enum SessionOutcome {
 pub(crate) fn tools_catalog(config: &Config) -> Value {
     let mut tools = vec![
         json!({"name": "files.read", "args": {"path": "строка"}, "about": "прочитать файл (кап 1 МиБ, флаг truncated)"}),
-        json!({"name": "files.write", "args": {"path": "строка", "content": "строка"}, "about": "записать файл (родитель обязан существовать)"}),
+        json!({"name": "files.write", "args": {"path": "строка", "content": "строка"}, "about": "записать файл целиком (родитель обязан существовать; перед записью — авто-снапшот)"}),
+        json!({"name": "files.edit", "args": {"path": "строка", "old_string": "строка", "new_string": "строка", "replace_all": "bool?"}, "about": "точечная правка по строковому якорю (контроль уникальности)"}),
         json!({"name": "files.list", "args": {"path": "строка, по умолчанию \".\""}, "about": "листинг каталога (до 1000 записей)"}),
+        json!({"name": "files.search", "args": {"pattern": "regex или glob", "mode": "content|files", "path": "строка?", "glob": "строка?", "limit": "число?"}, "about": "поиск по файлам: regex по содержимому (строки+контекст) или glob по именам; .git/target/node_modules пропускаются"}),
         json!({"name": "terminal.exec", "args": {"command": "строка"}, "about": "выполнить команду оболочки (30 сек, 64 КиБ вывода)"}),
+        json!({"name": "terminal.start", "args": {"command": "строка"}, "about": "фоновый процесс (до 32) — для серверов и долгих задач; id в ответе"}),
+        json!({"name": "terminal.output", "args": {"id": "число", "offset": "число?"}, "about": "вывод фонового процесса (stdout/stderr/running)"}),
+        json!({"name": "terminal.kill", "args": {"id": "число"}, "about": "остановить фоновый процесс"}),
         json!({"name": "http.fetch", "args": {"url": "строка"}, "about": "GET-запрос (приватные адреса запрещены, редиректы не следуются)"}),
+        json!({"name": "web.search", "args": {"query": "строка", "limit": "число?"}, "about": "поисковая выдача DuckDuckGo (заголовок/ссылка/сниппет)"}),
+        json!({"name": "vcs.git", "args": {"op": "status|diff|log|show", "path": "строка?", "limit": "число?"}, "about": "git только на чтение (хелперы репозитория отключены)"}),
+        json!({"name": "todo.read", "args": {}, "about": "список задач сессии (.berimor/todo.json)"}),
+        json!({"name": "todo.write", "args": {"items": "[{id, content, status}]"}, "about": "заменить список задач (status: pending|in_progress|completed|cancelled)"}),
+        json!({"name": "human.ask", "args": {"question": "строка", "options": "[строка]?"}, "about": "вопрос пользователю из цикла (свободный ответ)"}),
+        json!({"name": "memory.search", "args": {"query": "строка", "limit": "число?"}, "about": "поиск фактов семантической памяти"}),
+        json!({"name": "memory.save", "args": {"content": "строка", "topic": "строка?"}, "about": "записать факт (выключено по умолчанию: [memory] tool_writes)"}),
+        json!({"name": "session.search", "args": {"query": "строка", "limit": "число?", "role": "user|assistant?"}, "about": "поиск по лентам прошлых сессий (excerpt с контекстом)"}),
+        json!({"name": "snapshot.list", "args": {"limit": "число?"}, "about": "метки авто-снапшотов файлов (перед перезаписями)"}),
+        json!({"name": "snapshot.restore", "args": {"id": "строка", "path": "строка?"}, "about": "откат файла(ов) из снапшота (сам со снапшотом)"}),
         json!({"name": "agents.run", "args": {"name": "имя субагента", "task": "поручение"}, "about": "поручить задачу субагенту (свои потолок и бюджет; berimor agent list)"}),
     ];
     for stub in &config.tool_stubs {
@@ -77,6 +92,29 @@ pub(crate) fn tools_catalog(config: &Config) -> Value {
         tools.push(json!({"name": format!("{}.*", server.name), "args": {}, "about": "инструменты MCP-сервера"}));
     }
     Value::Array(tools)
+}
+
+/// Однострочные описания инструментов для промпта свободного цикла
+/// (BR-01, полевой тест 2026-08-14): промпт agent_step перечисляет
+/// доступные имена — модель не угадывает (list_files вместо files.list).
+pub(crate) fn tool_prompt_lines(config: &Config) -> Vec<String> {
+    tools_catalog(config)
+        .as_array()
+        .map(|tools| {
+            tools
+                .iter()
+                .map(|t| {
+                    let name = t["name"].as_str().unwrap_or_default();
+                    let about = t["about"].as_str().unwrap_or_default();
+                    let args = t["args"]
+                        .as_object()
+                        .map(|o| o.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", "))
+                        .unwrap_or_default();
+                    format!("- {name} {{{args}}} — {about}")
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn print_help() {
@@ -400,6 +438,7 @@ pub(crate) fn execute_turn(
         secrets: bundle.masker.as_ref(),
         on_tool_turn: Some(&on_tool_turn),
         on_provider_switch: None,
+        tool_lines: crate::chat::tool_prompt_lines(config),
     };
     let state = json!({
         "goal": message,
@@ -570,6 +609,7 @@ fn run_repl(
         secrets: bundle.masker.as_ref(),
         on_tool_turn: Some(&on_tool_turn),
         on_provider_switch: None,
+        tool_lines: tool_prompt_lines(config),
     };
 
     let catalog = tools_catalog(config);
@@ -839,6 +879,23 @@ fn run_repl(
                     secrets: bundle.masker.as_ref(),
                     on_tool_turn: Some(&on_tool_turn),
                     on_provider_switch: None,
+                    // BR-01 + §20.16: при потолке скилла перечень в
+                    // промпте фильтруется потолком — модель не зовёт
+                    // имена, которые CeilingDispatch отклонит.
+                    tool_lines: match &turn.1 {
+                        Some(allowed) => agent
+                            .tool_lines
+                            .iter()
+                            .filter(|line| {
+                                allowed.iter().any(|name| {
+                                    line.starts_with(&format!("- {name} "))
+                                        || line.starts_with(&format!("- {name}{{"))
+                                })
+                            })
+                            .cloned()
+                            .collect(),
+                        None => agent.tool_lines.clone(),
+                    },
                 };
                 turn_agent.execute(
                     "chat",

@@ -153,8 +153,14 @@ impl CodeActExecutor<'_> {
                 expects_structured_output: false,
             })?;
 
+            // BR-02 (полевой тест 2026-08-14): модели по привычке
+            // оборачивают программу в ```javascript … ``` — без снятия
+            // ограждения анализ не распознавал JS и жёг все попытки на
+            // корректной программе.
+            let program = strip_markdown_fence(&response.raw_text);
+
             if let Err(violation) = static_analysis::analyze(
-                &response.raw_text,
+                program,
                 &tools.iter().map(String::as_str).collect::<Vec<_>>(),
             ) {
                 retry_feedback = Some(format!(
@@ -165,7 +171,7 @@ impl CodeActExecutor<'_> {
             }
 
             let program_input = serde_json::json!({
-                "program": response.raw_text,
+                "program": program,
                 "input": state,
             });
             let result_value =
@@ -244,6 +250,27 @@ impl CodeActExecutor<'_> {
 /// имена инструментов, белый список статического анализа (чтобы модель
 /// не тратила попытки на заведомо запрещённые идентификаторы), текст
 /// обратной связи от прошлой попытки, если есть.
+/// Снять markdown-ограждение с ответа модели (BR-02, полевой тест
+/// 2026-08-14): модели по привычке оборачивают код в ```javascript … ```.
+/// Ограждение есть — возвращаем тело без первой строки (указатель
+/// языка) и завершающего fence; нет — текст как есть (trim).
+fn strip_markdown_fence(text: &str) -> &str {
+    let trimmed = text.trim();
+    let Some(rest) = trimmed.strip_prefix("```") else {
+        return trimmed;
+    };
+    // Ограждение без перевода строки (```code``` одной строкой или
+    // одинокий fence) — не ограждение для наших целей: не трогаем.
+    let Some(first_nl) = rest.find('\n') else {
+        return trimmed;
+    };
+    let body = &rest[first_nl + 1..];
+    match body.rfind("```") {
+        Some(end) => body[..end].trim(),
+        None => trimmed, // незакрытое ограждение — как есть
+    }
+}
+
 fn build_prompt(
     step_id: &str,
     adapter: &structured_llm::ContractAdapter,
@@ -263,6 +290,8 @@ fn build_prompt(
 
     let mut prompt = format!(
         "Шаг процесса: {step_id}. Напиши ПРОГРАММУ на JavaScript (executors.md §4.1) — не JSON-ответ.\n\n\
+         Ответ — ТОЛЬКО текст программы, БЕЗ markdown-ограждения (``` … ```): ограждение снимается\n\
+         принудительно, но чистый ответ исключает потерю строк.\n\n\
          Единственный выход программы — вызов `finish(result)`; `result` ОБЯЗАН \
          соответствовать контракту {name} (версия {version}):\n{schema}\n\
          Пример корректного result: {example}\n\n\
@@ -293,6 +322,29 @@ fn build_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // BR-02 (полевой тест 2026-08-14): ограждение снимается до анализа.
+    #[test]
+    fn strip_markdown_fence_unwraps_js_fence() {
+        let fenced = "```javascript\nconst x = 1 + 2;\nfinish({sum: x});\n```";
+        assert_eq!(
+            strip_markdown_fence(fenced),
+            "const x = 1 + 2;\nfinish({sum: x});"
+        );
+        // Без ограждения — как есть (с trim).
+        assert_eq!(strip_markdown_fence("  finish({});  "), "finish({});");
+        // Кириллица в коде не ломает снятие.
+        let cyr = "```js\n// комментарий\nfinish({текст: \"привет\"});\n```";
+        assert_eq!(
+            strip_markdown_fence(cyr),
+            "// комментарий\nfinish({текст: \"привет\"});"
+        );
+        // Одинокий fence без перевода строки — не трогаем.
+        assert_eq!(strip_markdown_fence("```"), "```");
+        // Снятый текст проходит статический анализ как программа.
+        let program = strip_markdown_fence(fenced);
+        assert!(static_analysis::analyze(program, &[]).is_ok());
+    }
 
     /// Пустой реестр — прежнее поведение (контроль утечек no-op).
     static EMPTY_MASKER: berimor_secrets::Masker = berimor_secrets::Masker::new();

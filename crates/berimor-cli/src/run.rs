@@ -232,6 +232,9 @@ pub fn run(
         secrets: bundle.masker.as_ref(),
         on_tool_turn: None,
         on_provider_switch: None,
+        // BR-01: свободный цикл в процессе получает имена инструментов
+        // в промпте — без них модель угадывала (полевой тест).
+        tool_lines: crate::chat::tool_prompt_lines(config),
     };
 
     let wasm_host = WasmHost::new(

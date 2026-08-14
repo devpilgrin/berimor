@@ -287,6 +287,9 @@ impl AgentRunDispatch {
             secrets: self.ctx.masker.as_ref(),
             on_tool_turn: None,
             on_provider_switch: None,
+            // BR-01: ребёнок получает перечень СВОИХ имён — потолок
+            // agent.yaml; угадывание внутри потолка бессмысленно.
+            tool_lines: def.tools.iter().map(|name| format!("- {name}")).collect(),
         };
         let outcome = agent.execute(
             &instance_id.0,

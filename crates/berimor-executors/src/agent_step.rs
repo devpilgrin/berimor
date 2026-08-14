@@ -120,6 +120,11 @@ pub struct AgentStepExecutor<'a> {
     /// Уведомление о failover между провайдерами (0.14.0): «от → к» —
     /// пользователь видит, какая модель реально отвечает.
     pub on_provider_switch: crate::failover::ProviderSwitchHook<'a>,
+    /// Однострочные описания доступных инструментов для промпта хода
+    /// (BR-01, полевой тест 2026-08-14): без перечня модель угадывала
+    /// имена (list_files вместо files.list) и жгла ходы. Пустой список
+    /// валиден — секция просто не добавляется (тесты, заглушки).
+    pub tool_lines: Vec<String>,
 }
 
 /// (инструмент, замаскированные аргументы, замаскированное наблюдение,
@@ -325,8 +330,13 @@ impl AgentStepExecutor<'_> {
         };
         let mut retry_feedback = initial_feedback;
         for attempt in 0..MAX_ATTEMPTS {
-            let prompt =
-                build_turn_prompt(step_id, final_adapter, history, retry_feedback.as_deref());
+            let prompt = build_turn_prompt(
+                step_id,
+                final_adapter,
+                history,
+                retry_feedback.as_deref(),
+                &self.tool_lines,
+            );
             let response = provider.complete(CompletionRequest {
                 system_context: system_context.to_string(),
                 prompt,
@@ -564,6 +574,7 @@ fn build_turn_prompt(
     final_adapter: &ContractAdapter,
     history: &[TurnRecord],
     retry_feedback: Option<&str>,
+    tool_lines: &[String],
 ) -> String {
     let turn_schema = serde_json::to_string_pretty(&schemars::schema_for!(AgentTurnDecision))
         .expect("схема derive-типа всегда сериализуема");
@@ -584,6 +595,13 @@ fn build_turn_prompt(
         name = final_adapter.name,
         version = final_adapter.schema_version,
     );
+
+    // BR-01: перечень доступных имён инструментов — модель не
+    // угадывает; форма строки — «- имя {аргументы} — назначение».
+    if !tool_lines.is_empty() {
+        prompt.push_str("\n\nДоступные инструменты (вызывай ТОЛЬКО их):\n");
+        prompt.push_str(&tool_lines.join("\n"));
+    }
 
     if !history.is_empty() {
         prompt.push_str("\n\nИстория ходов:\n");
@@ -609,6 +627,24 @@ fn build_turn_prompt(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // BR-01 (полевой тест 2026-08-14): промпт хода перечисляет имена.
+    #[test]
+    fn turn_prompt_lists_available_tool_names() {
+        let adapter = &crate::structured_llm::contract_registry()[0];
+        let prompt = build_turn_prompt(
+            "s1",
+            adapter,
+            &[],
+            None,
+            &["- files.read {path} — прочитать файл".to_string()],
+        );
+        assert!(prompt.contains("Доступные инструменты"));
+        assert!(prompt.contains("files.read"));
+        // Пустой перечень — секции нет (обратная совместимость тестов).
+        let bare = build_turn_prompt("s1", adapter, &[], None, &[]);
+        assert!(!bare.contains("Доступные инструменты"));
+    }
 
     /// Пустой реестр — прежнее поведение (контроль утечек no-op).
     static EMPTY_MASKER: berimor_secrets::Masker = berimor_secrets::Masker::new();
@@ -735,6 +771,7 @@ mod tests {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
             on_provider_switch: None,
+            tool_lines: vec![],
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -768,6 +805,7 @@ mod tests {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
             on_provider_switch: None,
+            tool_lines: vec![],
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -797,6 +835,7 @@ mod tests {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
             on_provider_switch: None,
+            tool_lines: vec![],
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -822,6 +861,7 @@ mod tests {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
             on_provider_switch: None,
+            tool_lines: vec![],
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -850,6 +890,7 @@ mod tests {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
             on_provider_switch: None,
+            tool_lines: vec![],
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -884,6 +925,7 @@ mod tests {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
             on_provider_switch: None,
+            tool_lines: vec![],
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -921,6 +963,7 @@ mod tests {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
             on_provider_switch: None,
+            tool_lines: vec![],
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,
@@ -951,6 +994,7 @@ mod tests {
             secrets: &EMPTY_MASKER,
             on_tool_turn: None,
             on_provider_switch: None,
+            tool_lines: vec![],
             pool: &pool,
             providers: &providers,
             context: &SimpleContextBuilder,

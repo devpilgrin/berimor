@@ -144,6 +144,7 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         secrets: bundle.masker.as_ref(),
         on_tool_turn: None,
         on_provider_switch: None,
+        tool_lines: crate::chat::tool_prompt_lines(config),
     };
     let wasm_host = WasmHost::new(
         bundle.dispatch.clone(),
