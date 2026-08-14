@@ -14,7 +14,7 @@ Agent universel pour LLM à noyau déterministe : le routage des tâches, le bra
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-927%20green-brightgreen)](#infrastructure-du-projet)
+[![Tests](https://img.shields.io/badge/tests-945%20green-brightgreen)](#infrastructure-du-projet)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -126,6 +126,10 @@ Le principal mode « de combat » de berimor est le **processus** : un plan YAML
 
 Le journal d'événements couvre le checkpointing avec marge : toute exécution peut reprendre exactement à l'endroit de l'interruption et reproduire l'état à tout moment (replay).
 
+**Limite honnête de l'approche** (d'après les résultats des tests de terrain indépendants de la 0.27.0) : le contrat vérifie **la forme, pas le sens** — `branch` route le code, mais selon une valeur proposée par le modèle ; la confiance n'est pas éliminée, mais rétrogradée au niveau de « la valeur sur laquelle la route est calculée ». Protégez en plus les routes sémantiquement significatives : par des règles de politique du contrat (plages/énumérations), une étape de vérification par un modèle puissant ou un `human_gate`. La deuxième limite — les modèles faibles (locaux) : ils tiennent un contrat strict de forme simple, mais le protocole interne de la boucle libre exige un modèle de classe moyenne ou supérieure ; le scénario « entièrement local » est aujourd'hui réaliste pour les étapes `llm_structured`, pas pour `agent_step`.
+
+**Contrats depuis la configuration** (0.28.0) : vos propres contrats sans fork ni rebuild — section `[[contracts]]` dans la config avec JSON Schema (inline `schema` ou `schema_path`), ensuite `llm_structured`/`codeact` y font référence par le nom au même titre que les contrats du code. La sortie du modèle est validée selon le schéma (crate `jsonschema`), l'erreur de validation part dans le prompt de retry — le même cycle de médiation. Limites : pas de règles policy (références à l'état) ni de versions de schémas pour les contrats de config, `publishable` — l'objet entier, le registre est lu au démarrage (changement de config — nouveau lancement). Exemple — [`fixtures/golden/processes/config-contracts/`](fixtures/golden/processes/config-contracts/).
+
 **Les idiomes de graphe comme processus.** Les patterns classiques (routing, prompt chaining, parallelization, orchestrator-workers, evaluator-optimizer) s'expriment sans nouveau code : `llm_structured` écrit une décision de routage dans l'état → `branch` route selon la valeur validée ; evaluator-optimizer est un `loop` avec verdict ; orchestrator-workers est `parallel` + join. Des exemples de processus sont dans [`fixtures/golden/processes/`](fixtures/golden/processes/).
 
 ### Architecture de l'agent
@@ -165,7 +169,7 @@ Le modèle propose un `verdict` — mais seule une valeur ayant passé le contra
 
 **Workspace Rust à raison d'un crate par composant** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. Le module WASM invité (`codeact-guest/`) vit comme un crate séparé et est commité en tant qu'artefact prêt à l'emploi — le build normal n'est pas ralenti.
 
-**Discipline de vérification.** Chaque release : `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (927 tests : unitaires, d'intégration, e2e via le vrai binaire, fixtures golden de processus et d'entrées malveillantes). Les composants critiques passent une revue indépendante obligatoire. Audit complet autonome (`docs/audit-2026-07-31.md`) — **tous les constats sont corrigés ou documentés en connaissance de cause**.
+**Discipline de vérification.** Chaque release : `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (945 tests : unitaires, d'intégration, e2e via le vrai binaire, fixtures golden de processus et d'entrées malveillantes). Les composants critiques passent une revue indépendante obligatoire. Audit complet autonome (`docs/audit-2026-07-31.md`) — **tous les constats sont corrigés ou documentés en connaissance de cause**.
 
 **Supply chain comme les grands.** Releases multiplateformes (Linux x64/arm64, macOS arm64, Windows x64) avec signature keyless cosign/sigstore — aucune clé privée n'existe nulle part. Vérification : `berimor verify <archive>`. Publication npm avec provenance, SBOM (CycloneDX) dans le pipeline, l'auto-mise à jour (`berimor self-update`) est implémentée sur les primitives du Process Engine — même journal et même reprise après panne que pour les processus ordinaires, et non un script ad hoc.
 
@@ -248,7 +252,7 @@ Commandes utiles du chat : `/help`, `/models`, `/skills`, `/config`, `/exit`. La
 
 Processus déterministes (plan YAML déclaratif à contrats stricts — le principal mode « combat ») : `berimor run <process.yaml>`. Exemples de processus et de configurations — dans [`fixtures/golden/processes/`](fixtures/golden/processes/) et [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Automatisation par-dessus les processus : `berimor schedule add` + `berimor daemon` — exécution des processus selon un calendrier ; `berimor serve` — service HTTP par-dessus run/schedule/sessions (avec jeton, sans accès anonyme) ; `berimor sessions` — registre des sessions actives de l'hôte ; `berimor trace <instance>` — traçage lisible du journal de n'importe quelle exécution.
+Automatisation par-dessus les processus : `berimor schedule add` + `berimor daemon` — exécution des processus selon un calendrier (le démon et le service HTTP n'ont pas de terminal : une demande de confirmation est traitée comme un refus avec diagnostic — pour automatiser les étapes mutantes, utilisez l'auto-confirmation ciblée dans `.berimor/allow` ou bien le flag `berimor run --non-interactive` / `BERIMOR_NON_INTERACTIVE=1` dans vos scripts) ; `berimor serve` — service HTTP par-dessus run/schedule/sessions (avec jeton, sans accès anonyme) ; `berimor sessions` — registre des sessions actives de l'hôte ; `berimor trace <instance>` — traçage lisible du journal de n'importe quelle exécution.
 
 Extensions en une commande :
 

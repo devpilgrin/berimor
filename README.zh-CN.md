@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-927%20green-brightgreen)](#项目基础设施)
+[![Tests](https://img.shields.io/badge/tests-945%20green-brightgreen)](#项目基础设施)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -126,6 +126,10 @@ berimor 的主要“实战”模式是**流程**：一个以图形式执行的�
 
 事件日志充裕地覆盖了检查点机制：任何运行都可以从中断处精确继续，并将状态重放到任意时刻（replay）。
 
+**方法的诚实边界**（基于 0.27.0 独立实地测试的结果）：契约校验的是**形式，而不是含义**——`branch` 由代码路由，但依据的是模型提出的值；信任并未被消除，而是下沉到“用于计算路由的值”这一层面。对语义上重要的路由，请额外加以保护：契约的 policy 规则（范围/枚举）、强模型的验证步骤或 `human_gate`。第二条边界是弱（本地）模型：简单形式的严格契约它们可以承受，但自由循环的内部协议需要中等及以上级别的模型；“完全本地”的场景目前对 `llm_structured` 步骤是现实的，对 `agent_step` 则不是。
+
+**来自配置的契约**（0.28.0）：无需 fork 和重新编译即可拥有自己的契约——在配置的 `[[contracts]]` 小节中以 JSON Schema 定义（内联 `schema` 或 `schema_path`），之后 `llm_structured`/`codeact` 可以像内置契约一样按名称引用它。模型输出按 schema 校验（crate `jsonschema`），校验错误会进入重试提示词——同一套中介循环。限制：配置契约没有 policy 规则（对状态的引用）和 schema 版本，`publishable` 为整个对象，注册表在启动时读取（修改配置需重新启动）。示例见 [`fixtures/golden/processes/config-contracts/`](fixtures/golden/processes/config-contracts/)。
+
 **图习语即流程。** 经典模式（routing、prompt chaining、parallelization、orchestrator-workers、evaluator-optimizer）无需新代码即可表达：`llm_structured` 将路由决策写入状态 → `branch` 按已验证的值路由；evaluator-optimizer 是带 verdict 的 `loop`；orchestrator-workers 是 `parallel` + join。流程示例见 [`fixtures/golden/processes/`](fixtures/golden/processes/)。
 
 ### 智能体架构
@@ -165,7 +169,7 @@ flowchart LR
 
 **Rust workspace，每个组件一个 crate**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。Guest WASM 模块（`codeact-guest/`）作为独立的 crate 存在，并以预构建产物提交——常规构建不会变慢。
 
-**检查纪律。** 每次发布：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（927 个测试：单元、集成、通过真实二进制的 e2e、流程和恶意输入的黄金夹具）。关键组件必须通过强制性的独立评审。完整的独立审计（`docs/audit-2026-07-31.md`）——**所有发现均已关闭或有意识地记录在案**。
+**检查纪律。** 每次发布：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（945 个测试：单元、集成、通过真实二进制的 e2e、流程和恶意输入的黄金夹具）。关键组件必须通过强制性的独立评审。完整的独立审计（`docs/audit-2026-07-31.md`）——**所有发现均已关闭或有意识地记录在案**。
 
 **成人级的供应链。** 跨平台发布（Linux x64/arm64、macOS arm64、Windows x64），使用 cosign/sigstore 无钥匙签名——私钥在任何地方都不存在。验证：`berimor verify <归档文件>`。npm 发布带 provenance，流水线中包含 SBOM（CycloneDX），自更新（`berimor self-update`）基于 Process Engine 原语实现——与普通流程共享同一套日志与故障恢复，而非临时脚本。
 
@@ -248,7 +252,7 @@ berimor          # = berimor chat：与智能体的交互式对话
 
 确定性流程（带严格契约的声明式 YAML 计划——主要的"实战"模式）：`berimor run <process.yaml>`。流程与配置示例见 [`fixtures/golden/processes/`](fixtures/golden/processes/) 和 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
 
-流程之上的自动化：`berimor schedule add` + `berimor daemon`——按计划执行流程；`berimor serve`——构建在 run/schedule/sessions 之上的 HTTP 服务（带令牌，不允许匿名访问）；`berimor sessions`——主机存活会话的注册表；`berimor trace <实例>`——将任意一次运行的日志以人类可读的形态追踪呈现。
+流程之上的自动化：`berimor schedule add` + `berimor daemon`——按计划执行流程（守护进程和 HTTP 服务没有终端：确认请求会被视为拒绝并附带诊断信息——要自动化修改型步骤，请使用 `.berimor/allow` 中的定点自动确认，或在自己的脚本中使用 `berimor run --non-interactive` / `BERIMOR_NON_INTERACTIVE=1` 标志）；`berimor serve`——构建在 run/schedule/sessions 之上的 HTTP 服务（带令牌，不允许匿名访问）；`berimor sessions`——主机存活会话的注册表；`berimor trace <实例>`——将任意一次运行的日志以人类可读的形态追踪呈现。
 
 一条命令安装扩展：
 

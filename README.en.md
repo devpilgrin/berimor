@@ -14,7 +14,7 @@ A universal LLM agent with a deterministic core: task routing, process branching
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-927%20green-brightgreen)](#project-infrastructure)
+[![Tests](https://img.shields.io/badge/tests-945%20green-brightgreen)](#project-infrastructure)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -126,6 +126,10 @@ Berimor's main "combat" mode is a **process**: a declarative YAML plan executed 
 
 The event journal covers checkpointing with a margin: any run can be resumed exactly from the point of interruption, and the state can be reproduced at any moment (replay).
 
+**Honest boundary of the approach** (based on independent field testing of 0.27.0): a contract checks **form, not meaning** — `branch` routes code, but by a value proposed by the model; trust is not eliminated, but lowered to the level of "the value by which the route is computed". Cover semantically significant routes additionally: with contract policy rules (ranges/enumerations), a verification step by a strong model, or `human_gate`. The second boundary is weak (local) models: they hold up under a strict contract of simple form, but the internal protocol of the free loop requires a mid-class model or better; a "fully local" scenario is realistic today for `llm_structured` steps, not for `agent_step`.
+
+**Contracts from configuration** (0.28.0): custom contracts without forking and rebuilding — a `[[contracts]]` section in the config with JSON Schema (inline `schema` or `schema_path`), then `llm_structured`/`codeact` reference it by name on par with the built-in code ones. Model output is validated against the schema (the `jsonschema` crate), a validation error goes into the retry prompt — the same mediation loop. Limitations: config contracts have no policy rules (state references) or schema versions, `publishable` is the whole object, the registry is read at startup (a config change means a new run). Example — [`fixtures/golden/processes/config-contracts/`](fixtures/golden/processes/config-contracts/).
+
 **Graph idioms as processes.** The classic patterns (routing, prompt chaining, parallelization, orchestrator-workers, evaluator-optimizer) are expressed without new code: `llm_structured` writes the routing decision into state → `branch` routes by the validated value; evaluator-optimizer is a `loop` with a verdict; orchestrator-workers is `parallel` + join. Process examples are in [`fixtures/golden/processes/`](fixtures/golden/processes/).
 
 ### Agent architecture
@@ -165,7 +169,7 @@ The model proposes the `verdict` — but only a value that passed the contract m
 
 **Rust workspace with one crate per component** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. The guest WASM module (`codeact-guest/`) lives as a separate crate and is committed as a ready-made artifact — normal builds are not slowed down.
 
-**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (927 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
+**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (945 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
 
 **Grown-up supply chain.** Cross-platform releases (Linux x64/arm64, macOS arm64, Windows x64) with keyless cosign/sigstore signing — the private key exists nowhere. Verification: `berimor verify <archive>`. npm publication with provenance, SBOM (CycloneDX) in the pipeline, self-update (`berimor self-update`) implemented on Process Engine primitives — the same journal and failure recovery as ordinary processes, not an ad-hoc script.
 
@@ -248,7 +252,7 @@ Useful chat commands: `/help`, `/models`, `/skills`, `/config`, `/exit`. The TUI
 
 Deterministic processes (a declarative YAML plan with strict contracts — the primary "production" mode): `berimor run <process.yaml>`. Examples of processes and configurations are in [`fixtures/golden/processes/`](fixtures/golden/processes/) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Automation on top of processes: `berimor schedule add` + `berimor daemon` — scheduled execution of processes; `berimor serve` — an HTTP service on top of run/schedule/sessions (token-protected, no anonymous access); `berimor sessions` — a registry of live sessions on the host; `berimor trace <instance>` — human-readable journal tracing of any run.
+Automation on top of processes: `berimor schedule add` + `berimor daemon` — scheduled execution of processes (the daemon and the HTTP service have no terminal: a confirmation request is treated as a refusal with diagnostics — to automate mutating steps use targeted auto-confirmation in `.berimor/allow` or the `berimor run --non-interactive` flag / `BERIMOR_NON_INTERACTIVE=1` in your own scripts); `berimor serve` — an HTTP service on top of run/schedule/sessions (token-protected, no anonymous access); `berimor sessions` — a registry of live sessions on the host; `berimor trace <instance>` — human-readable journal tracing of any run.
 
 Extensions with a single command:
 
