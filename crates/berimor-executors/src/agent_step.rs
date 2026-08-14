@@ -273,6 +273,18 @@ impl AgentStepExecutor<'_> {
                     if let Some(on_tool_turn) = self.on_tool_turn {
                         on_tool_turn(&tool, &masked_args, &observation, ok);
                     }
+                    // BR-03 (полевой тест 2026-08-14): ход — в журнал,
+                    // иначе «что делал агент» виден только в памяти
+                    // цикла, а аудит слеп.
+                    if let Some(hook) = self.on_attempt {
+                        hook(berimor_types::event::EventKind::AgentToolTurn {
+                            step_id: step_id.to_string(),
+                            tool: tool.clone(),
+                            args_masked: masked_args.to_string(),
+                            observation_masked: observation.to_string(),
+                            ok,
+                        });
+                    }
                     history.push(TurnRecord {
                         thought: decision.thought,
                         action: format!("tool:{tool}({masked_args})"),

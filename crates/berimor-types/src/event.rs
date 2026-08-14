@@ -115,6 +115,29 @@ pub enum EventKind {
     SecurityEvent {
         detail: String,
     },
+    /// BR-03 (полевой тест 2026-08-14): ход свободного цикла с
+    /// инструментом — аудит «что именно делал агент»: имя инструмента,
+    /// маскированные аргументы и наблюдение (S5/I4), решение
+    /// (исполнен/отклонён). Свёртка состояния игнорирует, как все
+    /// не-`StepApplied`/`Instantiated`.
+    AgentToolTurn {
+        step_id: String,
+        tool: String,
+        args_masked: String,
+        observation_masked: String,
+        ok: bool,
+    },
+    /// BR-03: программа codeact отклонена — маскированный текст и
+    /// причина по стадии (`static_analysis`/`sandbox`). Диагностика
+    /// отказов без внешнего прокси (полевой тест: BR-02 потребовал
+    /// прокси только потому, что этого события не было).
+    CodeActProgramRejected {
+        step_id: String,
+        attempt: u32,
+        stage: String,
+        reason: String,
+        program_masked: String,
+    },
     /// P8 (ADR-0012): инстанс явно переведён на новую версию графа
     /// операцией `migrate_version` — аудит-след «кто, когда, с какой
     /// версии на какую», не патч состояния (свёртка это событие

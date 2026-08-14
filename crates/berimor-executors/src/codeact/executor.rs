@@ -163,6 +163,19 @@ impl CodeActExecutor<'_> {
                 program,
                 &tools.iter().map(String::as_str).collect::<Vec<_>>(),
             ) {
+                // BR-03: отклонённая программа с причиной — в журнал.
+                if let Some(hook) = self.on_attempt {
+                    hook(berimor_types::event::EventKind::CodeActProgramRejected {
+                        step_id: step_id.to_string(),
+                        attempt: attempt as u32 + 1,
+                        stage: "static_analysis".to_string(),
+                        reason: violation.to_string(),
+                        program_masked: self
+                            .secrets
+                            .mask_value(&serde_json::Value::String(program.to_string()))
+                            .to_string(),
+                    });
+                }
                 retry_feedback = Some(format!(
                     "Статический анализ отклонил программу: {violation}. \
                      Перепиши, используя только разрешённые идентификаторы."
@@ -181,6 +194,19 @@ impl CodeActExecutor<'_> {
                 {
                     Ok(value) => value,
                     Err(err) => {
+                        // BR-03: отказ песочницы — в журнал с текстом.
+                        if let Some(hook) = self.on_attempt {
+                            hook(berimor_types::event::EventKind::CodeActProgramRejected {
+                                step_id: step_id.to_string(),
+                                attempt: attempt as u32 + 1,
+                                stage: "sandbox".to_string(),
+                                reason: err.to_string(),
+                                program_masked: self
+                                    .secrets
+                                    .mask_value(&serde_json::Value::String(program.to_string()))
+                                    .to_string(),
+                            });
+                        }
                         retry_feedback = Some(format!(
                             "Программа завершилась с ошибкой при исполнении: {err}. \
                              Проверь программу и попробуй снова."

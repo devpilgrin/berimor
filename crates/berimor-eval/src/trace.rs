@@ -27,6 +27,21 @@ pub struct TraceEntry {
     pub summary: String,
 }
 
+/// Усечь строку для однострочного описания события (по границе
+/// символа, с многоточием) — наблюдения/программы в `AgentToolTurn`/
+/// `CodeActProgramRejected` могут быть длинными.
+pub(crate) fn cap(text: &str, max_chars: usize) -> String {
+    let mut out = String::with_capacity(max_chars.min(text.len()));
+    for (i, ch) in text.chars().enumerate() {
+        if i >= max_chars {
+            out.push('…');
+            return out;
+        }
+        out.push(ch);
+    }
+    out
+}
+
 fn describe(event: &Event) -> TraceEntry {
     let (kind, summary) = match &event.kind {
         EventKind::Instantiated => ("instantiated", "инстанс создан".to_string()),
@@ -72,6 +87,33 @@ fn describe(event: &Event) -> TraceEntry {
             format!("факты консолидированы: {detail}"),
         ),
         EventKind::Snapshot => ("snapshot", "снапшот состояния записан".to_string()),
+        EventKind::AgentToolTurn {
+            step_id,
+            tool,
+            args_masked,
+            observation_masked,
+            ok,
+        } => (
+            "agent_tool_turn",
+            format!(
+                "шаг '{step_id}': {tool}({args_masked}) → {}: {}",
+                if *ok { "ok" } else { "отказ" },
+                crate::trace::cap(observation_masked, 200)
+            ),
+        ),
+        EventKind::CodeActProgramRejected {
+            step_id,
+            attempt,
+            stage,
+            reason,
+            program_masked,
+        } => (
+            "codeact_rejected",
+            format!(
+                "шаг '{step_id}': попытка {attempt} отклонена ({stage}): {reason}; программа: {}",
+                crate::trace::cap(program_masked, 200)
+            ),
+        ),
         EventKind::SecurityEvent { detail } => {
             ("security_event", format!("событие безопасности: {detail}"))
         }
@@ -169,6 +211,46 @@ mod tests {
         let id = ProcessInstanceId("no-such-instance".into());
 
         assert!(trace(&log, &id).unwrap().is_empty());
+    }
+
+    // BR-03 (полевой тест 2026-08-14): ходы цикла и отказы программ
+    // читаются из журнала без внешних средств.
+    #[test]
+    fn trace_renders_agent_tool_turn_and_codeact_rejection() {
+        let log = SqliteEventLog::open_in_memory().unwrap();
+        let id = ProcessInstanceId("inst-br03".into());
+        append(
+            &log,
+            &id,
+            EventKind::AgentToolTurn {
+                step_id: "extract".into(),
+                tool: "files.list".into(),
+                args_masked: "{\"path\": \"meetings/\"}".into(),
+                observation_masked: "m1.md\nm2.md".into(),
+                ok: true,
+            },
+            json!(null),
+        );
+        append(
+            &log,
+            &id,
+            EventKind::CodeActProgramRejected {
+                step_id: "calc".into(),
+                attempt: 2,
+                stage: "static_analysis".into(),
+                reason: "eval запрещён".into(),
+                program_masked: "eval(input)".into(),
+            },
+            json!(null),
+        );
+
+        let entries = trace(&log, &id).unwrap();
+        assert_eq!(entries[0].kind, "agent_tool_turn");
+        assert!(entries[0].summary.contains("files.list"));
+        assert!(entries[0].summary.contains("meetings/"));
+        assert_eq!(entries[1].kind, "codeact_rejected");
+        assert!(entries[1].summary.contains("eval запрещён"));
+        assert!(entries[1].summary.contains("попытка 2"));
     }
 
     #[test]
