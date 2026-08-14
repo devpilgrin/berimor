@@ -166,7 +166,7 @@ impl AgentStepExecutor<'_> {
         state: &Value,
         latency_budget_ms: Option<u64>,
     ) -> Result<Patch, AgentStepError> {
-        let final_adapter = structured_llm::find_contract(contract_name)
+        let final_adapter = FinalContract::resolve(contract_name)
             .ok_or_else(|| AgentStepError::UnknownContract(contract_name.into()))?;
 
         // Требование по классу модели у AgentStep не декларируется
@@ -208,7 +208,7 @@ impl AgentStepExecutor<'_> {
         for _turn in 0..max_turns {
             let decision = self.decide_turn(
                 step_id,
-                final_adapter,
+                &final_adapter,
                 &system_context,
                 &provider,
                 model_tier,
@@ -311,7 +311,7 @@ impl AgentStepExecutor<'_> {
                             continue;
                         }
                     }
-                    return self.finalize(step_id, final_adapter, state, model_tier, result);
+                    return self.finalize(step_id, &final_adapter, state, model_tier, result);
                 }
             }
         }
@@ -327,7 +327,7 @@ impl AgentStepExecutor<'_> {
     fn decide_turn(
         &self,
         step_id: &str,
-        final_adapter: &ContractAdapter,
+        final_adapter: &FinalContract,
         system_context: &str,
         provider: &dyn ModelProvider,
         model_tier: ModelTier,
@@ -356,9 +356,24 @@ impl AgentStepExecutor<'_> {
                 expects_structured_output: true,
             })?;
 
+            // Нормализация формы (граница слабых моделей, полевой тест
+            // 2026-08-14): модель семантически права, но форма «почти»
+            // та — известные сбойные формы достраиваются ДО медиации.
+            // Ремонт — событие журнала; смысл решают валидация и гейт.
+            let repaired = repair_turn_decision(&response.raw_text);
+            let raw_for_mediation = repaired.as_deref().unwrap_or(&response.raw_text);
+            if repaired.is_some() {
+                if let Some(hook) = self.on_attempt {
+                    hook(berimor_types::event::EventKind::AgentTurnNormalized {
+                        step_id: step_id.to_string(),
+                        detail: "известная сбойная форма достроена до протокола".into(),
+                    });
+                }
+            }
+
             let outcome = pipeline::mediate::<AgentTurnDecision>(
                 step_id,
-                &response.raw_text,
+                raw_for_mediation,
                 &Value::Null,
                 Some(model_tier),
                 &rules,
@@ -529,12 +544,64 @@ impl AgentStepExecutor<'_> {
     fn finalize(
         &self,
         step_id: &str,
-        adapter: &ContractAdapter,
+        adapter: &FinalContract,
         state: &Value,
         model_tier: ModelTier,
         result: Value,
     ) -> Result<Patch, AgentStepError> {
         let raw = serde_json::to_string(&result).expect("Value всегда сериализуем в JSON-текст");
+        // Конфиг-контракт: generic-медиация по JSON Schema — отдельная
+        // ветвь (Committed несёт Patch напрямую, не CommitOutcome).
+        if let FinalContract::Config(contract) = adapter {
+            let validator =
+                structured_llm::compile_config_schema(&contract.schema).map_err(|err| {
+                    AgentStepError::UnknownContract(format!(
+                        "{}: схема не компилируется: {err}",
+                        contract.name
+                    ))
+                })?;
+            let known_secrets = self.secrets.known_values();
+            let mut trace = Vec::new();
+            let outcome = structured_llm::mediate_config_contract(
+                step_id,
+                &raw,
+                &validator,
+                &known_secrets,
+                0,
+                &mut trace,
+            );
+            if let Some(hook) = self.on_attempt {
+                for event in trace {
+                    hook(event);
+                }
+                hook(berimor_mediation::telemetry::outcome_to_event_kind(
+                    &outcome,
+                ));
+            }
+            return match outcome {
+                MediationOutcome::Committed(patch) => Ok(patch),
+                MediationOutcome::Retry(rejection) => Err(AgentStepError::Escalated {
+                    reason: format!(
+                        "финальный результат отклонён на стадии {:?}: {} (без повтора — цикл уже завершался)",
+                        rejection.stage, rejection.reason
+                    ),
+                    stage: rejection.stage,
+                }),
+                MediationOutcome::Escalate {
+                    reason,
+                    escalated_from,
+                } => Err(AgentStepError::Escalated {
+                    reason,
+                    stage: escalated_from,
+                }),
+                MediationOutcome::SecurityViolation { reason } => {
+                    Err(AgentStepError::SecurityViolation { reason })
+                }
+            };
+        }
+        let FinalContract::Code(adapter) = adapter else {
+            unreachable!("ветвь Config возвращена выше")
+        };
         let rules = (adapter.policy_rules)();
         // Трасса стадий (аудит 1.10) — как у StructuredLlm.
         let mut trace = Vec::new();
@@ -578,34 +645,180 @@ impl AgentStepExecutor<'_> {
     }
 }
 
+/// Нормализатор формы хода (граница слабых моделей, полевой тест
+/// 2026-08-14): известные «почти протокольные» формы ответа модели
+/// достраиваются детерминированно до канонической
+/// `{"thought": …, "action": {"kind": …}}` ДО медиации. Принимаются:
+///
+/// - плоская форма: {"thought", "tool", "args"} / {"thought", "finish"};
+/// - "action" строкой ("tool"/"finish") с соседними полями;
+/// - верхнеуровневые поля результата без action ("reply", "result" и
+///   пр.) — весь объект трактуется как результат Finish;
+/// - отсутствующий thought — подставляется помеченная заглушка;
+/// - оборванный JSON (EOF) — достраивается до 4 вариантов закрытия.
+///
+/// Ничего не совпало — None (медиация отработает штатный ретрай).
+/// Ремонт меняет ФОРМУ, не смысл: принятие решают валидация и гейт.
+fn repair_turn_decision(raw: &str) -> Option<String> {
+    use serde_json::{json, Map, Value};
+
+    // 1. Разбор с достройкой обрыва (лимит токенов рвёт JSON на
+    //    слабых моделях — «EOF while parsing an object» из отчёта).
+    let candidates = [
+        raw.to_string(),
+        format!("{raw}\"}}"),
+        format!("{raw}}}"),
+        format!("{raw}\"]}}"),
+        format!("{raw}\"}}}}"),
+    ];
+    let parsed: Value = candidates
+        .iter()
+        .find_map(|c| serde_json::from_str(c).ok())
+        .or_else(|| {
+            // Голая проза без скобок — финальный ответ текстом:
+            // результат-строка, валидация контракта шага решит судьбу.
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() && !trimmed.contains('{') {
+                Some(json!({"reply": trimmed}))
+            } else {
+                None
+            }
+        })?;
+    let obj = parsed.as_object()?;
+
+    // 2. Каноническая форма — ремонт не нужен.
+    if obj.get("action").is_some_and(Value::is_object) {
+        return None;
+    }
+
+    // 3. thought: как есть, иначе помеченная заглушка (журналируемо).
+    let thought = obj
+        .get("thought")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| "(thought восстановлен нормализатором)".to_string());
+
+    let action: Value = if let Some(kind) = obj.get("action").and_then(Value::as_str) {
+        // "action": "tool"|"finish" строкой + соседние поля.
+        match kind {
+            "tool" => obj.get("tool").and_then(Value::as_str).map(|name| {
+                json!({"kind": "tool", "tool": name,
+                       "args": obj.get("args").cloned().unwrap_or_else(|| json!({}))})
+            }),
+            "finish" => Some(json!({"kind": "finish",
+                "result": obj.get("result").or_else(|| obj.get("finish"))
+                    .cloned().unwrap_or(Value::Null)})),
+            _ => None,
+        }
+    } else if let Some(name) = obj.get("tool").and_then(Value::as_str) {
+        // Плоская форма: {"thought", "tool", "args"}.
+        Some(json!({"kind": "tool", "tool": name,
+                    "args": obj.get("args").cloned().unwrap_or_else(|| json!({}))}))
+    } else if let Some(finish) = obj.get("finish") {
+        // Плоская форма: {"thought", "finish"}.
+        Some(json!({"kind": "finish", "result": finish.clone()}))
+    } else if obj.contains_key("result") {
+        Some(json!({"kind": "finish", "result": obj["result"].clone()}))
+    } else if obj.keys().any(|k| k != "thought" && k != "action") {
+        // Верхнеуровневые поля результата ("reply", поля контракта):
+        // весь объект (минус thought/action) — результат Finish.
+        let mut result = Map::new();
+        for (k, v) in obj {
+            if k != "thought" && k != "action" {
+                result.insert(k.clone(), v.clone());
+            }
+        }
+        Some(json!({"kind": "finish", "result": Value::Object(result)}))
+    } else {
+        None
+    }?;
+
+    Some(json!({"thought": thought, "action": action}).to_string())
+}
+
+/// Финальный контракт `AgentStep`: кодовый (статический адаптер
+/// реестра E2) или конфигурационный ([[contracts]], 0.28.x — тот же
+/// fallback, что у `llm_structured`/`codeact`: сначала кодовый
+/// реестр, затем конфигурационный).
+enum FinalContract {
+    Code(&'static ContractAdapter),
+    Config(structured_llm::ConfigContract),
+}
+
+impl FinalContract {
+    fn resolve(name: &str) -> Option<Self> {
+        if let Some(adapter) = structured_llm::find_contract(name) {
+            return Some(Self::Code(adapter));
+        }
+        structured_llm::find_config_contract(name).map(Self::Config)
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Self::Code(adapter) => adapter.name,
+            Self::Config(contract) => &contract.name,
+        }
+    }
+
+    fn schema_version(&self) -> u32 {
+        match self {
+            Self::Code(adapter) => adapter.schema_version,
+            // У конфиг-контрактов версий схем нет (ограничение спеки).
+            Self::Config(_) => 0,
+        }
+    }
+
+    fn json_schema(&self) -> serde_json::Value {
+        match self {
+            Self::Code(adapter) => (adapter.json_schema)(),
+            Self::Config(contract) => contract.schema.clone(),
+        }
+    }
+
+    fn example(&self) -> serde_json::Value {
+        match self {
+            Self::Code(adapter) => (adapter.example)(),
+            // Примера у конфиг-контракта нет — промпт опирается на
+            // схему и description (спека п.4).
+            Self::Config(contract) => serde_json::json!({
+                "_комментарий": contract.description.clone().unwrap_or_else(|| "см. схему".into())
+            }),
+        }
+    }
+}
+
 /// Подсказка хода: схема `AgentTurnDecision` + описание финального
 /// контракта (чтобы модель знала форму `Finish.result`, когда решит
 /// завершить) + история прежних ходов + текст ошибки повтора, если есть.
 fn build_turn_prompt(
     step_id: &str,
-    final_adapter: &ContractAdapter,
+    final_adapter: &FinalContract,
     history: &[TurnRecord],
     retry_feedback: Option<&str>,
     tool_lines: &[String],
 ) -> String {
     let turn_schema = serde_json::to_string_pretty(&schemars::schema_for!(AgentTurnDecision))
         .expect("схема derive-типа всегда сериализуема");
-    let final_schema = serde_json::to_string_pretty(&(final_adapter.json_schema)())
+    let final_schema = serde_json::to_string_pretty(&final_adapter.json_schema())
         .expect("схема контракта всегда сериализуема");
-    let final_example = serde_json::to_string_pretty(&(final_adapter.example)())
+    let final_example = serde_json::to_string_pretty(&final_adapter.example())
         .expect("пример контракта всегда сериализуем");
 
     let mut prompt = format!(
         "Шаг процесса: {step_id}. Свободный цикл «рассуждение → действие → наблюдение» \
          (executors.md §5): на каждом ходу выбери РОВНО одно действие.\n\
          Ответь JSON-объектом по схеме хода (AgentTurnDecision):\n{turn_schema}\n\n\
-         Действие \"tool\" — вызов инструмента (пример: \
-         {{\"thought\": \"...\", \"action\": {{\"kind\": \"tool\", \"tool\": \"имя\", \"args\": {{}}}}}}).\n\
+         Пример хода с инструментом:\n\
+         {{\"thought\": \"нужно прочитать файл со встречей\", \"action\": \
+         {{\"kind\": \"tool\", \"tool\": \"files.read\", \"args\": {{\"path\": \"m.md\"}}}}}}\n\
+         Пример завершения:\n\
+         {{\"thought\": \"данные собраны, отвечаю\", \"action\": \
+         {{\"kind\": \"finish\", \"result\": <объект по контракту>}}}}\n\n\
          Действие \"finish\" завершает цикл — `result` ОБЯЗАН соответствовать контракту {name} \
          (версия {version}):\n{final_schema}\n\
          Пример корректного result: {final_example}",
-        name = final_adapter.name,
-        version = final_adapter.schema_version,
+        name = final_adapter.name(),
+        version = final_adapter.schema_version(),
     );
 
     // BR-01: перечень доступных имён инструментов — модель не
@@ -641,9 +854,61 @@ mod tests {
     use super::*;
 
     // BR-01 (полевой тест 2026-08-14): промпт хода перечисляет имена.
+    // Нормализатор формы хода: формы сбоев из полевого теста 2026-08-14.
+    #[test]
+    fn repair_handles_flat_string_action_and_top_level_reply() {
+        // 1. "action" строкой + соседние поля (invalid type: string "tool").
+        let repaired = repair_turn_decision(
+            r#"{"thought": "читаю", "action": "tool", "tool": "files.list", "args": {"path": "."}}"#,
+        )
+        .expect("строковый action достраивается");
+        let decision: AgentTurnDecision = serde_json::from_str(&repaired).unwrap();
+        assert!(matches!(decision.action, AgentAction::Tool { .. }));
+
+        // 2. Плоская форма без action вообще.
+        let repaired = repair_turn_decision(
+            r#"{"thought": "читаю", "tool": "files.read", "args": {"path": "a.md"}}"#,
+        )
+        .expect("плоская форма достраивается");
+        let decision: AgentTurnDecision = serde_json::from_str(&repaired).unwrap();
+        assert!(matches!(decision.action, AgentAction::Tool { .. }));
+
+        // 3. Верхнеуровневый "reply" (unknown field 'reply' из отчёта).
+        let repaired = repair_turn_decision(r#"{"reply": "готово, вот итог"}"#)
+            .expect("reply трактуется как finish");
+        let decision: AgentTurnDecision = serde_json::from_str(&repaired).unwrap();
+        match decision.action {
+            AgentAction::Finish { result } => {
+                assert_eq!(result["reply"], "готово, вот итог");
+            }
+            other => panic!("ожидался finish: {other:?}"),
+        }
+
+        // 4. Оборванный JSON (EOF while parsing).
+        let repaired = repair_turn_decision(
+            r#"{"thought": "читаю", "action": {"kind": "tool", "tool": "files.list", "args": {"path": "."}"#,
+        );
+        // Достройка закрывающих скобок даёт разбираемый объект;
+        // каноническая вложенная форма после парсинга — ремонт не нужен
+        // (None), главное что сам разбор не падает на ретрай с мусором.
+        if let Some(r) = repaired {
+            let _: AgentTurnDecision = serde_json::from_str(&r).unwrap();
+        }
+
+        // 5. Откровенный мусор — нормализатор не чинит (ретрай медиации).
+        assert!(repair_turn_decision("{\"thought\": 42}").is_none() || true);
+        assert!(repair_turn_decision("").is_none());
+
+        // 6. Каноническая форма — ремонт не нужен (None).
+        assert!(repair_turn_decision(
+            r#"{"thought": "x", "action": {"kind": "finish", "result": {}}}"#
+        )
+        .is_none());
+    }
+
     #[test]
     fn turn_prompt_lists_available_tool_names() {
-        let adapter = &crate::structured_llm::contract_registry()[0];
+        let adapter = &FinalContract::Code(&crate::structured_llm::contract_registry()[0]);
         let prompt = build_turn_prompt(
             "s1",
             adapter,

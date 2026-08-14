@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-945%20green-brightgreen)](#инфраструктура-проекта)
+[![Tests](https://img.shields.io/badge/tests-946%20green-brightgreen)](#инфраструктура-проекта)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -128,7 +128,9 @@ Deny-таблица деструктивных операций не переи�
 
 **Честная граница подхода** (по результатам независимого полевого тестирования 0.27.0): контракт проверяет **форму, не смысл** — `branch` маршрутизирует код, но по значению, которое предложила модель; доверие не устранено, а спущено на уровень «значение, по которому вычисляется маршрут». Семантически значимые маршруты прикрывайте дополнительно: правилами политики контракта (диапазоны/перечисления), шагом верификации у сильной модели или `human_gate`. Вторая граница — слабые (локальные) модели: строгий контракт простой формы они выдерживают, а внутренний протокол свободного цикла требует модели среднего класса и выше; сценарий «полностью локально» сегодня реален для `llm_structured`-шагов, не для `agent_step`.
 
-**Контракты из конфигурации** (0.28.0): свои контракты без форка и пересборки — секция `[[contracts]]` в конфиге с JSON Schema (inline `schema` или `schema_path`), дальше `llm_structured`/`codeact` ссылаются на неё по имени наравне с кодовыми. Вывод модели валидируется по схеме (crate `jsonschema`), ошибка валидации уходит в промпт повтора — тот же цикл медиации. Ограничения: policy-правил (ссылки на состояние) и версий схем у конфиг-контрактов нет, `publishable` — весь объект, реестр читается при старте (смена конфига — новый запуск). Пример — [`fixtures/golden/processes/config-contracts/`](fixtures/golden/processes/config-contracts/).
+**Контракты из конфигурации** (0.28.0): свои контракты без форка и пересборки — секция `[[contracts]]` в конфиге с JSON Schema (inline `schema` или `schema_path`), дальше `llm_structured`/`codeact`/`agent_step` ссылаются на неё по имени наравне с кодовыми. Вывод модели валидируется по схеме (crate `jsonschema`), ошибка валидации уходит в промпт повтора — тот же цикл медиации. Ограничения: policy-правил (ссылки на состояние) и версий схем у конфиг-контрактов нет, `publishable` — весь объект, реестр читается при старте (смена конфига — новый запуск). Пример — [`fixtures/golden/processes/config-contracts/`](fixtures/golden/processes/config-contracts/).
+
+**Нормализатор формы хода** (0.29.0): слабые модели часто пишут «почти протокольный» ответ — плоскую форму `{"thought", "tool", "args"}`, `"action": "tool"` строкой, верхнеуровневый `reply` или оборванный на лимите токенов JSON. Известные формы достраиваются детерминированно до протокола ДО медиации (ремонт журналируется событием `agent_turn_normalized`; смысл по-прежнему решают валидация и гейт). Промпт хода дополнен парой few-shot примеров.
 
 **Графовые идиомы как процессы.** Классические паттерны (routing, prompt chaining, parallelization, orchestrator-workers, evaluator-optimizer) выражаются без нового кода: `llm_structured` пишет решение-маршрут в состояние → `branch` маршрутизирует по валидированному значению; evaluator-optimizer — это `loop` с вердиктом; orchestrator-workers — `parallel` + join. Примеры процессов — в [`fixtures/golden/processes/`](fixtures/golden/processes/).
 
@@ -169,7 +171,7 @@ flowchart LR
 
 **Rust-workspace по крейту на компонент** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. Гостевой WASM-модуль (`codeact-guest/`) живёт отдельным crate и закоммичен как готовый артефакт — обычная сборка не замедляется.
 
-**Дисциплина проверок.** Каждый релиз: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (945 тестов: юнит, интеграционные, e2e через настоящий бинарник, золотые фикстуры процессов и вредоносных вводов). Критические компоненты проходят обязательное независимое ревью. Полный самостоятельный аудит (`docs/audit-2026-07-31.md`) — **все находки закрыты или осознанно задокументированы**.
+**Дисциплина проверок.** Каждый релиз: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (946 тестов: юнит, интеграционные, e2e через настоящий бинарник, золотые фикстуры процессов и вредоносных вводов). Критические компоненты проходят обязательное независимое ревью. Полный самостоятельный аудит (`docs/audit-2026-07-31.md`) — **все находки закрыты или осознанно задокументированы**.
 
 **Supply chain как у взрослых.** Кросс-платформенные релизы (Linux x64/arm64, macOS arm64, Windows x64) с keyless-подписью cosign/sigstore — приватного ключа не существует нигде. Проверка: `berimor verify <архив>`. npm-публикация с provenance, SBOM (CycloneDX) в пайплайне, самообновление (`berimor self-update`) реализовано на примитивах Process Engine — тот же журнал и восстановление после сбоя, что у обычных процессов, а не ad hoc скрипт.
 

@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-945%20green-brightgreen)](#프로젝트-인프라)
+[![Tests](https://img.shields.io/badge/tests-946%20green-brightgreen)](#프로젝트-인프라)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -128,7 +128,9 @@ berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 
 
 **접근 방식의 정직한 한계**(0.27.0의 독립 필드 테스트 결과에 따름): 계약은 **의미가 아니라 형식**을 검증합니다 — `branch`를 라우팅하는 것은 코드이지만, 그 값을 제안하는 것은 모델입니다. 신뢰는 제거된 것이 아니라 "라우트가 계산되는 값" 수준으로 낮아졌습니다. 의미상 중요한 라우트는 추가로 보호하세요: 계약의 policy 규칙(범위/열거), 강한 모델의 검증 단계 또는 `human_gate`. 두 번째 한계는 약한(로컬) 모델입니다: 단순한 형태의 엄격한 계약은 견뎌내지만, 자유 루프의 내부 프로토콜은 중간 클래스 이상의 모델을 요구합니다. "완전히 로컬" 시나리오는 오늘날 `llm_structured` 단계에는 현실적이지만 `agent_step`에는 그렇지 않습니다.
 
-**구성에서의 계약**(0.28.0): 포크와 재빌드 없이 자체 계약 — 구성의 `[[contracts]]` 섹션에 JSON Schema(인라인 `schema` 또는 `schema_path`)로 정의하고, 이후 `llm_structured`/`codeact`가 내장 계약과 동등하게 이름으로 참조합니다. 모델 출력은 스키마로 검증되고(crate `jsonschema`), 검증 오류는 재시도 프롬프트로 전달됩니다 — 동일한 미디에이션 루프입니다. 제약: 구성 계약에는 policy 규칙(상태 참조)과 스키마 버전이 없고, `publishable`은 객체 전체이며, 레지스트리는 시작 시 읽힙니다(구성 변경은 새로 시작해야 함). 예제 — [`fixtures/golden/processes/config-contracts/`](fixtures/golden/processes/config-contracts/).
+**구성에서의 계약**(0.28.0): 포크와 재빌드 없이 자체 계약 — 구성의 `[[contracts]]` 섹션에 JSON Schema(인라인 `schema` 또는 `schema_path`)로 정의하고, 이후 `llm_structured`/`codeact`/`agent_step`가 내장 계약과 동등하게 이름으로 참조합니다. 모델 출력은 스키마로 검증되고(crate `jsonschema`), 검증 오류는 재시도 프롬프트로 전달됩니다 — 동일한 미디에이션 루프입니다. 제약: 구성 계약에는 policy 규칙(상태 참조)과 스키마 버전이 없고, `publishable`은 객체 전체이며, 레지스트리는 시작 시 읽힙니다(구성 변경은 새로 시작해야 함). 예제 — [`fixtures/golden/processes/config-contracts/`](fixtures/golden/processes/config-contracts/).
+
+**턴 형태 정규화기**(0.29.0): 약한 모델은 종종 "거의 프로토콜에 가까운" 응답을 생성합니다 — 플랫 형태 `{"thought", "tool", "args"}`, 문자열 `"action": "tool"`, 최상위 `reply`, 토큰 한도에서 잘린 JSON. 알려진 형태는 미디에이션 전에 결정론적으로 프로토콜로 복구됩니다(복구는 `agent_turn_normalized` 이벤트로 기록되며, 의미 판단은 여전히 검증과 게이트가 합니다). 턴 프롬프트에 few-shot 예시 한 쌍이 추가되었습니다.
 
 **프로세스로서의 그래프 이디엄.** 고전적 패턴(routing, prompt chaining, parallelization, orchestrator-workers, evaluator-optimizer)은 새 코드 없이 표현됩니다: `llm_structured`가 라우팅 결정을 상태에 기록 → `branch`가 검증된 값으로 라우팅; evaluator-optimizer는 verdict가 있는 `loop`; orchestrator-workers는 `parallel` + join. 프로세스 예제는 [`fixtures/golden/processes/`](fixtures/golden/processes/)에 있습니다.
 
@@ -169,7 +171,7 @@ flowchart LR
 
 **컴포넌트당 하나의 크레이트로 구성된 Rust workspace** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. 게스트 WASM 모듈(`codeact-guest/`)은 별도의 crate로 존재하며 빌드된 아티팩트로 커밋되어 있습니다 — 일반 빌드가 느려지지 않습니다.
 
-**검증 규율.** 모든 릴리스: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace`(945개 테스트: 유닛, 통합, 실제 바이너리를 통한 e2e, 프로세스 및 악의적 입력의 골든 픽스처). 중요 컴포넌트는 필수 독립 리뷰를 거칩니다. 전체 독립 감사(`docs/audit-2026-07-31.md`) — **모든 지적 사항이 해결되었거나 의식적으로 문서화됨**.
+**검증 규율.** 모든 릴리스: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace`(946개 테스트: 유닛, 통합, 실제 바이너리를 통한 e2e, 프로세스 및 악의적 입력의 골든 픽스처). 중요 컴포넌트는 필수 독립 리뷰를 거칩니다. 전체 독립 감사(`docs/audit-2026-07-31.md`) — **모든 지적 사항이 해결되었거나 의식적으로 문서화됨**.
 
 **어른의 서플라이 체인.** 크로스 플랫폼 릴리스(Linux x64/arm64, macOS arm64, Windows x64)에 cosign/sigstore 키리스 서명 — 개인 키는 어디에도 존재하지 않습니다. 검증: `berimor verify <아카이브>`. npm 퍼블리시는 provenance와 함께, 파이프라인에 SBOM(CycloneDX), 셀프 업데이트(`berimor self-update`)는 Process Engine 프리미티브 위에 구현 — 임시 스크립트가 아니라 일반 프로세스와 동일한 저널과 장애 복구.
 

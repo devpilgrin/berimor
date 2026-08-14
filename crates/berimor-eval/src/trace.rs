@@ -101,6 +101,10 @@ fn describe(event: &Event) -> TraceEntry {
                 crate::trace::cap(observation_masked, 200)
             ),
         ),
+        EventKind::AgentTurnNormalized { step_id, detail } => (
+            "agent_turn_normalized",
+            format!("шаг '{step_id}': форма хода достроена нормализатором ({detail})"),
+        ),
         EventKind::CodeActProgramRejected {
             step_id,
             attempt,
