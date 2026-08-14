@@ -89,6 +89,12 @@ enum Command {
         /// Вход процесса — JSON-объект начального состояния.
         #[arg(long)]
         input: Option<String>,
+        /// BR-05 (полевой тест 2026-08-14): неинтерактивный режим —
+        /// запрос подтверждения трактуется как отказ с диагностикой
+        /// (для скриптов/демона без терминала; то же даёт переменная
+        /// окружения BERIMOR_NON_INTERACTIVE=1).
+        #[arg(long)]
+        non_interactive: bool,
     },
     /// Проверить подпись артефакта — вызывается bootstrap-слоем (ADR-0025).
     Verify { artifact: String },
@@ -388,8 +394,14 @@ fn main() -> ExitCode {
             process,
             resume,
             input,
+            non_interactive,
         } => {
-            if let Err(err) = run::run(&resolved_config, &process, &resume, &input) {
+            // BR-05: флаг ИЛИ переменная окружения (демон/скрипты без
+            // терминала, чтобы не править вызовы).
+            let non_interactive =
+                non_interactive || std::env::var_os("BERIMOR_NON_INTERACTIVE").is_some();
+            if let Err(err) = run::run(&resolved_config, &process, &resume, &input, non_interactive)
+            {
                 eprintln!("[berimor] {err}");
                 // Находка 3.16 аудита: отказ человека на human_gate —
                 // отличимый код 2, не «сбой» (1): скрипты различают

@@ -73,6 +73,7 @@ pub fn run(
     process_path: &str,
     resume: &Option<String>,
     input: &Option<String>,
+    non_interactive: bool,
 ) -> Result<(), RunError> {
     let process_text =
         std::fs::read_to_string(process_path).map_err(|err| RunError::ReadProcess {
@@ -112,6 +113,7 @@ pub fn run(
             })?),
             session_id.clone(),
         )),
+        non_interactive,
     )?;
     let providers = bundle.providers();
 
@@ -354,15 +356,18 @@ impl ExecutorBundle {
 }
 
 pub(crate) fn build_executor_bundle(config: &Config) -> Result<ExecutorBundle, RunError> {
-    build_executor_bundle_with_session(config, None)
+    build_executor_bundle_with_session(config, None, false)
 }
 
 /// Сборка бандла с опциональным сессионным контекстом (§20.22 v2):
 /// Some((journal, session_id)) — builtin-диспетчер журналирует
 /// FileTouched/FileObserved; None — поведение как раньше.
+/// `non_interactive` (BR-05): подтверждение трактуется как отказ с
+/// диагностикой — режим для `berimor run --non-interactive` и демона.
 pub(crate) fn build_executor_bundle_with_session(
     config: &Config,
     session: Option<(std::sync::Arc<SqliteEventLog>, String)>,
+    non_interactive: bool,
 ) -> Result<ExecutorBundle, RunError> {
     let workspace_root = std::env::current_dir()
         .and_then(|p| p.canonicalize())
@@ -549,6 +554,7 @@ pub(crate) fn build_executor_bundle_with_session(
     let gate = std::sync::Arc::new(gate);
     let confirmer = std::sync::Arc::new(TerminalConfirmer {
         masker: std::sync::Arc::clone(&masker),
+        non_interactive,
     });
 
     // agents.run (§20.17): обёртка над композитом — поручение субагенту
@@ -724,19 +730,30 @@ impl engine::StepExecutor for CliExecutor<'_> {
 }
 
 /// Подтверждение в терминале: «да» — opt-in, всё остальное (включая
-/// EOF) — отказ.
+/// EOF) — отказ. `non_interactive` (BR-05, полевой тест 2026-08-14):
+/// отказ сразу, с внятной диагностикой — режим демона/скриптов без
+/// терминала, вместо молчаливого зависания на чтении stdin.
 pub(crate) struct TerminalConfirmer {
     /// Третья точка маскировки (S5, mediation.md §4.3): текст
     /// подтверждения для человека не должен нести значения секретов.
     /// `action.args` уже замаскирован вызывающим (`tool_only`), `reason`
     /// (evidence deny-анализатора — фрагмент команды) маскируем здесь.
     pub(crate) masker: std::sync::Arc<berimor_secrets::Masker>,
+    pub(crate) non_interactive: bool,
 }
 
 impl ConfirmationHandler for TerminalConfirmer {
     fn confirm(&self, action: &ProposedAction, reason: &str) -> bool {
         eprintln!("[berimor] capability: {}", self.masker.mask_text(reason));
         eprintln!("[berimor] действие: {} {}", action.tool, action.args);
+        if self.non_interactive {
+            eprintln!(
+                "[berimor] неинтерактивный режим: подтверждение невозможно — отказ. \
+                 Интерактивно: запустите без --non-interactive; автоматизация: \
+                 точечное автоподтверждение в .berimor/allow."
+            );
+            return false;
+        }
         ask_line("[berimor] подтвердить? [y/N] ")
     }
 }
@@ -1188,6 +1205,28 @@ fn resolve_provider_key(
     // (точка 4) обязан поймать его в выводе модели.
     masker.register(Secret::new(key.reveal().to_string()));
     Ok(Some(key))
+}
+
+#[cfg(test)]
+mod non_interactive_confirmer_tests {
+    use super::*;
+
+    // BR-05 (полевой тест 2026-08-14): без терминала — немедленный
+    // отказ, без чтения stdin (не зависает).
+    #[test]
+    fn non_interactive_confirmer_denies_immediately() {
+        let confirmer = TerminalConfirmer {
+            masker: std::sync::Arc::new(berimor_secrets::Masker::new()),
+            non_interactive: true,
+        };
+        let action = ProposedAction {
+            tool: "files.write".into(),
+            args: serde_json::json!({"path": "a.txt"}),
+            mutates: true,
+        };
+        // Вернуть false мгновенно — если бы читал stdin, тест висел бы.
+        assert!(!confirmer.confirm(&action, "mutation"));
+    }
 }
 
 #[cfg(test)]

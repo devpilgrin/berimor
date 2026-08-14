@@ -538,6 +538,7 @@ fn run_repl(
     let bundle = crate::run::build_executor_bundle_with_session(
         config,
         session_journal.map(|j| (j.clone(), session_id.to_string())),
+        false,
     )?;
     let storage =
         SqliteEventLog::open(&config.storage_path).map_err(|err| RunError::OpenStorage {

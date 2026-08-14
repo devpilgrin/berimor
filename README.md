@@ -250,7 +250,7 @@ berimor          # = berimor chat: интерактивный диалог с а
 
 Детерминированные процессы (декларативный YAML-план со строгими контрактами — основной «боевой» режим): `berimor run <process.yaml>`. Примеры процессов и конфигураций — в [`fixtures/golden/processes/`](fixtures/golden/processes/) и [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-Автоматизация поверх процессов: `berimor schedule add` + `berimor daemon` — исполнение процессов по расписанию; `berimor serve` — HTTP-сервис поверх run/schedule/sessions (с токеном, без анонимного доступа); `berimor sessions` — реестр живых сессий хоста; `berimor trace <инстанс>` — человекочитаемая трассировка журнала любого прогона.
+Автоматизация поверх процессов: `berimor schedule add` + `berimor daemon` — исполнение процессов по расписанию (у демона и HTTP-сервиса нет терминала: запрос подтверждения трактуется как отказ с диагностикой — для автоматизации мутирующих шагов используйте точечное автоподтверждение в `.berimor/allow` либо флаг `berimor run --non-interactive` / `BERIMOR_NON_INTERACTIVE=1` в своих скриптах); `berimor serve` — HTTP-сервис поверх run/schedule/sessions (с токеном, без анонимного доступа); `berimor sessions` — реестр живых сессий хоста; `berimor trace <инстанс>` — человекочитаемая трассировка журнала любого прогона.
 
 Расширения одной командой:
 

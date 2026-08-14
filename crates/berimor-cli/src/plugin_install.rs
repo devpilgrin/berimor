@@ -254,6 +254,9 @@ pub fn run(
     let masker = std::sync::Arc::new(masker);
     let confirmer = TerminalConfirmer {
         masker: std::sync::Arc::clone(&masker),
+        // Установка плагина — интерактивная по определению (подпись,
+        // ACL-манифест показывается человеку).
+        non_interactive: false,
     };
 
     let executor = PluginInstallExecutor {

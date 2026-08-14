@@ -184,7 +184,9 @@ pub fn run_daemon(config: &Config, once: bool, tick_cap_ms: i64) -> Result<(), S
             // Прогон — обычный путь berimor run: instantiate → цикл →
             // Finished/Failed в общем журнале. Ошибка — видна в журнале
             // и stderr, демон продолжает (не умирает от одного сбоя).
-            if let Err(err) = run::run(config, &process_path, &None, &Some(input)) {
+            // BR-05: у демона нет терминала — подтверждение = отказ с
+            // диагностикой, а не молчаливое зависание (полевой тест).
+            if let Err(err) = run::run(config, &process_path, &None, &Some(input), true) {
                 eprintln!(
                     "[berimor] расписание {}: прогон завершился ошибкой: {err}",
                     schedule.id.0

@@ -151,6 +151,9 @@ pub fn run(config: &Config, resume: &Option<String>) -> Result<(), SelfUpdateRun
     let masker = std::sync::Arc::new(masker);
     let confirmer = TerminalConfirmer {
         masker: std::sync::Arc::clone(&masker),
+        // self-update — интерактивная команда (подтверждение
+        // самоизменения показывается человеку).
+        non_interactive: false,
     };
 
     let executor = SelfUpdateExecutor {

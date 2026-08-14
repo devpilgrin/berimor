@@ -257,7 +257,9 @@ fn handle_run(stream: &mut TcpStream, config: &Config, body: &[u8]) {
     };
     let input = payload.get("input").map(|v| v.to_string());
 
-    match crate::run::run(config, process, &None, &input) {
+    // HTTP-сервис — по определению без терминала: подтверждение =
+    // отказ с диагностикой (BR-05, тот же случай, что демон).
+    match crate::run::run(config, process, &None, &input, true) {
         Ok(()) => write_json(stream, 200, &json!({"status": "finished"})),
         Err(crate::run::RunError::HumanDeclined) => write_json(
             stream,
