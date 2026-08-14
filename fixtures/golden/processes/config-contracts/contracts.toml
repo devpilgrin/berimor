@@ -1,0 +1,18 @@
+# Конфиг с контрактом из примера: копировать в .berimor/config.toml
+# рабочей директории (providers/secrets — из глобального конфига).
+[[contracts]]
+name = "MeetingMinutes"
+description = "Протокол встречи: поручения с ответственными и сроками"
+schema = """
+{"type":"object","additionalProperties":false,
+ "required":["topic","actions"],
+ "properties":{
+   "topic":{"type":"string"},
+   "actions":{"type":"array","minItems":1,"items":{
+     "type":"object","additionalProperties":false,
+     "required":["what","who"],
+     "properties":{
+       "what":{"type":"string"},
+       "who":{"type":"string"},
+       "deadline":{"type":"string"}}}}}}
+"""

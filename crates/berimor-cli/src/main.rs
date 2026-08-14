@@ -332,6 +332,29 @@ fn main() -> ExitCode {
         }
     };
 
+    // Контракты из конфигурации (спека config-contracts, 2026-08-14):
+    // регистрация в реестре E2 один раз, ДО диспетчеризации команд —
+    // run/chat/observe/daemon/serve видят один и тот же состав.
+    // Объявления уже проверены при загрузке (config::load), поэтому
+    // повторная ошибка разбора здесь невозможна — expect осознанный.
+    berimor_executors::structured_llm::set_config_contracts(
+        resolved_config
+            .contracts
+            .iter()
+            .map(|contract| {
+                berimor_executors::structured_llm::ConfigContract::new(
+                    contract.name.clone(),
+                    contract.description.clone(),
+                    contract
+                        .schema
+                        .as_deref()
+                        .expect("schema_path разрешён в inline при загрузке"),
+                )
+                .expect("контракты конфигурации проверены при загрузке")
+            })
+            .collect(),
+    );
+
     // Без подкоманды — chat (§20.13).
     match cli.command.unwrap_or(Command::Chat) {
         Command::Setup => {

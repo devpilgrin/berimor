@@ -21,12 +21,13 @@ use berimor_model_pool::ModelPool;
 use berimor_types::{
     contract::Contract,
     executor::ModelProvider,
-    mediation::{MediationOutcome, MediationStage},
+    mediation::{MediationOutcome, MediationRejection, MediationStage},
     model::{CompletionRequest, ModelError, ModelTier, ModelTierRequirement},
     step::Patch,
 };
 use serde_json::Value;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// До 2 повторов на parse/schema — mediation.md §5 (та же константа, что
 /// лимитирует `pipeline::mediate`; цикл здесь — исполнитель той таблицы).
@@ -211,6 +212,158 @@ pub fn find_contract(name: &str) -> Option<&'static ContractAdapter> {
     contract_registry().iter().find(|a| a.name == name)
 }
 
+// --- Контракты из конфигурации ([[contracts]]) --------------------------
+//
+// Спека: docs/rnd/config-contracts-spec.md (2026-08-14, полевой тест
+// 0.27.0). Оператор объявляет контракт JSON Schema в конфигурации и
+// использует его в `llm_structured`/`codeact` наравне с кодовыми.
+
+/// Контракт, объявленный оператором в конфигурации (`[[contracts]]`):
+/// JSON Schema без derive-типа. Идёт отдельным generic-путём
+/// (parse → jsonschema-валидация → Patch), НЕ через [`ContractAdapter`] —
+/// тот типстёрт под конкретные типы M1 и несёт fn-указатели на
+/// типизированную медиацию, которой у свободной JSON Schema нет.
+#[derive(Debug, Clone)]
+pub struct ConfigContract {
+    pub name: String,
+    pub description: Option<String>,
+    pub schema: Value,
+}
+
+/// Ошибка объявления конфиг-контракта — текст уходит в ошибку загрузки
+/// конфигурации (спека п.2: «понятный текст»).
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigContractError {
+    #[error("схема не парсится как JSON: {source}")]
+    SchemaNotJson { source: serde_json::Error },
+    #[error("схема не компилируется как JSON Schema: {0}")]
+    SchemaInvalid(String),
+}
+
+impl ConfigContract {
+    /// Разбор объявления из конфигурации: схема обязана парситься как
+    /// JSON и компилироваться `jsonschema::validator_for` — битая схема
+    /// становится ошибкой загрузки конфигурации, не отложенным сбоем
+    /// шага процесса (спека п.2).
+    pub fn new(
+        name: impl Into<String>,
+        description: Option<String>,
+        schema_json: &str,
+    ) -> Result<Self, ConfigContractError> {
+        let schema: Value = serde_json::from_str(schema_json)
+            .map_err(|source| ConfigContractError::SchemaNotJson { source })?;
+        compile_config_schema(&schema).map_err(ConfigContractError::SchemaInvalid)?;
+        Ok(Self {
+            name: name.into(),
+            description,
+            schema,
+        })
+    }
+}
+
+/// Компиляция JSON Schema конфиг-контракта — отдельно от конструктора,
+/// чтобы и загрузка конфигурации (berimor-cli) валидировала схему при
+/// чтении файла, и исполнители (StructuredLlm/CodeAct) собирали
+/// валидатор один раз на `execute`, а не на каждую попытку цикла.
+pub(crate) fn compile_config_schema(schema: &Value) -> Result<jsonschema::Validator, String> {
+    jsonschema::validator_for(schema).map_err(|err| err.to_string())
+}
+
+/// Реестр конфиг-контрактов запуска: CLI наполняет один раз при старте
+/// (main.rs, до диспетчеризации команд run/chat/observe/daemon/serve).
+/// OnceLock, не RwLock: состав контрактов — факт запуска, как и у
+/// кодового реестра; перезагрузка конфигурации на лету (chat,
+/// `/models add`) его не меняет — смена контрактов требует нового
+/// запуска (задокументировано в docs/arch/process-engine.md).
+static CONFIG_CONTRACTS: OnceLock<Vec<ConfigContract>> = OnceLock::new();
+
+/// Регистрация конфиг-контрактов — вызывается один раз при старте CLI.
+/// Повторный `set` молча не проходит (OnceLock): тесты одного бинаря
+/// делят процесс и наполняют реестр идемпотентно одинаковым составом.
+pub fn set_config_contracts(contracts: Vec<ConfigContract>) {
+    let _ = CONFIG_CONTRACTS.set(contracts);
+}
+
+/// Поиск конфиг-контракта по имени — fallback ПОСЛЕ промаха кодового
+/// [`find_contract`] (спека п.4; совпадение имён с кодовыми отклоняется
+/// ещё при загрузке конфигурации). Возвращает клон, не ссылку: реестр
+/// за OnceLock, `'static`-ссылку без утечки не выдать, а контракт дешёв.
+pub fn find_config_contract(name: &str) -> Option<ConfigContract> {
+    CONFIG_CONTRACTS
+        .get()?
+        .iter()
+        .find(|c| c.name == name)
+        .cloned()
+}
+
+/// Generic-медиация конфиг-контракта (спека п.4): parse (тот же parser
+/// berimor-mediation, что у кодового пути) → валидация скомпилированной
+/// JSON Schema → `Patch { step_id, changes: объект }`. Policy-правил
+/// (межполевых и ссылок на состояние) у конфиг-контрактов нет —
+/// задокументированное ограничение; контроль утечек секретов (S5)
+/// сохраняется: граница безопасности не зависит от способа объявления
+/// контракта. publishable = весь объект (спека п.4): отдельного
+/// публикуемого представления у generic-контракта нет, решение о
+/// публикации принимает вызывающий код процесса.
+pub(crate) fn mediate_config_contract(
+    step_id: &str,
+    raw: &str,
+    validator: &jsonschema::Validator,
+    known_secrets: &[&str],
+    attempt: u8,
+    trace: &mut Vec<berimor_types::event::EventKind>,
+) -> MediationOutcome<Patch> {
+    let parsed = match berimor_mediation::parse::parse(raw) {
+        Ok(value) => value,
+        Err(err) => return retry_or_escalate(MediationStage::Parse, err.to_string(), attempt),
+    };
+    trace.push(berimor_types::event::EventKind::MediationParsed);
+
+    let errors: Vec<String> = validator
+        .iter_errors(&parsed)
+        .map(|err| err.to_string())
+        .collect();
+    if !errors.is_empty() {
+        return retry_or_escalate(MediationStage::Schema, errors.join("; "), attempt);
+    }
+    trace.push(berimor_types::event::EventKind::MediationValidated);
+
+    if let Err(err) = berimor_mediation::policy::check_no_leaked_secrets(&parsed, known_secrets) {
+        return MediationOutcome::SecurityViolation {
+            reason: err.to_string(),
+        };
+    }
+
+    MediationOutcome::Committed(Patch {
+        step_id: step_id.to_string(),
+        changes: parsed,
+    })
+}
+
+/// Та же таблица «до 2 повторов на parse/schema», что
+/// `pipeline::retry_or_escalate` (mediation.md §5). Не вынесена в
+/// pub-API mediation: потребитель один (generic-путь конфиг-контрактов),
+/// а правило скреплено тем же `pipeline::MAX_RETRIES`, что лимитирует и
+/// типизированный конвейер.
+fn retry_or_escalate(
+    stage: MediationStage,
+    reason: String,
+    attempt: u8,
+) -> MediationOutcome<Patch> {
+    if attempt < berimor_mediation::pipeline::MAX_RETRIES {
+        MediationOutcome::Retry(MediationRejection {
+            stage,
+            reason,
+            retries_remaining: berimor_mediation::pipeline::MAX_RETRIES - attempt - 1,
+        })
+    } else {
+        MediationOutcome::Escalate {
+            reason,
+            escalated_from: stage,
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum StructuredLlmError {
     #[error("неизвестный контракт '{0}' (нет в реестре E2)")]
@@ -260,29 +413,23 @@ impl StructuredLlm<'_> {
         state: &Value,
         latency_budget_ms: Option<u64>,
     ) -> Result<Patch, StructuredLlmError> {
-        let adapter = find_contract(contract_name)
-            .ok_or_else(|| StructuredLlmError::UnknownContract(contract_name.into()))?;
+        // Конфиг-контракты — fallback ПОСЛЕ промаха кодового реестра
+        // (спека config-contracts п.4): кодовый контракт с тем же именем
+        // побеждает, а совпадение имён отклоняется ещё при загрузке
+        // конфигурации (config.rs), поэтому конфликта здесь не бывает.
+        let Some(adapter) = find_contract(contract_name) else {
+            let contract = find_config_contract(contract_name)
+                .ok_or_else(|| StructuredLlmError::UnknownContract(contract_name.into()))?;
+            return self.execute_config_contract(
+                &contract,
+                step_id,
+                tier_requirement,
+                state,
+                latency_budget_ms,
+            );
+        };
 
-        // Failover (директива 2026-08-03): недоступность лучшего —
-        // следующий кандидат того же класса, не «шаг умер».
-        let ranked = self.pool.select_ranked(tier_requirement, latency_budget_ms);
-        if ranked.is_empty() {
-            return Err(StructuredLlmError::NoProvider(format!(
-                "{tier_requirement:?}"
-            )));
-        }
-        let mut candidates = Vec::with_capacity(ranked.len());
-        for entry in &ranked {
-            let provider = self
-                .providers
-                .get(&entry.identity.provider)
-                .ok_or_else(|| {
-                    StructuredLlmError::ProviderNotWired(entry.identity.provider.clone())
-                })?;
-            candidates.push((entry.identity.provider.as_str(), *provider));
-        }
-        let model_tier = ranked[0].identity.tier;
-        let provider = crate::failover::FailoverProvider::new(candidates, None);
+        let (provider, model_tier) = self.select_provider(tier_requirement, latency_budget_ms)?;
 
         // task_hint = step_id, не contract_name: только step_id реально
         // журналируется (`EventKind::StepApplied{step_id}`) и потому
@@ -364,6 +511,167 @@ impl StructuredLlm<'_> {
         }
         unreachable!("последняя попытка завершается Escalate, не Retry (pipeline::mediate)")
     }
+
+    /// Failover-обёртка над ранжированными кандидатами пула (директива
+    /// 2026-08-03: недоступность лучшего — следующий кандидат того же
+    /// класса, не «шаг умер»). Общая часть кодового и конфиг-путей
+    /// исполнения.
+    fn select_provider(
+        &self,
+        tier_requirement: ModelTierRequirement,
+        latency_budget_ms: Option<u64>,
+    ) -> Result<(crate::failover::FailoverProvider<'_>, ModelTier), StructuredLlmError> {
+        let ranked = self.pool.select_ranked(tier_requirement, latency_budget_ms);
+        if ranked.is_empty() {
+            return Err(StructuredLlmError::NoProvider(format!(
+                "{tier_requirement:?}"
+            )));
+        }
+        let mut candidates = Vec::with_capacity(ranked.len());
+        for entry in &ranked {
+            let provider = self
+                .providers
+                .get(&entry.identity.provider)
+                .ok_or_else(|| {
+                    StructuredLlmError::ProviderNotWired(entry.identity.provider.clone())
+                })?;
+            candidates.push((entry.identity.provider.as_str(), *provider));
+        }
+        let model_tier = ranked[0].identity.tier;
+        Ok((
+            crate::failover::FailoverProvider::new(candidates, None),
+            model_tier,
+        ))
+    }
+
+    /// Исполнение конфиг-контракта (спека config-contracts п.4): тот же
+    /// цикл попыток и failover, что у кодового пути; подсказка — JSON
+    /// Schema + description оператора (без примера: пример кодового пути
+    /// собирается из derive-типа той же версии схемы, а типа у
+    /// конфиг-контракта нет); медиация — generic
+    /// ([`mediate_config_contract`]).
+    fn execute_config_contract(
+        &self,
+        contract: &ConfigContract,
+        step_id: &str,
+        tier_requirement: ModelTierRequirement,
+        state: &Value,
+        latency_budget_ms: Option<u64>,
+    ) -> Result<Patch, StructuredLlmError> {
+        let (provider, model_tier) = self.select_provider(tier_requirement, latency_budget_ms)?;
+
+        // task_hint = step_id — тот же выбор, что у кодового пути
+        // (комментарий в execute): только step_id журналируется движком.
+        let layers = self
+            .context
+            .build("llm_structured", model_tier, state, step_id);
+        let system_context = layers
+            .iter()
+            .map(|l| format!("## {}\n{}", l.name, l.content))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        // Схема компилировалась при загрузке конфигурации
+        // (ConfigContract::new); пересборка здесь — один раз на шаг, не
+        // на попытку, ошибка означает рассинхрон реестра, не ввод
+        // оператора, потому Escalated, а не молчаливый пропуск.
+        let validator = compile_config_schema(&contract.schema).map_err(|err| {
+            StructuredLlmError::Escalated {
+                reason: format!(
+                    "схема конфиг-контракта '{}' не компилируется: {err}",
+                    contract.name
+                ),
+                stage: MediationStage::Schema,
+            }
+        })?;
+
+        let known_secrets = self.secrets.known_values();
+
+        let mut retry_feedback: Option<String> = None;
+        for attempt in 0..MAX_ATTEMPTS {
+            let prompt = build_config_prompt(contract, step_id, retry_feedback.as_deref());
+            let response = provider.complete(CompletionRequest {
+                system_context: system_context.clone(),
+                prompt,
+                contract_name: Some(contract.name.clone()),
+                expects_structured_output: true,
+            })?;
+
+            // Трасса стадий — как у кодового пути (mediation.md §2:
+            // «каждая стадия пишет событие»).
+            let mut trace = Vec::new();
+            let outcome = mediate_config_contract(
+                step_id,
+                &response.raw_text,
+                &validator,
+                &known_secrets,
+                attempt,
+                &mut trace,
+            );
+
+            if let Some(hook) = self.on_attempt {
+                for event in trace {
+                    hook(event);
+                }
+                hook(berimor_mediation::telemetry::outcome_to_event_kind(
+                    &outcome,
+                ));
+            }
+
+            match outcome {
+                MediationOutcome::Committed(patch) => return Ok(patch),
+                // mediation.md §5: повтор собирает НОВУЮ подсказку с
+                // текстом ошибки, не ту же.
+                MediationOutcome::Retry(rejection) => {
+                    retry_feedback = Some(format!(
+                        "Предыдущий ответ отклонён на стадии {:?}: {}. Исправь и ответь заново.",
+                        rejection.stage, rejection.reason
+                    ));
+                }
+                MediationOutcome::Escalate {
+                    reason,
+                    escalated_from,
+                } => {
+                    return Err(StructuredLlmError::Escalated {
+                        reason,
+                        stage: escalated_from,
+                    })
+                }
+                MediationOutcome::SecurityViolation { reason } => {
+                    return Err(StructuredLlmError::SecurityViolation { reason })
+                }
+            }
+        }
+        unreachable!(
+            "последняя попытка завершается Escalate, не Retry (тот же инвариант MAX_ATTEMPTS)"
+        )
+    }
+}
+
+/// Подсказка конфиг-контракта (спека п.4): роль шага + JSON Schema +
+/// description оператора, БЕЗ примера — пример кодового пути собирается
+/// из derive-типа той же версии схемы, у конфиг-контракта типа нет.
+fn build_config_prompt(
+    contract: &ConfigContract,
+    step_id: &str,
+    retry_feedback: Option<&str>,
+) -> String {
+    let mut prompt = format!(
+        "Шаг процесса: {step_id}.\n\
+         Ответь JSON-объектом по контракту {name}.\n\
+         JSON Schema:\n{schema}",
+        name = contract.name,
+        schema = serde_json::to_string_pretty(&contract.schema).expect("схема сериализуема"),
+    );
+    if let Some(description) = &contract.description {
+        prompt.push_str("\nОписание контракта: ");
+        prompt.push_str(description);
+    }
+    if let Some(feedback) = retry_feedback {
+        prompt.push_str("\n\n");
+        prompt.push_str(feedback);
+    }
+    prompt
 }
 
 /// Подсказка — дословно состав из executors.md §3: роль шага + схема
@@ -791,5 +1099,146 @@ mod tests {
             }
             other => panic!("подделка card_id обязана эскалировать: {other:?}"),
         }
+    }
+
+    // --- Контракты из конфигурации (спека config-contracts п.5) --------
+
+    /// Реестр конфиг-контрактов общий на тестовый бинарь (OnceLock
+    /// наполняется один раз, `set` идемпотентен по составу): одна
+    /// тестовая схема покрывает все три сценария спеки — валид → patch,
+    /// невалид → retry с причиной, исчерпание → ошибка.
+    fn ensure_config_contracts() {
+        set_config_contracts(vec![ConfigContract::new(
+            "TestMinutes",
+            Some("протокол встречи".into()),
+            r#"{
+                    "type": "object",
+                    "properties": {
+                        "summary": {"type": "string"},
+                        "decisions": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["summary"]
+                }"#,
+        )
+        .expect("тестовая схема валидна")]);
+    }
+
+    /// Валидный ответ по конфиг-контракту — patch со всем объектом в
+    /// changes (спека п.4: publishable = весь объект).
+    #[test]
+    fn config_contract_valid_response_commits_patch() {
+        ensure_config_contracts();
+        let f = fixture(vec![
+            r#"{"summary": "Обсудили релиз.", "decisions": ["выпустить 0.28"]}"#,
+        ]);
+        let executor = StructuredLlm {
+            pool: &f.pool,
+            providers: &f.providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            secrets: &EMPTY_MASKER,
+        };
+
+        let patch = executor
+            .execute(
+                "minutes",
+                "TestMinutes",
+                ModelTierRequirement::Any,
+                &json!({}),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(patch.step_id, "minutes");
+        assert_eq!(patch.changes["summary"], "Обсудили релиз.");
+        assert_eq!(patch.changes["decisions"][0], "выпустить 0.28");
+    }
+
+    /// Ответ, невалидный по JSON Schema (нет обязательного summary), —
+    /// повтор, и подсказка повтора несёт текст ошибки валидации
+    /// (mediation.md §5 — то же правило, что у кодового пути).
+    #[test]
+    fn config_contract_invalid_response_retries_with_error_text() {
+        ensure_config_contracts();
+        let f = fixture(vec![
+            r#"{"decisions": ["без итога"]}"#,
+            r#"{"summary": "После повтора."}"#,
+        ]);
+        let executor = StructuredLlm {
+            pool: &f.pool,
+            providers: &f.providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            secrets: &EMPTY_MASKER,
+        };
+
+        let patch = executor
+            .execute(
+                "minutes",
+                "TestMinutes",
+                ModelTierRequirement::Any,
+                &json!({}),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(patch.changes["summary"], "После повтора.");
+        let requests = f.provider.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(
+            !requests[0].prompt.contains("отклонён"),
+            "первая подсказка не должна нести текст ошибки"
+        );
+        assert!(
+            requests[1].prompt.contains("отклонён"),
+            "повтор обязан нести текст ошибки валидации: {}",
+            requests[1].prompt
+        );
+        // Подсказка конфиг-контракта — схема + description, без примера
+        // (спека п.4: примера нет — нет derive-типа той же версии).
+        assert!(requests[0].prompt.contains("протокол встречи"));
+        assert!(!requests[0].prompt.contains("Пример корректного ответа"));
+    }
+
+    /// Устойчивый мусор в ответах — исчерпание попыток и эскалация,
+    /// ровно MAX_ATTEMPTS запросов (та же таблица mediation.md §5).
+    #[test]
+    fn config_contract_persistent_failure_escalates_after_all_attempts() {
+        ensure_config_contracts();
+        let f = fixture(vec!["мусор"]);
+        let executor = StructuredLlm {
+            pool: &f.pool,
+            providers: &f.providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            secrets: &EMPTY_MASKER,
+        };
+
+        let result = executor.execute(
+            "minutes",
+            "TestMinutes",
+            ModelTierRequirement::Any,
+            &json!({}),
+            None,
+        );
+
+        assert!(matches!(result, Err(StructuredLlmError::Escalated { .. })));
+        assert_eq!(
+            f.provider.requests.lock().unwrap().len() as u8,
+            MAX_ATTEMPTS,
+            "попыток ровно MAX_ATTEMPTS, не больше"
+        );
+    }
+
+    /// Незарегистрированное имя не находится ни в одном реестре —
+    /// UnknownContract, не угадывание (кодовый путь это уже проверяет
+    /// `unknown_contract_is_an_error_not_a_guess`; здесь — что
+    /// регистрация конфиг-контрактов не расширила пространство имён
+    /// молча).
+    #[test]
+    fn unregistered_config_contract_name_is_not_found() {
+        ensure_config_contracts();
+        assert!(find_config_contract("TestMinutes").is_some());
+        assert!(find_config_contract("NoSuchContract").is_none());
     }
 }

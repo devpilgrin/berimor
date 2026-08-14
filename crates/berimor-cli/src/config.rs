@@ -105,6 +105,25 @@ pub struct ToolStub {
     pub response: serde_json::Value,
 }
 
+/// Контракт структурного вывода из конфигурации (`[[contracts]]`, спека
+/// docs/rnd/config-contracts-spec.md, 2026-08-14): оператор объявляет
+/// JSON Schema и использует имя в шагах `llm_structured`/`codeact`
+/// наравне с кодовыми контрактами (реестр E2). Схема — inline (`schema`)
+/// или файлом (`schema_path`, относительно каталога файла конфигурации);
+/// формы взаимоисключающие, одна из двух обязательна. После загрузки
+/// (`load`) `schema_path` всегда разрешён в `schema` — дальше по
+/// конвейеру ходит один источник схемы.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContractConfig {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub schema: Option<String>,
+    #[serde(default)]
+    pub schema_path: Option<PathBuf>,
+}
+
 /// Настройки слоёв памяти в Context Engine (`MemoryContextBuilder`).
 /// Оба поля опциональны — без `skills_dir` слой Skills просто пуст, без
 /// изменения остального поведения (обратная совместимость с конфигом,
@@ -221,6 +240,11 @@ pub struct Config {
     pub update_channel: UpdateChannel,
     pub providers: Vec<ProviderConfig>,
     pub tool_stubs: Vec<ToolStub>,
+    /// Контракты из конфигурации (спека config-contracts): после `load`
+    /// каждый гарантированно несёт inline-схему и прошёл валидацию
+    /// (уникальность имени, отсутствие совпадения с кодовыми
+    /// контрактами, компиляция JSON Schema).
+    pub contracts: Vec<ContractConfig>,
     pub memory: MemoryConfig,
     pub mcp_servers: Vec<McpServerConfig>,
     /// Имена переменных окружения, чьи ЗНАЧЕНИЯ — секреты этого запуска
@@ -261,6 +285,7 @@ impl Default for Config {
             update_channel: UpdateChannel::Stable,
             providers: Vec::new(),
             tool_stubs: Vec::new(),
+            contracts: Vec::new(),
             memory: MemoryConfig::default(),
             mcp_servers: Vec::new(),
             secret_envs: Vec::new(),
@@ -285,6 +310,18 @@ pub enum ConfigError {
         #[source]
         source: toml::de::Error,
     },
+    #[error("не удалось прочитать файл схемы контракта '{contract}' ({path}): {source}")]
+    ContractSchemaRead {
+        contract: String,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// Невалидное объявление `[[contracts]]` (спека config-contracts
+    /// п.2): дубликат имени, совпадение с кодовым контрактом, битая
+    /// схема — любая ошибка есть ошибка загрузки конфигурации.
+    #[error("контракт '{contract}' из конфигурации: {reason}")]
+    Contract { contract: String, reason: String },
 }
 
 // --- Слоистая конфигурация (§20.12) ------------------------------------
@@ -341,6 +378,7 @@ pub struct PartialConfig {
     pub update_channel: Option<UpdateChannel>,
     pub providers: Vec<ProviderConfig>,
     pub tool_stubs: Vec<ToolStub>,
+    pub contracts: Vec<ContractConfig>,
     pub memory: Option<MemoryConfig>,
     pub mcp_servers: Vec<McpServerConfig>,
     pub secret_envs: Vec<String>,
@@ -354,12 +392,19 @@ impl PartialConfig {
     fn load_file(path: &Path) -> Result<Option<Self>, ConfigError> {
         match std::fs::read_to_string(path) {
             Ok(contents) => {
-                toml::from_str(&contents)
-                    .map(Some)
-                    .map_err(|source| ConfigError::Parse {
+                let mut partial: Self =
+                    toml::from_str(&contents).map_err(|source| ConfigError::Parse {
                         path: path.to_path_buf(),
                         source,
-                    })
+                    })?;
+                // `schema_path` разрешается в inline-схему сразу, пока
+                // известен каталог ЭТОГО файла (слои грузятся раздельно,
+                // у каждого свой базовый каталог), затем объявления
+                // валидируются — битый контракт = ошибка загрузки, не
+                // отложенный сбой шага (спека config-contracts п.2).
+                resolve_contract_schemas(&mut partial.contracts, path)?;
+                validate_contracts(&partial.contracts)?;
+                Ok(Some(partial))
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(source) => Err(ConfigError::Read {
@@ -368,6 +413,98 @@ impl PartialConfig {
             }),
         }
     }
+}
+
+/// `schema_path` → inline: файл схемы читается относительно каталога
+/// файла конфигурации, в котором объявлен контракт. После разрешения
+/// `schema_path` обнуляется — дальше по конвейеру один источник схемы.
+fn resolve_contract_schemas(
+    contracts: &mut [ContractConfig],
+    config_path: &Path,
+) -> Result<(), ConfigError> {
+    let base = config_path.parent().unwrap_or_else(|| Path::new("."));
+    for contract in contracts {
+        let Some(schema_path) = contract.schema_path.take() else {
+            continue;
+        };
+        // Конфликт форм ловим ДО перезаписи inline-схемы содержимым
+        // файла — иначе schema_path молча побеждал бы schema.
+        if contract.schema.is_some() {
+            return Err(ConfigError::Contract {
+                contract: contract.name.clone(),
+                reason: "schema и schema_path взаимоисключающие — оставьте одну форму".into(),
+            });
+        }
+        let full = base.join(&schema_path);
+        let contents =
+            std::fs::read_to_string(&full).map_err(|source| ConfigError::ContractSchemaRead {
+                contract: contract.name.clone(),
+                path: full.clone(),
+                source,
+            })?;
+        contract.schema = Some(contents);
+    }
+    Ok(())
+}
+
+/// Валидация `[[contracts]]` при загрузке (спека config-contracts п.2):
+/// имя уникально и НЕ совпадает с кодовыми контрактами (реестр E2,
+/// `structured_llm`) — иначе поведение `berimor run` зависело бы от
+/// порядка поиска; ровно одна форма схемы (inline ИЛИ файл); схема
+/// парсится как JSON и компилируется `jsonschema::validator_for`.
+fn validate_contracts(contracts: &[ContractConfig]) -> Result<(), ConfigError> {
+    let mut seen = std::collections::HashSet::new();
+    for contract in contracts {
+        if !seen.insert(contract.name.clone()) {
+            return Err(ConfigError::Contract {
+                contract: contract.name.clone(),
+                reason: "имя дублируется в конфигурации".into(),
+            });
+        }
+        if berimor_executors::structured_llm::find_contract(&contract.name).is_some() {
+            return Err(ConfigError::Contract {
+                contract: contract.name.clone(),
+                reason: "имя совпадает с кодовым контрактом (реестр E2) — переименуйте объявление"
+                    .into(),
+            });
+        }
+        match (&contract.schema, &contract.schema_path) {
+            (Some(_), Some(_)) => {
+                return Err(ConfigError::Contract {
+                    contract: contract.name.clone(),
+                    reason: "schema и schema_path взаимоисключающие — оставьте одну форму".into(),
+                })
+            }
+            (None, None) => {
+                return Err(ConfigError::Contract {
+                    contract: contract.name.clone(),
+                    reason: "нужна schema (inline JSON Schema) или schema_path (файл со схемой)"
+                        .into(),
+                })
+            }
+            (Some(schema), None) => {
+                berimor_executors::structured_llm::ConfigContract::new(
+                    contract.name.clone(),
+                    contract.description.clone(),
+                    schema,
+                )
+                .map_err(|err| ConfigError::Contract {
+                    contract: contract.name.clone(),
+                    reason: err.to_string(),
+                })?;
+            }
+            // load_file разрешает schema_path в inline до валидации;
+            // недозревший путь сюда попасть не должен.
+            (None, Some(_)) => {
+                return Err(ConfigError::Contract {
+                    contract: contract.name.clone(),
+                    reason: "schema_path не разрешён в inline-схему (внутренняя ошибка загрузки)"
+                        .into(),
+                })
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Глобальная директория berimor: `$XDG_CONFIG_HOME/berimor` или
@@ -453,6 +590,7 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
             .unwrap_or(defaults.update_channel),
         providers: merge_named(global.providers, local.providers, |p| p.name.clone()),
         tool_stubs: merge_named(global.tool_stubs, local.tool_stubs, |s| s.tool.clone()),
+        contracts: merge_named(global.contracts, local.contracts, |c| c.name.clone()),
         memory: local.memory.or(global.memory).unwrap_or(defaults.memory),
         mcp_servers: merge_named(global.mcp_servers, local.mcp_servers, |s| s.name.clone()),
         secret_envs,
@@ -812,6 +950,225 @@ base_url = "https://api.openai.com/v1"
             !dir.join(".berimor").join("allow").exists(),
             "новый файл не создан, пока легаси уже существует"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // --- Контракты из конфигурации (спека config-contracts, 2026-08-14) ---
+
+    /// Временная директория с файлом конфигурации (как в тестах выше —
+    /// без гонок по глобальному CWD, путь задаётся явно).
+    fn config_dir(tag: &str, contents: &str) -> (PathBuf, PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("berimor-contracts-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, contents).unwrap();
+        (dir, path)
+    }
+
+    /// Inline-схема (спека п.5): объявление парсится и проходит
+    /// валидацию при загрузке.
+    #[test]
+    fn contract_with_inline_schema_loads() {
+        let (dir, path) = config_dir(
+            "inline",
+            r#"
+[[contracts]]
+name = "MeetingMinutes"
+description = "протокол встречи"
+schema = """{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}"""
+"#,
+        );
+
+        let config = load(Some(&path)).unwrap();
+
+        assert_eq!(config.contracts.len(), 1);
+        let contract = &config.contracts[0];
+        assert_eq!(contract.name, "MeetingMinutes");
+        assert_eq!(contract.description.as_deref(), Some("протокол встречи"));
+        assert!(contract.schema.is_some(), "inline-схема на месте");
+        assert!(contract.schema_path.is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Схема файлом (спека п.5): `schema_path` читается относительно
+    /// каталога файла конфигурации и разрешается в inline.
+    #[test]
+    fn contract_with_schema_path_resolves_relative_to_config_file() {
+        let (dir, path) = config_dir(
+            "path",
+            r#"
+[[contracts]]
+name = "MeetingMinutes"
+schema_path = "contracts/minutes.schema.json"
+"#,
+        );
+        std::fs::create_dir_all(dir.join("contracts")).unwrap();
+        std::fs::write(
+            dir.join("contracts").join("minutes.schema.json"),
+            r#"{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}"#,
+        )
+        .unwrap();
+
+        let config = load(Some(&path)).unwrap();
+
+        let contract = &config.contracts[0];
+        assert!(
+            contract.schema_path.is_none(),
+            "путь разрешён в inline при загрузке"
+        );
+        let schema = contract.schema.as_deref().unwrap();
+        assert!(schema.contains("\"summary\""), "содержимое файла: {schema}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Дубликат имени кодового контракта (спека п.5) — ошибка загрузки:
+    /// иначе поведение `berimor run` зависело бы от порядка поиска.
+    #[test]
+    fn contract_named_like_code_contract_is_rejected() {
+        let (dir, path) = config_dir(
+            "collision",
+            r#"
+[[contracts]]
+name = "ClassificationOut"
+schema = """{"type":"object"}"""
+"#,
+        );
+
+        let result = load(Some(&path));
+
+        match result {
+            Err(ConfigError::Contract { contract, reason }) => {
+                assert_eq!(contract, "ClassificationOut");
+                assert!(reason.contains("кодовым контрактом"), "{reason}");
+            }
+            other => panic!("ожидалась ошибка ConfigError::Contract: {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Дубликат имени внутри одного файла — ошибка загрузки.
+    #[test]
+    fn duplicate_contract_name_is_rejected() {
+        let (dir, path) = config_dir(
+            "dup",
+            r#"
+[[contracts]]
+name = "MeetingMinutes"
+schema = """{"type":"object"}"""
+
+[[contracts]]
+name = "MeetingMinutes"
+schema = """{"type":"object"}"""
+"#,
+        );
+
+        let result = load(Some(&path));
+
+        assert!(
+            matches!(result, Err(ConfigError::Contract { .. })),
+            "дубликат имени обязан отклоняться: {result:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Битая схема (спека п.5: «компилируется jsonschema::validator_for»)
+    /// — ошибка загрузки с текстом, не отложенный сбой шага.
+    #[test]
+    fn invalid_schema_is_rejected_at_load() {
+        let (dir, path) = config_dir(
+            "broken",
+            r#"
+[[contracts]]
+name = "MeetingMinutes"
+schema = """{"type":"no-such-json-type"}"""
+"#,
+        );
+
+        let result = load(Some(&path));
+
+        match result {
+            Err(ConfigError::Contract { contract, reason }) => {
+                assert_eq!(contract, "MeetingMinutes");
+                assert!(
+                    reason.contains("JSON Schema") || reason.contains("JSON"),
+                    "понятный текст ошибки: {reason}"
+                );
+            }
+            other => panic!("ожидалась ошибка ConfigError::Contract: {other:?}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Схема, не парсящаяся как JSON, — та же ошибка загрузки.
+    #[test]
+    fn non_json_schema_is_rejected_at_load() {
+        let (dir, path) = config_dir(
+            "notjson",
+            r#"
+[[contracts]]
+name = "MeetingMinutes"
+schema = """{type: object}"""
+"#,
+        );
+
+        let result = load(Some(&path));
+
+        assert!(
+            matches!(result, Err(ConfigError::Contract { .. })),
+            "не-JSON схема обязана отклоняться: {result:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Обе формы схемы сразу — ошибка, не молчаливый приоритет одной.
+    #[test]
+    fn contract_with_both_schema_forms_is_rejected() {
+        let (dir, path) = config_dir(
+            "both",
+            r#"
+[[contracts]]
+name = "MeetingMinutes"
+schema = """{"type":"object"}"""
+schema_path = "contracts/minutes.schema.json"
+"#,
+        );
+        std::fs::create_dir_all(dir.join("contracts")).unwrap();
+        std::fs::write(
+            dir.join("contracts").join("minutes.schema.json"),
+            r#"{"type":"object"}"#,
+        )
+        .unwrap();
+
+        let result = load(Some(&path));
+
+        assert!(
+            matches!(result, Err(ConfigError::Contract { .. })),
+            "две формы схемы обязаны отклоняться: {result:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Несуществующий schema_path — ошибка чтения с именем контракта.
+    #[test]
+    fn missing_schema_path_file_is_a_read_error() {
+        let (dir, path) = config_dir(
+            "missing",
+            r#"
+[[contracts]]
+name = "MeetingMinutes"
+schema_path = "contracts/absent.schema.json"
+"#,
+        );
+
+        let result = load(Some(&path));
+
+        match result {
+            Err(ConfigError::ContractSchemaRead { contract, .. }) => {
+                assert_eq!(contract, "MeetingMinutes")
+            }
+            other => panic!("ожидалась ошибка ContractSchemaRead: {other:?}"),
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 }

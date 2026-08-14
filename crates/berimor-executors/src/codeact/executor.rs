@@ -58,6 +58,38 @@ use std::collections::HashMap;
 /// число, что у `StructuredLlm`/`AgentStep::decide_turn`.
 const MAX_ATTEMPTS: u8 = 3;
 
+/// Контракт результата шага: кодовый (реестр M1, типизированная
+/// медиация) или объявленный в конфигурации (`[[contracts]]`, спека
+/// config-contracts 2026-08-14) — generic-медиация по JSON Schema, общая
+/// с `StructuredLlm` (`structured_llm::mediate_config_contract`).
+enum CodeActContract {
+    Code(&'static structured_llm::ContractAdapter),
+    Config(structured_llm::ConfigContract),
+}
+
+/// Сужение исхода медиации до патча: дальше по циклу CodeAct нужен
+/// только `Patch`, provenance/publishable кодового пути здесь не
+/// журналируются (как и прежде — хук получает только вид события).
+fn map_committed<T>(
+    outcome: MediationOutcome<T>,
+    f: impl FnOnce(T) -> Patch,
+) -> MediationOutcome<Patch> {
+    match outcome {
+        MediationOutcome::Committed(value) => MediationOutcome::Committed(f(value)),
+        MediationOutcome::Retry(rejection) => MediationOutcome::Retry(rejection),
+        MediationOutcome::Escalate {
+            reason,
+            escalated_from,
+        } => MediationOutcome::Escalate {
+            reason,
+            escalated_from,
+        },
+        MediationOutcome::SecurityViolation { reason } => {
+            MediationOutcome::SecurityViolation { reason }
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CodeActError {
     #[error("неизвестный контракт '{0}' (нет в реестре E2) для результата CodeAct")]
@@ -111,8 +143,33 @@ impl CodeActExecutor<'_> {
         state: &Value,
         latency_budget_ms: Option<u64>,
     ) -> Result<Patch, CodeActError> {
-        let adapter = structured_llm::find_contract(contract_name)
-            .ok_or_else(|| CodeActError::UnknownContract(contract_name.into()))?;
+        // Конфиг-контракты — fallback ПОСЛЕ промаха кодового реестра, как
+        // у StructuredLlm (спека config-contracts п.4).
+        let target = match structured_llm::find_contract(contract_name) {
+            Some(adapter) => CodeActContract::Code(adapter),
+            None => CodeActContract::Config(
+                structured_llm::find_config_contract(contract_name)
+                    .ok_or_else(|| CodeActError::UnknownContract(contract_name.into()))?,
+            ),
+        };
+
+        // Валидатор конфиг-контракта собирается один раз на execute, не
+        // на попытку; схема уже компилировалась при загрузке
+        // конфигурации — ошибка здесь означает рассинхрон реестра.
+        let config_validator = match &target {
+            CodeActContract::Config(contract) => Some(
+                structured_llm::compile_config_schema(&contract.schema).map_err(|err| {
+                    CodeActError::Escalated {
+                        reason: format!(
+                            "схема конфиг-контракта '{}' не компилируется: {err}",
+                            contract.name
+                        ),
+                        stage: MediationStage::Schema,
+                    }
+                })?,
+            ),
+            CodeActContract::Code(_) => None,
+        };
 
         let entry = self
             .pool
@@ -142,11 +199,11 @@ impl CodeActExecutor<'_> {
         let mut retry_feedback: Option<String> = None;
 
         for attempt in 0..MAX_ATTEMPTS {
-            let prompt = build_prompt(step_id, adapter, tools, retry_feedback.as_deref());
+            let prompt = build_prompt(step_id, &target, tools, retry_feedback.as_deref());
             let response = provider.complete(CompletionRequest {
                 system_context: system_context.clone(),
                 prompt,
-                contract_name: Some(adapter.name.to_string()),
+                contract_name: Some(contract_name.to_string()),
                 // TD3.3: ответ модели — текст JS-программы, не JSON по
                 // контракту (контракт применяется позже, к результату
                 // исполнения программы, не к самому ответу).
@@ -220,19 +277,36 @@ impl CodeActExecutor<'_> {
             // Контроль утечек (S5): статические правила контракта +
             // значения из реестра запуска — как у StructuredLlm/AgentStep.
             let known_secrets = self.secrets.known_values();
-            let mut rules = (adapter.policy_rules)();
-            rules.known_secrets = &known_secrets;
             // Трасса стадий (аудит 1.10) — как у StructuredLlm.
             let mut trace = Vec::new();
-            let outcome = (adapter.mediate)(
-                step_id,
-                &raw,
-                state,
-                Some(model_tier),
-                &rules,
-                attempt,
-                &mut trace,
-            );
+            let outcome: MediationOutcome<Patch> = match &target {
+                CodeActContract::Code(adapter) => {
+                    let mut rules = (adapter.policy_rules)();
+                    rules.known_secrets = &known_secrets;
+                    map_committed(
+                        (adapter.mediate)(
+                            step_id,
+                            &raw,
+                            state,
+                            Some(model_tier),
+                            &rules,
+                            attempt,
+                            &mut trace,
+                        ),
+                        |commit| commit.patch,
+                    )
+                }
+                CodeActContract::Config(_) => structured_llm::mediate_config_contract(
+                    step_id,
+                    &raw,
+                    config_validator
+                        .as_ref()
+                        .expect("валидатор конфиг-контракта собран до цикла попыток"),
+                    &known_secrets,
+                    attempt,
+                    &mut trace,
+                ),
+            };
 
             if let Some(hook) = self.on_attempt {
                 for event in trace {
@@ -244,7 +318,7 @@ impl CodeActExecutor<'_> {
             }
 
             match outcome {
-                MediationOutcome::Committed(commit) => return Ok(commit.patch),
+                MediationOutcome::Committed(patch) => return Ok(patch),
                 MediationOutcome::Retry(rejection) => {
                     retry_feedback = Some(format!(
                         "Результат программы отклонён на стадии {:?}: {}. Перепиши программу.",
@@ -299,14 +373,38 @@ fn strip_markdown_fence(text: &str) -> &str {
 
 fn build_prompt(
     step_id: &str,
-    adapter: &structured_llm::ContractAdapter,
+    target: &CodeActContract,
     tools: &[String],
     retry_feedback: Option<&str>,
 ) -> String {
-    let schema = serde_json::to_string_pretty(&(adapter.json_schema)())
-        .expect("схема контракта всегда сериализуема");
-    let example = serde_json::to_string_pretty(&(adapter.example)())
-        .expect("пример контракта всегда сериализуем");
+    // Подсказка контракта результата: кодовый путь — схема + пример из
+    // derive-типа той же версии; конфиг-контракт — JSON Schema +
+    // description оператора, без версии и примера (типа нет — спека
+    // config-contracts п.4).
+    let contract_hint = match target {
+        CodeActContract::Code(adapter) => format!(
+            "контракту {name} (версия {version}):\n{schema}\nПример корректного result: {example}",
+            name = adapter.name,
+            version = adapter.schema_version,
+            schema = serde_json::to_string_pretty(&(adapter.json_schema)())
+                .expect("схема контракта всегда сериализуема"),
+            example = serde_json::to_string_pretty(&(adapter.example)())
+                .expect("пример контракта всегда сериализуем"),
+        ),
+        CodeActContract::Config(contract) => {
+            let mut hint = format!(
+                "контракту {name}:\n{schema}",
+                name = contract.name,
+                schema =
+                    serde_json::to_string_pretty(&contract.schema).expect("схема сериализуема"),
+            );
+            if let Some(description) = &contract.description {
+                hint.push_str("\nОписание контракта: ");
+                hint.push_str(description);
+            }
+            hint
+        }
+    };
     let tools_list = if tools.is_empty() {
         "(нет доступных инструментов для этой программы)".to_string()
     } else {
@@ -319,8 +417,7 @@ fn build_prompt(
          Ответ — ТОЛЬКО текст программы, БЕЗ markdown-ограждения (``` … ```): ограждение снимается\n\
          принудительно, но чистый ответ исключает потерю строк.\n\n\
          Единственный выход программы — вызов `finish(result)`; `result` ОБЯЗАН \
-         соответствовать контракту {name} (версия {version}):\n{schema}\n\
-         Пример корректного result: {example}\n\n\
+         соответствовать {contract_hint}\n\n\
          Доступные функции внутри программы:\n\
          - `finish(result)` — завершает программу, `result` становится итогом шага.\n\
          - `call_tool(name, args) -> {{ok, value|error}}` — вызов стаба инструмента; при отказе \
@@ -333,8 +430,6 @@ fn build_prompt(
          executors.md §4.2): разрешены только {safe_globals} и перечисленные выше имена \
          инструментов — любой другой свободный идентификатор (включая eval/Function/fetch и \
          подобные) отклоняется ДО исполнения, попытка использовать их — трата попытки впустую.",
-        name = adapter.name,
-        version = adapter.schema_version,
     );
 
     if let Some(feedback) = retry_feedback {

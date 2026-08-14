@@ -1,0 +1,7 @@
+process: config-contracts-demo
+version: 1
+steps:
+  - id: minutes
+    type: llm_structured
+    contract: MeetingMinutes
+limits: {max_steps: 5, timeout: 3m}
