@@ -18,7 +18,7 @@ oxc_ast = "0.142.0"
 oxc_ast_visit = "0.142.0"
 oxc_parser = "0.142.0"
 oxc_span = "0.142.0"
-schemars = "1.2.2"
+schemars = { workspace = true, features = ["preserve_order"] }
 serde_json.workspace = true
 thiserror.workspace = true
 wasmtime = "47.0.2"

@@ -541,7 +541,15 @@ pub(crate) fn build_executor_bundle_with_session(
                     api_key,
                     p.allow_private_endpoint,
                     p.temperature,
-                    p.json_object_response_format,
+                    berimor_model_pool::http_provider::FormatPolicy {
+                        response_format: p
+                            .effective_response_format()
+                            .map_err(|err| RunError::Provider(err.to_string()))?,
+                        dialect: berimor_model_pool::http_provider::ProviderDialect::detect(
+                            &p.name,
+                            &p.base_url,
+                        ),
+                    },
                     p.request_timeout_secs,
                 )
                 .map_err(|err| RunError::Provider(err.to_string()))?,
@@ -1250,6 +1258,7 @@ mod oauth_wiring_tests {
             cost_per_1k_tokens: None,
             temperature: None,
             json_object_response_format: true,
+            response_format: None,
             request_timeout_secs: None,
         }
     }

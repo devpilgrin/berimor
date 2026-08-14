@@ -73,6 +73,7 @@ mod tests {
     fn patch_carries_step_id_and_full_contract_as_changes() {
         let contract = ClassificationOut {
             category: Category::Billing,
+            risk_factors: vec!["обычный вопрос".into()],
             risk: 4,
             summary: "ok".into(),
         };
@@ -81,7 +82,7 @@ mod tests {
         assert_eq!(outcome.patch.step_id, "classify");
         assert_eq!(
             outcome.patch.changes,
-            serde_json::json!({"category": "billing", "risk": 4, "summary": "ok"})
+            serde_json::json!({"category": "billing", "risk_factors": ["обычный вопрос"], "risk": 4, "summary": "ok"})
         );
     }
 
@@ -89,13 +90,15 @@ mod tests {
     fn provenance_carries_contract_identity_and_model_tier() {
         let contract = ClassificationOut {
             category: Category::Card,
+            risk_factors: vec!["x".into()],
             risk: 1,
             summary: "x".into(),
         };
         let outcome = commit("classify", &contract, Some(ModelTier::Strong));
 
         assert_eq!(outcome.provenance.contract_name, "ClassificationOut");
-        assert_eq!(outcome.provenance.contract_version, 1);
+        // 0.30.0 (issue #4): версия 2 — обязательное risk_factors.
+        assert_eq!(outcome.provenance.contract_version, 2);
         assert_eq!(outcome.provenance.model_tier, Some(ModelTier::Strong));
     }
 
@@ -103,6 +106,7 @@ mod tests {
     fn classification_out_publishes_nothing_by_default() {
         let contract = ClassificationOut {
             category: Category::Debt,
+            risk_factors: vec!["просрочка".into()],
             risk: 9,
             summary: "просрочка".into(),
         };

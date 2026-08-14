@@ -354,6 +354,13 @@ impl AgentStepExecutor<'_> {
                 prompt,
                 contract_name: Some(AgentTurnDecision::NAME.into()),
                 expects_structured_output: true,
+                // SGR (issue #3): схема хода — в constrained decoding
+                // при поддержке провайдером; порядок полей = порядок
+                // генерации (thought раньше action).
+                json_schema: Some(
+                    serde_json::to_value(schemars::schema_for!(AgentTurnDecision))
+                        .expect("схема derive-типа всегда сериализуема"),
+                ),
             })?;
 
             // Нормализация формы (граница слабых моделей, полевой тест
@@ -487,6 +494,10 @@ impl AgentStepExecutor<'_> {
             prompt,
             contract_name: Some(AgentVerdict::NAME.into()),
             expects_structured_output: true,
+            json_schema: Some(
+                serde_json::to_value(schemars::schema_for!(AgentVerdict))
+                    .expect("схема derive-типа всегда сериализуема"),
+            ),
         })?;
 
         // Контроль утечек (S5): значения из реестра запуска.

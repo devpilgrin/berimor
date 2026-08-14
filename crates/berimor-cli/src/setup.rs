@@ -373,6 +373,7 @@ mod tests {
             cost_per_1k_tokens: None,
             temperature: None,
             json_object_response_format: true,
+            response_format: None,
             request_timeout_secs: None,
         }
     }

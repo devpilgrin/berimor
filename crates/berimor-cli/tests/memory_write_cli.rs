@@ -59,7 +59,7 @@ fn recording_mock(bodies: Vec<Value>) -> String {
 }
 
 fn classify_body() -> Value {
-    json!({"category": "card", "risk": 2, "summary": "Клиент спрашивает о статусе доставки карты."})
+    json!({"category": "card", "risk_factors": ["стандартный запрос о статусе"], "risk": 2, "summary": "Клиент спрашивает о статусе доставки карты."})
 }
 
 fn answer_body() -> Value {

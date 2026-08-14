@@ -387,6 +387,7 @@ mod tests {
                 prompt: "классифицируй".to_string(),
                 contract_name: Some("ClassificationOut".to_string()),
                 expects_structured_output: true,
+                json_schema: None,
             })
             .unwrap();
 
@@ -406,6 +407,7 @@ mod tests {
             prompt: "ЗАДАЧА-МАРКЕР".to_string(),
             contract_name: Some("ClassificationOut".to_string()),
             expects_structured_output: true,
+            json_schema: None,
         });
 
         let seen = provider.engine.seen_prompts.lock().unwrap();
@@ -432,6 +434,7 @@ mod tests {
                 prompt: "x".to_string(),
                 contract_name: None,
                 expects_structured_output: false,
+                json_schema: None,
             })
             .expect_err("ошибка движка обязана доходить до вызывающего");
         assert!(err.to_string().contains("веса не читаются"), "{err}");
@@ -450,6 +453,7 @@ mod tests {
             prompt: "вопрос".to_string(),
             contract_name: None,
             expects_structured_output: false,
+            json_schema: None,
         });
         let seen = provider.engine.seen_prompts.lock().unwrap();
         let (system, user, expects_json) = &seen[0];

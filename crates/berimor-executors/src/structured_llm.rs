@@ -95,6 +95,8 @@ pub fn contract_registry() -> &'static [ContractAdapter] {
             example: || {
                 serde_json::json!({
                     "category": "card",
+                    // Поле-обоснование — до целевого `risk` (SGR, issue #4).
+                    "risk_factors": ["стандартный запрос о статусе, сумм нет"],
                     "risk": 2,
                     "summary": "Клиент спрашивает о статусе доставки карты."
                 })
@@ -458,6 +460,9 @@ impl StructuredLlm<'_> {
                 prompt,
                 contract_name: Some(adapter.name.to_string()),
                 expects_structured_output: true,
+                // SGR (issue #3): constrained decoding — схема в поле
+                // запроса при response_format=json_schema провайдера.
+                json_schema: Some((adapter.json_schema)()),
             })?;
 
             let mut rules = (adapter.policy_rules)();
@@ -595,6 +600,8 @@ impl StructuredLlm<'_> {
                 prompt,
                 contract_name: Some(contract.name.clone()),
                 expects_structured_output: true,
+                // Конфиг-контракт: та же проводка схемы (issue #3).
+                json_schema: Some(contract.schema.clone()),
             })?;
 
             // Трасса стадий — как у кодового пути (mediation.md §2:
@@ -779,7 +786,7 @@ mod tests {
     #[test]
     fn well_formed_response_commits_on_first_attempt() {
         let f = fixture(vec![
-            r#"{"category": "card", "risk": 2, "summary": "Вопрос по карте."}"#,
+            r#"{"category": "card", "risk_factors": ["обычный вопрос"], "risk": 2, "summary": "Вопрос по карте."}"#,
         ]);
         let executor = StructuredLlm {
             pool: &f.pool,
@@ -829,7 +836,7 @@ mod tests {
     #[test]
     fn context_builder_receives_step_id_as_task_hint_not_contract_name() {
         let f = fixture(vec![
-            r#"{"category": "card", "risk": 2, "summary": "Вопрос по карте."}"#,
+            r#"{"category": "card", "risk_factors": ["обычный вопрос"], "risk": 2, "summary": "Вопрос по карте."}"#,
         ]);
         let context = RecordingContextBuilder {
             seen_task_hint: Mutex::new(None),
@@ -863,7 +870,7 @@ mod tests {
     fn invalid_first_response_retries_with_error_text_in_prompt() {
         let f = fixture(vec![
             "не json вообще",
-            r#"{"category": "debt", "risk": 5, "summary": "После повтора."}"#,
+            r#"{"category": "debt", "risk_factors": ["крупная задолженность"], "risk": 5, "summary": "После повтора."}"#,
         ]);
         let executor = StructuredLlm {
             pool: &f.pool,
@@ -929,7 +936,7 @@ mod tests {
         // risk >= 7 с category 'other' — межполевое правило из golden-
         // контракта; policy не лечится повтором (mediation.md §5).
         let f = fixture(vec![
-            r#"{"category": "other", "risk": 9, "summary": "Опасный случай."}"#,
+            r#"{"category": "other", "risk_factors": ["угрозы в тексте"], "risk": 9, "summary": "Опасный случай."}"#,
         ]);
         let executor = StructuredLlm {
             pool: &f.pool,
@@ -1009,7 +1016,7 @@ mod tests {
         let process = berimor_process_engine::parser::parse(GOLDEN).unwrap();
 
         let f = fixture(vec![
-            r#"{"category": "card", "risk": 2, "summary": "Доставка карты."}"#,
+            r#"{"category": "card", "risk_factors": ["стандартный запрос"], "risk": 2, "summary": "Доставка карты."}"#,
             r#"{"card_id": "card_1029", "reply": "Карта активна."}"#,
         ]);
         let executor = StructuredLlm {

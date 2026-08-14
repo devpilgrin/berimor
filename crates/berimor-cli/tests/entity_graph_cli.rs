@@ -97,7 +97,7 @@ fn entity_graph_layer_reaches_the_model_in_real_cli_run() {
     drop(storage);
 
     let (url, requests) = recording_mock(vec![
-        json!({"category": "card", "risk": 2, "summary": "статус доставки"}),
+        json!({"category": "card", "risk_factors": ["обычный вопрос"], "risk": 2, "summary": "статус доставки"}),
         json!({"card_id": "card_1029", "reply": "Карта активна."}),
     ]);
     let config_path = dir.join("berimor.toml");
@@ -180,7 +180,7 @@ fn entity_graph_layer_stays_out_when_not_enabled() {
     drop(storage);
 
     let (url, requests) = recording_mock(vec![
-        json!({"category": "card", "risk": 2, "summary": "статус"}),
+        json!({"category": "card", "risk_factors": ["обычный вопрос"], "risk": 2, "summary": "статус"}),
         json!({"card_id": "card_1029", "reply": "ok"}),
     ]);
     let config_path = dir.join("berimor.toml");

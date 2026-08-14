@@ -157,11 +157,11 @@ fn extract_final_state(stdout: &str) -> Value {
 }
 
 fn classify_low_risk() -> Value {
-    json!({"category": "card", "risk": 2, "summary": "Клиент спрашивает о статусе доставки карты."})
+    json!({"category": "card", "risk_factors": ["стандартный запрос о статусе"], "risk": 2, "summary": "Клиент спрашивает о статусе доставки карты."})
 }
 
 fn classify_high_risk() -> Value {
-    json!({"category": "debt", "risk": 8, "summary": "Крупная задолженность, высокий риск."})
+    json!({"category": "debt", "risk_factors": ["крупная задолженность", "угрозы в тексте"], "risk": 8, "summary": "Крупная задолженность, высокий риск."})
 }
 
 fn answer() -> Value {

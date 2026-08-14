@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-946%20green-brightgreen)](#プロジェクトのインフラ)
+[![Tests](https://img.shields.io/badge/tests-949%20green-brightgreen)](#プロジェクトのインフラ)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -130,6 +130,8 @@ berimor の主な「実戦」モードは**プロセス**——グラフとし�
 
 **設定からのコントラクト**（0.28.0）：フォークや再ビルドなしで独自のコントラクト——設定の `[[contracts]]` セクションにJSON Schema（インライン `schema` または `schema_path`）で定義し、あとは `llm_structured`/`codeact`/`agent_step` がビルトインと同列に名前で参照します。モデルの出力はスキーマで検証され（crate `jsonschema`）、検証エラーはリトライプロンプトへ送られます——同じメディエーションループです。制約：設定コントラクトには policy ルール（状態への参照）とスキーマのバージョンはなく、`publishable` はオブジェクト全体、レジストリは起動時に読み込まれます（設定変更は再起動が必要）。例——[`fixtures/golden/processes/config-contracts/`](fixtures/golden/processes/config-contracts/)。
 
+**SGR：スキーマが推論を導く**（0.30.0）：コントラクトは対象フィールドの前に根拠フィールドを宣言できます — `ClassificationOut` では `risk_factors`（非空リスト）が `risk` の前。要因を列挙してからスコアを付けるため、モデルの評価は恣意的ではなく根拠に基づきます。JSON Schema のフィールド順は宣言順に一致します（schemars `preserve_order`）。constrained decoding 対応プロバイダ（`[[providers]]` の `response_format = "json_schema"`：OpenAI 互換、Ollama は `format` 経由、llama.cpp）では生成順がスキーマによって物理的に強制され、要因を埋めずに数値を出力できません。非対応プロバイダ（DeepSeek、Kimi — `json_object` のみ）ではソフトレベルが働きます：プロンプト内のフィールド順 + スキーマ必須 + メディエーション検証。設定コントラクトの規則：根拠フィールドは対象フィールドより先に宣言してください。
+
 
 **ターンフォーム正規化器**（0.29.0）：弱いモデルは「ほぼプロトコルどおり」の応答を返しがちです——フラットな `{"thought", "tool", "args"}` 形式、文字列の `"action": "tool"`、トップレベルの `reply`、トークン上限で途切れた JSON。既知の形はメディエーションの前に決定論的にプロトコルへ修復されます（修復は `agent_turn_normalized` イベントとして記録され、意味の判断は引き続き検証とゲートが行います）。ターンプロンプトに few-shot 例のペアが追加されました。
 **プロセスとしてのグラフイディオム。** 古典的なパターン（routing、prompt chaining、parallelization、orchestrator-workers、evaluator-optimizer）は新しいコードなしで表現できます：`llm_structured` がルーティング決定を状態に書き込み → `branch` が検証済みの値でルーティング；evaluator-optimizer は verdict 付きの `loop`；orchestrator-workers は `parallel` + join。プロセスの例は [`fixtures/golden/processes/`](fixtures/golden/processes/) にあります。
@@ -171,7 +173,7 @@ flowchart LR
 
 **コンポーネントごとに 1 クレートの Rust workspace**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。ゲスト WASM モジュール（`codeact-guest/`）は独立した crate として存在し、ビルド済みアーティファクトとしてコミットされています——通常のビルドは遅くなりません。
 
-**チェックの規律。** すべてのリリースで：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（946 テスト：ユニット、統合、実バイナリ経由の e2e、プロセスと悪意ある入力のゴールデンフィクスチャ）。重要コンポーネントは必須の独立レビューを通ります。完全な独立監査（`docs/audit-2026-07-31.md`）——**すべての指摘は解決済みか、意図的に文書化済み**。
+**チェックの規律。** すべてのリリースで：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（949 テスト：ユニット、統合、実バイナリ経由の e2e、プロセスと悪意ある入力のゴールデンフィクスチャ）。重要コンポーネントは必須の独立レビューを通ります。完全な独立監査（`docs/audit-2026-07-31.md`）——**すべての指摘は解決済みか、意図的に文書化済み**。
 
 **大人のサプライチェーン。** クロスプラットフォームリリース（Linux x64/arm64、macOS arm64、Windows x64）に cosign/sigstore キーレス署名——秘密鍵はどこにも存在しません。検証：`berimor verify <アーカイブ>`。npm 公開は provenance 付き、パイプラインに SBOM（CycloneDX）、セルフアップデート（`berimor self-update`）は Process Engine のプリミティブ上に実装——通常のプロセスと同じジャーナルと障害復旧で、アドホックなスクリプトではありません。
 

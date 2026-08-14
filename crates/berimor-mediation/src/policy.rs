@@ -19,18 +19,22 @@ use serde_json::Value;
 pub enum PolicyError {
     #[error("нарушено межполевое правило: {0}")]
     CrossField(String),
-    #[error(
-        "ссылка на состояние не подтверждена: поле '{field}' = {claimed}, \
-         но в состоянии по пути '{state_path}' — {actual}"
-    )]
-    StateReference {
-        field: String,
-        claimed: Value,
-        state_path: String,
-        actual: Value,
-    },
+    #[error("ссылка на состояние не подтверждена: {0}")]
+    StateReference(Box<StateReferenceDetail>),
     #[error("обнаружена попытка утечки секрета в выводе модели")]
     SecretLeak,
+}
+
+/// Детализация нарушенной ссылки на состояние — боксом внутри варианта
+/// (clippy result_large_err: два `Value` раздувают `PolicyError` на
+/// каждом `Result` в горячем пути политики).
+#[derive(Debug, thiserror::Error)]
+#[error("поле '{field}' = {claimed}, но в состоянии по пути '{state_path}' — {actual}")]
+pub struct StateReferenceDetail {
+    pub field: String,
+    pub claimed: Value,
+    pub state_path: String,
+    pub actual: Value,
 }
 
 /// Межполевое правило — чистая функция от сериализованного вывода: `Ok`,
@@ -73,12 +77,14 @@ pub fn check_state_references(
             .unwrap_or(Value::Null);
 
         if claimed != actual {
-            return Err(PolicyError::StateReference {
-                field: check.output_field.to_string(),
-                claimed,
-                state_path: check.state_path.to_string(),
-                actual,
-            });
+            return Err(PolicyError::StateReference(Box::new(
+                StateReferenceDetail {
+                    field: check.output_field.to_string(),
+                    claimed,
+                    state_path: check.state_path.to_string(),
+                    actual,
+                },
+            )));
         }
     }
     Ok(())
@@ -191,11 +197,9 @@ mod tests {
             check_state_references(&fixture.raw_model_output, &fixture.state_snapshot, &checks);
 
         match result {
-            Err(PolicyError::StateReference {
-                claimed, actual, ..
-            }) => {
-                assert_eq!(claimed, json!("card_9999_does_not_exist"));
-                assert_eq!(actual, json!("card_1029"));
+            Err(PolicyError::StateReference(detail)) => {
+                assert_eq!(detail.claimed, json!("card_9999_does_not_exist"));
+                assert_eq!(detail.actual, json!("card_1029"));
             }
             other => panic!("ожидалась StateReference-ошибка, получено {other:?}"),
         }

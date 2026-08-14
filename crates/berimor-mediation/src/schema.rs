@@ -44,15 +44,15 @@ mod tests {
 
     #[test]
     fn accepts_value_within_all_constraints() {
-        let raw = json!({"category": "billing", "risk": 5, "summary": "ok"});
+        let raw = json!({"category": "billing", "risk_factors": ["обычный вопрос"], "risk": 5, "summary": "ok"});
         let contract: ClassificationOut = validate(raw).unwrap();
         assert_eq!(contract.category, Category::Billing);
     }
 
     #[test]
     fn accepts_boundary_values_inclusive() {
-        let low = json!({"category": "card", "risk": 0, "summary": ""});
-        let high = json!({"category": "card", "risk": 10, "summary": "x".repeat(280)});
+        let low = json!({"category": "card", "risk_factors": ["нет факторов повышения"], "risk": 0, "summary": ""});
+        let high = json!({"category": "card", "risk_factors": ["x"], "risk": 10, "summary": "x".repeat(280)});
         assert!(validate::<ClassificationOut>(low).is_ok());
         assert!(validate::<ClassificationOut>(high).is_ok());
     }
@@ -61,14 +61,14 @@ mod tests {
     fn rejects_risk_above_documented_maximum() {
         // u8 допускает и 11, и 255 — границу 0..=10 держит только
         // #[validate(range(...))], не сам тип.
-        let raw = json!({"category": "card", "risk": 11, "summary": "ok"});
+        let raw = json!({"category": "card", "risk_factors": ["x"], "risk": 11, "summary": "ok"});
         let result = validate::<ClassificationOut>(raw);
         assert!(matches!(result, Err(SchemaError::Constraints(_))));
     }
 
     #[test]
     fn rejects_summary_over_max_length() {
-        let raw = json!({"category": "card", "risk": 1, "summary": "x".repeat(281)});
+        let raw = json!({"category": "card", "risk_factors": ["x"], "risk": 1, "summary": "x".repeat(281)});
         let result = validate::<ClassificationOut>(raw);
         assert!(matches!(result, Err(SchemaError::Constraints(_))));
     }
@@ -83,7 +83,8 @@ mod tests {
         ));
 
         // risk есть, но вне диапазона — это constraints, не форма.
-        let bad_constraint = json!({"category": "card", "risk": 99, "summary": "ok"});
+        let bad_constraint =
+            json!({"category": "card", "risk_factors": ["x"], "risk": 99, "summary": "ok"});
         assert!(matches!(
             validate::<ClassificationOut>(bad_constraint),
             Err(SchemaError::Constraints(_))
@@ -94,7 +95,7 @@ mod tests {
     /// модели (возможно, в markdown-обёртке) -> parse (M2) -> validate (M3).
     #[test]
     fn composes_with_parse_stage() {
-        let raw = "```json\n{\"category\": \"debt\", \"risk\": 8, \"summary\": \"просрочка\"}\n```";
+        let raw = "```json\n{\"category\": \"debt\", \"risk_factors\": [\"просрочка\"], \"risk\": 8, \"summary\": \"просрочка\"}\n```";
         let parsed = parse::parse(raw).unwrap();
         let contract: ClassificationOut = validate(parsed).unwrap();
         assert_eq!(contract.risk, 8);

@@ -22,9 +22,49 @@ use berimor_capability::net_gate::{self, NetworkDecision};
 use berimor_secrets::Secret;
 use berimor_types::{
     executor::ModelProvider,
-    model::{CompletionRequest, CompletionResponse, ModelError, ModelIdentity},
+    model::{CompletionRequest, CompletionResponse, ModelError, ModelIdentity, ResponseFormat},
 };
 use std::time::Duration;
+
+/// Диалект OpenAI-совместимого endpoint'а на проводе (SGR-волна 0.30.0,
+/// issue #3, спека `docs/rnd/sgr-wave-spec.md` п.B4). Ollama принимает
+/// схему в поле `format` (объект схемы / строка `"json"`), эталонный
+/// OpenAI-диалект — в `response_format`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderDialect {
+    OpenAi,
+    Ollama,
+}
+
+impl ProviderDialect {
+    /// Отдельного «ollama-провайдера» в дереве нет — ollama ходит через
+    /// тот же OpenAI-совместимый `/v1` (пресет `ollama`, порт 11434),
+    /// поэтому диалект определяется по конфигурации провайдера: имя
+    /// пресета (`ollama`) или характерный порт по умолчанию. Переименованный
+    /// провайдер на нестандартном порту получает OpenAi-диалект — ollama
+    /// принимает и `response_format: json_schema` (structured outputs с
+    /// 0.5), деградации нет.
+    pub fn detect(provider_name: &str, base_url: &str) -> Self {
+        if provider_name == "ollama" || base_url.contains(":11434") {
+            Self::Ollama
+        } else {
+            Self::OpenAi
+        }
+    }
+}
+
+/// Политика подсказки формата ответа (спека п.B1/B3): режим из
+/// конфигурации и диалект провода. Заменяет булев квирк
+/// `json_object_response_format` (вывод из него — в
+/// `ProviderConfig::effective_response_format`).
+///
+/// Это ПОДСКАЗКА транспорту, не гарантия: валидирует ответ всё равно
+/// Mediation (M2/M3), а не сервер и не клиент.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatPolicy {
+    pub response_format: ResponseFormat,
+    pub dialect: ProviderDialect,
+}
 
 /// Техдолг TD3.4 (`docs/audit-2026-07-31.md`): не документированный
 /// нигде в системе SLA, разумный дефолт — «есть хоть какой-то потолок»
@@ -61,14 +101,13 @@ pub struct OpenAiCompatibleProvider {
     /// is allowed», репорт 2026-08-03) — для них пресет/конфиг задаёт
     /// её явно.
     temperature: Option<f32>,
-    /// `false` — сервер отвергает `response_format: {"type":
-    /// "json_object"}` (репорт 2026-08-08: LM Studio — 400
-    /// «response_format.type must be 'json_schema' or 'text'», живой
+    /// Политика формата ответа (SGR 0.30.0, issue #3). `ResponseFormat::
+    /// None` — поле не отправляется вовсе (репорт 2026-08-08: LM Studio —
+    /// 400 «response_format.type must be 'json_schema' or 'text'», живой
     /// прогон против localhost:1234 подтвердил и ошибку, и что без поля
-    /// тот же запрос проходит 200 OK). Поле тогда не отправляется
-    /// вовсе — как уже происходит для CodeAct при
-    /// `expects_structured_output: false`.
-    json_object_response_format: bool,
+    /// тот же запрос проходит 200 OK) — как уже происходит для CodeAct
+    /// при `expects_structured_output: false`.
+    format: FormatPolicy,
     client: reqwest::blocking::Client,
 }
 
@@ -85,7 +124,7 @@ impl OpenAiCompatibleProvider {
         api_key: Option<Secret>,
         allow_private_endpoint: bool,
         temperature: Option<f32>,
-        json_object_response_format: bool,
+        format: FormatPolicy,
         request_timeout_secs: Option<u64>,
     ) -> Result<Self, ModelError> {
         // Находка 2.14 аудита: гейт применялся только к первому хопу —
@@ -107,7 +146,7 @@ impl OpenAiCompatibleProvider {
             temperature,
             api_key,
             allow_private_endpoint,
-            json_object_response_format,
+            format,
             client,
         })
     }
@@ -158,7 +197,11 @@ struct ChatRequest<'a> {
     messages: [ChatMessage<'a>; 2],
     temperature: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    response_format: Option<ResponseFormat>,
+    response_format: Option<WireResponseFormat<'a>>,
+    /// Ollama-диалект (спека п.B4): поле `format` — строка "json"
+    /// (json_object) или объект схемы (json_schema/grammar).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<serde_json::Value>,
 }
 
 #[derive(serde::Serialize)]
@@ -167,10 +210,21 @@ struct ChatMessage<'a> {
     content: &'a str,
 }
 
+/// OpenAI-диалект на проводе: `response_format` с опциональным
+/// вложенным `json_schema` (strict constrained decoding, issue #3).
 #[derive(serde::Serialize)]
-struct ResponseFormat {
+struct WireResponseFormat<'a> {
     #[serde(rename = "type")]
     kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    json_schema: Option<WireJsonSchema<'a>>,
+}
+
+#[derive(serde::Serialize)]
+struct WireJsonSchema<'a> {
+    name: &'a str,
+    schema: &'a serde_json::Value,
+    strict: bool,
 }
 
 impl ModelProvider for OpenAiCompatibleProvider {
@@ -201,13 +255,71 @@ impl ModelProvider for OpenAiCompatibleProvider {
             // работать через реальный OpenAI-совместимый endpoint (сервер
             // заставлял бы модель ответить JSON вместо JS-текста).
             // Явное поле `expects_structured_output` — не вывод из
-            // `contract_name`. Дополнительно гасится квирком провайдера
-            // (репорт 2026-08-08: LM Studio — 400 на этом поле).
-            response_format: (request.expects_structured_output
-                && self.json_object_response_format)
-                .then_some(ResponseFormat {
-                    kind: "json_object",
-                }),
+            // `contract_name`. SGR 0.30.0 (issue #3): режим и диалект —
+            // из FormatPolicy провайдера.
+            response_format: if !request.expects_structured_output {
+                None
+            } else {
+                match (self.format.response_format, self.format.dialect) {
+                    (ResponseFormat::None, _) => None,
+                    (ResponseFormat::JsonObject, ProviderDialect::OpenAi) => {
+                        Some(WireResponseFormat {
+                            kind: "json_object",
+                            json_schema: None,
+                        })
+                    }
+                    (
+                        ResponseFormat::JsonSchema | ResponseFormat::Grammar,
+                        ProviderDialect::OpenAi,
+                    ) => {
+                        match (
+                            request.json_schema.as_ref(),
+                            request.contract_name.as_deref(),
+                        ) {
+                            (Some(schema), Some(name)) => Some(WireResponseFormat {
+                                kind: "json_schema",
+                                json_schema: Some(WireJsonSchema {
+                                    name,
+                                    schema,
+                                    strict: true,
+                                }),
+                            }),
+                            // Схемы у вызывающего нет — предупреждение и
+                            // даунгрейд (спека п.B3): constrained decoding
+                            // невозможен без схемы, молчать нельзя.
+                            _ => {
+                                eprintln!(
+                                    "[berimor] response_format=json_schema, но вызывающий не передал схему — даунгрейд до json_object"
+                                );
+                                Some(WireResponseFormat {
+                                    kind: "json_object",
+                                    json_schema: None,
+                                })
+                            }
+                        }
+                    }
+                    // Ollama-диалект — поле `format` ниже.
+                    (_, ProviderDialect::Ollama) => None,
+                }
+            },
+            format: if !request.expects_structured_output
+                || self.format.dialect != ProviderDialect::Ollama
+            {
+                None
+            } else {
+                match self.format.response_format {
+                    ResponseFormat::None => None,
+                    ResponseFormat::JsonObject => Some(serde_json::Value::String("json".into())),
+                    ResponseFormat::JsonSchema | ResponseFormat::Grammar => {
+                        request.json_schema.clone().or_else(|| {
+                            eprintln!(
+                                "[berimor] ollama format=schema, но вызывающий не передал схему — даунгрейд до \"json\""
+                            );
+                            Some(serde_json::Value::String("json".into()))
+                        })
+                    }
+                }
+            },
         };
 
         // Ретраи на ТРАНСПОРТНЫЕ сбои (обрыв соединения, усечённое тело,
@@ -311,7 +423,7 @@ mod tests {
             None,
             false, // приватный endpoint БЕЗ opt-in — гейт обязан отказать
             None,
-            true,
+            policy_json_object(),
             None,
         )
         .and_then(|p| p.complete(request()));
@@ -336,8 +448,16 @@ mod tests {
             stream.write_all(response.as_bytes()).unwrap();
         });
 
-        let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, None).unwrap();
+        let provider = OpenAiCompatibleProvider::new(
+            identity(),
+            url,
+            None,
+            true,
+            None,
+            policy_json_object(),
+            None,
+        )
+        .unwrap();
         let result = provider.complete(request());
         server.join().unwrap();
         assert!(
@@ -351,6 +471,20 @@ mod tests {
             provider: "mock".into(),
             model_id: "mock-model".into(),
             tier: ModelTier::Weak,
+        }
+    }
+
+    fn policy_json_object() -> FormatPolicy {
+        FormatPolicy {
+            response_format: ResponseFormat::JsonObject,
+            dialect: ProviderDialect::OpenAi,
+        }
+    }
+
+    fn policy_none() -> FormatPolicy {
+        FormatPolicy {
+            response_format: ResponseFormat::None,
+            dialect: ProviderDialect::OpenAi,
         }
     }
 
@@ -395,6 +529,7 @@ mod tests {
             prompt: "Классифицируй обращение.".into(),
             contract_name: Some("ClassificationOut".into()),
             expects_structured_output: true,
+            json_schema: None,
         }
     }
 
@@ -407,7 +542,7 @@ mod tests {
             Some(Secret::new("sk-test".into())),
             true,
             None,
-            true,
+            policy_json_object(),
             None,
         )
         .unwrap();
@@ -440,7 +575,8 @@ mod tests {
     fn json_object_response_format_false_omits_the_field_even_when_structured_output_is_expected() {
         let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
         let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, false, None).unwrap();
+            OpenAiCompatibleProvider::new(identity(), url, None, true, None, policy_none(), None)
+                .unwrap();
 
         provider.complete(request()).unwrap();
 
@@ -459,8 +595,16 @@ mod tests {
     #[test]
     fn expects_structured_output_false_omits_response_format_even_with_a_contract_name() {
         let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
-        let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, None).unwrap();
+        let provider = OpenAiCompatibleProvider::new(
+            identity(),
+            url,
+            None,
+            true,
+            None,
+            policy_json_object(),
+            None,
+        )
+        .unwrap();
         let request = CompletionRequest {
             expects_structured_output: false,
             ..request()
@@ -481,8 +625,16 @@ mod tests {
     fn oversized_response_body_is_rejected_with_limit_error() {
         let huge = format!("{{\"pad\": \"{}\"}}", "x".repeat(9 * 1024 * 1024));
         let (url, server) = serve_once("200 OK", huge);
-        let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, None).unwrap();
+        let provider = OpenAiCompatibleProvider::new(
+            identity(),
+            url,
+            None,
+            true,
+            None,
+            policy_json_object(),
+            None,
+        )
+        .unwrap();
 
         let result = provider.complete(request());
 
@@ -502,8 +654,16 @@ mod tests {
     #[test]
     fn response_within_limit_is_accepted() {
         let (url, server) = serve_once("200 OK", GOLDEN_RESPONSE.to_string());
-        let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, None).unwrap();
+        let provider = OpenAiCompatibleProvider::new(
+            identity(),
+            url,
+            None,
+            true,
+            None,
+            policy_json_object(),
+            None,
+        )
+        .unwrap();
         assert!(provider.complete(request()).is_ok());
         server.join().unwrap();
     }
@@ -533,9 +693,16 @@ mod tests {
             let _ = stream.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n{}");
         });
 
-        let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, Some(1))
-                .unwrap();
+        let provider = OpenAiCompatibleProvider::new(
+            identity(),
+            url,
+            None,
+            true,
+            None,
+            policy_json_object(),
+            Some(1),
+        )
+        .unwrap();
         let result = provider.complete(request());
 
         assert!(
@@ -548,8 +715,16 @@ mod tests {
     #[test]
     fn http_error_maps_to_unavailable() {
         let (url, server) = serve_once("500 Internal Server Error", "{\"error\": \"boom\"}".into());
-        let provider =
-            OpenAiCompatibleProvider::new(identity(), url, None, true, None, true, None).unwrap();
+        let provider = OpenAiCompatibleProvider::new(
+            identity(),
+            url,
+            None,
+            true,
+            None,
+            policy_json_object(),
+            None,
+        )
+        .unwrap();
 
         let result = provider.complete(request());
 
@@ -567,7 +742,7 @@ mod tests {
             None,
             false,
             None,
-            true,
+            policy_json_object(),
             None,
         )
         .unwrap();
@@ -596,7 +771,7 @@ mod tests {
             None,
             false,
             None,
-            true,
+            policy_json_object(),
             None,
         )
         .unwrap();

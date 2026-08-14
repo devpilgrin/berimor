@@ -113,7 +113,7 @@ mod tests {
     /// контракт без дополнительной подгонки.
     #[test]
     fn parsed_output_deserializes_into_a_real_contract() {
-        let raw = "```json\n{\"category\": \"billing\", \"risk\": 2, \"summary\": \"ok\"}\n```";
+        let raw = "```json\n{\"category\": \"billing\", \"risk_factors\": [\"разовое списание\"], \"risk\": 2, \"summary\": \"ok\"}\n```";
         let value = parse(raw).unwrap();
         let contract: ClassificationOut = serde_json::from_value(value).unwrap();
         assert_eq!(contract.risk, 2);

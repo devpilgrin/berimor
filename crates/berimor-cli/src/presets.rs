@@ -226,6 +226,7 @@ pub fn instantiate(
         cost_per_1k_tokens: None,
         temperature: preset.temperature,
         json_object_response_format: preset.json_object_response_format,
+        response_format: None,
         request_timeout_secs: preset.request_timeout_secs,
     }
 }

@@ -4,6 +4,7 @@
   "expected_outcome": "reject_schema",
   "raw_model_output": {
     "category": "billing",
+    "risk_factors": ["разовое списание, сумма небольшая"],
     "risk": 2,
     "summary": "Обычный вопрос по счёту.",
     "override_policy_check": true,

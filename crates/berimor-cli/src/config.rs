@@ -78,6 +78,15 @@ pub struct ProviderConfig {
     /// CodeAct); пресет lmstudio задаёт `false`.
     #[serde(default = "default_true")]
     pub json_object_response_format: bool,
+    /// Режим подсказки формата ответа (SGR-волна 0.30.0, issue #3):
+    /// "none" | "json_object" | "json_schema" | "grammar". Не задано —
+    /// выводится из `json_object_response_format` (обратная
+    /// совместимость). `json_schema` — constrained decoding: схема
+    /// контракта уходит в поле запроса (OpenAI-диалект) или в `format`
+    /// (ollama), порядок полей схемы становится порядком генерации —
+    /// связка с полями-обоснованиями (issue #4).
+    #[serde(default)]
+    pub response_format: Option<String>,
     /// Потолок одного HTTP-вызова провайдеру в секундах; `None` —
     /// `berimor_model_pool::http_provider::DEFAULT_REQUEST_TIMEOUT_SECS`
     /// (150с, поднято ×5 директивой 2026-08-08 — локальные reasoning-
@@ -89,6 +98,31 @@ pub struct ProviderConfig {
 
 fn default_true() -> bool {
     true
+}
+
+impl ProviderConfig {
+    /// Эффективный режим формата: явный `response_format` (валидируется
+    /// строкой конфига — опечатка = ошибка загрузки, не молчаливый
+    /// даунгрейд), иначе вывод из устаревшего bool (true → json_object,
+    /// false → none).
+    pub fn effective_response_format(
+        &self,
+    ) -> Result<berimor_types::model::ResponseFormat, ConfigError> {
+        match &self.response_format {
+            Some(value) => value
+                .parse::<berimor_types::model::ResponseFormat>()
+                .map_err(|reason| ConfigError::InvalidProviderValue {
+                    provider: self.name.clone(),
+                    field: "response_format".into(),
+                    reason,
+                }),
+            None => Ok(if self.json_object_response_format {
+                berimor_types::model::ResponseFormat::JsonObject
+            } else {
+                berimor_types::model::ResponseFormat::None
+            }),
+        }
+    }
 }
 
 /// Заглушка инструмента для `berimor run`: детерминированный ответ на
@@ -322,6 +356,14 @@ pub enum ConfigError {
     /// схема — любая ошибка есть ошибка загрузки конфигурации.
     #[error("контракт '{contract}' из конфигурации: {reason}")]
     Contract { contract: String, reason: String },
+    /// Невалидное значение поля провайдера (SGR 0.30.0: опечатка в
+    /// `response_format` — ошибка загрузки, не молчаливый даунгрейд).
+    #[error("провайдер '{provider}', поле '{field}': {reason}")]
+    InvalidProviderValue {
+        provider: String,
+        field: String,
+        reason: String,
+    },
 }
 
 // --- Слоистая конфигурация (§20.12) ------------------------------------

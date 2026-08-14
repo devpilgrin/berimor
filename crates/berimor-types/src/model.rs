@@ -5,6 +5,52 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Режим подсказки формата ответа провайдеру (SGR-волна 0.30.0, issue #3,
+/// спека `docs/rnd/sgr-wave-spec.md`). Значения — дословно строки конфигурации
+/// `providers[].response_format`: `"none" | "json_object" | "json_schema" |
+/// "grammar"`. Не задано в конфигурации — выводится из устаревшего
+/// `json_object_response_format: bool` (обратная совместимость, см.
+/// `berimor-cli::config::ProviderConfig::effective_response_format`).
+///
+/// Это ПОДСКАЗКА транспорту, не гарантия: валидирует ответ всё равно
+/// Mediation (M2/M3), а не сервер и не клиент.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseFormat {
+    /// Поле формата не отправляется вовсе (квирк провайдера, репорт
+    /// 2026-08-08: LM Studio — 400 на `json_object`).
+    None,
+    /// `response_format: {"type": "json_object"}` (ollama-диалект:
+    /// `format: "json"`).
+    JsonObject,
+    /// Constrained decoding по схеме контракта: `response_format:
+    /// {"type": "json_schema", "json_schema": {"name": …, "schema": …,
+    /// "strict": true}}` (ollama-диалект: `format` = объект схемы).
+    JsonSchema,
+    /// GBNF-грамматика из схемы. Конвертера схема→GBNF в дереве НЕТ
+    /// (спека: «GBNF отложить с пометкой в доке») — для llama-server
+    /// транспортируется как `json_schema` (он его принимает), для
+    /// встроенного движка (E4) поведения не меняет.
+    Grammar,
+}
+
+impl std::str::FromStr for ResponseFormat {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "none" => Ok(Self::None),
+            "json_object" => Ok(Self::JsonObject),
+            "json_schema" => Ok(Self::JsonSchema),
+            "grammar" => Ok(Self::Grammar),
+            other => Err(format!(
+                "недопустимое значение response_format '{other}' — \
+                 ожидается одно из: none, json_object, json_schema, grammar"
+            )),
+        }
+    }
+}
+
 /// Присваивается кодом реестра моделей по офлайн-оценке на золотом наборе,
 /// не самой моделью (ADR-0010: «присвоение класса — код, не самооценка»).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -57,6 +103,16 @@ pub struct CompletionRequest {
     /// исходный текст программы; контракт применяется ПОЗЖЕ, к
     /// результату исполнения, не к самому ответу модели).
     pub expects_structured_output: bool,
+    /// JSON Schema контракта ответа (SGR-волна 0.30.0, issue #3):
+    /// проводится вызывающим (`StructuredLlm` — из реестра/конфиг-
+    /// контракта, `AgentStep::decide_turn` — schemars `AgentTurnDecision`)
+    /// и транспортируется провайдером при `ResponseFormat::JsonSchema`
+    /// (constrained decoding: сервер сам держит форму, порядок полей в
+    /// схеме = порядок генерации — связка с issue #4). `None` — схемы у
+    /// вызывающего нет (CodeAct: ответ — программа, не JSON) или режим
+    /// провайдера её не использует.
+    #[serde(default)]
+    pub json_schema: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

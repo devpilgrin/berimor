@@ -20,10 +20,23 @@ use validator::Validate;
 /// поля сверх перечисленных запрещены. Диапазон и длина — через
 /// `#[validate(...)]` (M3): `u8` сам по себе допускает 0–255, серде их не
 /// проверяет при десериализации, это отдельный проход после неё.
+///
+/// SGR-волна 0.30.0 (issue #4, спека `docs/rnd/sgr-wave-spec.md`):
+/// `risk_factors` — поле-ОБОСНОВАНИЕ — объявлено ПЕРЕД целевым `risk`:
+/// порядок объявления = порядок в JSON Schema (schemars сохраняет порядок
+/// полей структуры в `properties`) и, при constrained decoding (issue #3),
+/// порядок генерации — модель сначала перечисляет факторы риска и только
+/// затем выставляет оценку, а не подгоняет обоснование под уже сгенерированное
+/// число. Без constrained decoding порядок полей — только подсказка.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(deny_unknown_fields)]
 pub struct ClassificationOut {
     pub category: Category,
+    /// Обоснование оценки риска — заполняется ДО целевого поля `risk`
+    /// (SGR, issue #4). Хотя бы один фактор обязателен: «риск без
+    /// причин» — не ответ, а самоотчёт без содержания.
+    #[validate(length(min = 1))]
+    pub risk_factors: Vec<String>,
     #[validate(range(min = 0, max = 10))]
     pub risk: u8,
     #[validate(length(max = 280))]
@@ -40,7 +53,10 @@ pub enum Category {
 }
 
 impl Contract for ClassificationOut {
-    const SCHEMA_VERSION: u32 = 1;
+    // 0.30.0 (issue #4): версия 2 — добавлено обязательное `risk_factors`
+    // перед `risk`; вывод версии 1 (без обоснования) формой больше не
+    // принимается — это и есть смысл бампа.
+    const SCHEMA_VERSION: u32 = 2;
     const NAME: &'static str = "ClassificationOut";
 
     // Классификация — внутренние данные для ветвления (`state.classify.risk`
@@ -262,6 +278,7 @@ mod tests {
     fn round_trips_through_json() {
         let value = ClassificationOut {
             category: Category::Billing,
+            risk_factors: vec!["стандартный вопрос по счёту".into()],
             risk: 2,
             summary: "Обычный вопрос по счёту.".into(),
         };
@@ -280,11 +297,42 @@ mod tests {
     fn accepts_well_formed_output() {
         let raw = json!({
             "category": "billing",
+            "risk_factors": ["разовое списание, сумма небольшая"],
             "risk": 2,
             "summary": "Обычный вопрос по счёту."
         });
         let result: Result<ClassificationOut, _> = serde_json::from_value(raw);
         assert!(result.is_ok());
+    }
+
+    /// Версия 1 формы (без `risk_factors`) больше не принимается — бамп
+    /// SCHEMA_VERSION 1→2 означает именно это (SGR, issue #4).
+    #[test]
+    fn rejects_version_1_output_without_risk_factors() {
+        let raw = json!({
+            "category": "billing",
+            "risk": 2,
+            "summary": "Обычный вопрос по счёту."
+        });
+        let result: Result<ClassificationOut, _> = serde_json::from_value(raw);
+        assert!(
+            result.is_err(),
+            "вывод без обоснования риска — форма версии 1, отклоняется"
+        );
+    }
+
+    /// min=1 на длине списка: «обоснование» из нуля факторов — не
+    /// обоснование (issue #4, спека: validate length min=1).
+    #[test]
+    fn rejects_empty_risk_factors() {
+        use validator::Validate;
+        let value = ClassificationOut {
+            category: Category::Billing,
+            risk_factors: Vec::new(),
+            risk: 2,
+            summary: "ok".into(),
+        };
+        assert!(value.validate().is_err());
     }
 
     /// Прогоняет буквально ту вредоносную фикстуру, что была подготовлена
@@ -310,6 +358,7 @@ mod tests {
     fn rejects_unknown_field_directly() {
         let raw = json!({
             "category": "billing",
+            "risk_factors": ["x"],
             "risk": 2,
             "summary": "ok",
             "skip_human_review": true
@@ -320,7 +369,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_enum_variant_not_silently_defaulted() {
-        let raw = json!({"category": "not-a-real-category", "risk": 1, "summary": "x"});
+        let raw = json!({"category": "not-a-real-category", "risk_factors": ["x"], "risk": 1, "summary": "x"});
         let result: Result<ClassificationOut, _> = serde_json::from_value(raw);
         assert!(result.is_err());
     }
@@ -340,11 +389,37 @@ mod tests {
         let properties = &schema_json["properties"];
 
         assert!(properties.get("category").is_some());
+        assert!(properties.get("risk_factors").is_some());
         assert!(properties.get("risk").is_some());
         assert!(properties.get("summary").is_some());
         assert!(
             schema_json.get("additionalProperties").is_some(),
             "схема должна отражать закрытость контракта хоть в каком-то поле метаданных"
+        );
+    }
+
+    /// SGR (issue #4, спека sgr-wave): обоснование идёт РАНЬШЕ целевого
+    /// поля — schemars сохраняет порядок объявления полей структуры в
+    /// `properties`, значит в тексте схемы `risk_factors` встречается до
+    /// `risk`. Проверка по индексу подстроки в JSON-тексте схемы:
+    /// `risk_factors` содержит `risk` как подстроку? Нет — `risk` не
+    /// подстрока `risk_factors` в направлении поиска первого вхождения
+    /// `"risk"` с кавычкой: ищем по точным ключам с кавычками.
+    #[test]
+    fn json_schema_lists_risk_factors_before_risk() {
+        let schema = schemars::schema_for!(ClassificationOut);
+        let text = serde_json::to_string(&schema).unwrap();
+
+        let factors_at = text
+            .find("\"risk_factors\"")
+            .expect("поле risk_factors обязано быть в схеме");
+        let risk_at = text
+            .find("\"risk\"")
+            .expect("поле risk обязано быть в схеме");
+        assert!(
+            factors_at < risk_at,
+            "обоснование обязано идти в схеме раньше целевого поля (SGR): \
+             risk_factors@{factors_at}, risk@{risk_at}\n{text}"
         );
     }
 

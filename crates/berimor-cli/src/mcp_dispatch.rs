@@ -24,13 +24,13 @@ pub enum McpDispatchError {
     Connect {
         name: String,
         #[source]
-        source: McpClientError,
+        source: Box<McpClientError>,
     },
     #[error("не удалось получить список инструментов сервера '{name}': {source}")]
     ListTools {
         name: String,
         #[source]
-        source: McpClientError,
+        source: Box<McpClientError>,
     },
     #[error(
         "инструмент '{tool}' объявлен и сервером '{first_server}', и сервером '{second_server}' — конфликт имён"
@@ -75,7 +75,7 @@ impl McpToolDispatch {
                 let client = McpClient::spawn(command).await.map_err(|source| {
                     McpDispatchError::Connect {
                         name: server.name.clone(),
-                        source,
+                        source: Box::new(source),
                     }
                 })?;
                 let tools =
@@ -84,7 +84,7 @@ impl McpToolDispatch {
                         .await
                         .map_err(|source| McpDispatchError::ListTools {
                             name: server.name.clone(),
-                            source,
+                            source: Box::new(source),
                         })?;
                 for tool in tools {
                     let tool_name = tool.name.to_string();

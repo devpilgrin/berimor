@@ -98,6 +98,7 @@ mod tests {
             prompt: "x".into(),
             contract_name: None,
             expects_structured_output: false,
+            json_schema: None,
         }
     }
 
