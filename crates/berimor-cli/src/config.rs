@@ -117,6 +117,14 @@ pub struct MemoryConfig {
     pub skills_dir: Option<PathBuf>,
     /// Верхняя граница числа сессий в слое Session за один запрос.
     pub session_search_limit: usize,
+    /// BR-04 (полевой тест 2026-08-14): подмешивать ли в контекст
+    /// модели результаты ПРОШЛЫХ прогонов из той же рабочей директории
+    /// (слой Session). Default `false`: неявная передача сведений за
+    /// границу задачи недопустима для контуров с ограничениями на
+    /// обработку данных; включение — осознанное решение оператора.
+    /// При `false` слой пуст независимо от `session_search_limit`.
+    #[serde(default)]
+    pub session_context: bool,
     /// Слой графа сущностей в контексте (ROADMAP §20.5, memory-model.md
     /// §4: «включается профилем процесса, не глобально»). Граф читается
     /// из того же журнала SQLite (`EntityGraphStore`), наполняется
@@ -178,6 +186,7 @@ impl Default for MemoryConfig {
         Self {
             skills_dir: None,
             session_search_limit: 5,
+            session_context: false,
             entity_graph: false,
             fact_extraction: false,
             embeddings: false,
@@ -582,6 +591,21 @@ pub fn load(explicit_path: Option<&Path>) -> Result<Config, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// BR-04 (полевой тест 2026-08-14): слой Session в контексте —
+    /// по умолчанию выключен, включается явным флагом.
+    #[test]
+    fn session_context_defaults_off_and_opt_in() {
+        let plain: Config = toml::from_str("").unwrap();
+        assert!(
+            !plain.memory.session_context,
+            "по умолчанию посторонние прогоны не подмешиваются"
+        );
+        let opted: Config = toml::from_str("[memory]\nsession_context = true\n").unwrap();
+        assert!(opted.memory.session_context);
+        // Лимит читается независимо — гейтится уже в точке сборки.
+        assert_eq!(opted.memory.session_search_limit, 5);
+    }
 
     /// Находка 3.10 аудита: явный --config, которого нет, — ошибка, не
     /// молчаливые дефолты (опечатка в пути ≠ смена security-режима).

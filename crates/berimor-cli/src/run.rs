@@ -181,7 +181,11 @@ pub fn run(
     let memory_context = MemoryContextBuilder {
         episodic: &storage,
         skills: &bundle.skills,
-        session_search_limit: config.memory.session_search_limit,
+        session_search_limit: if config.memory.session_context {
+            config.memory.session_search_limit
+        } else {
+            0
+        },
         entity_graph: config
             .memory
             .entity_graph

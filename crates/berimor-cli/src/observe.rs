@@ -107,7 +107,11 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
     let memory_context = MemoryContextBuilder {
         episodic,
         skills: &bundle.skills,
-        session_search_limit: config.memory.session_search_limit,
+        session_search_limit: if config.memory.session_context {
+            config.memory.session_search_limit
+        } else {
+            0
+        },
         entity_graph: config
             .memory
             .entity_graph

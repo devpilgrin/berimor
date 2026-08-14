@@ -243,6 +243,12 @@ impl MemoryContextBuilder<'_> {
         if task_hint.is_empty() {
             return None;
         }
+        // BR-04 (полевой тест 2026-08-14): лимит 0 — слой отключён
+        // конфигурацией (`[memory] session_context = false`), поиск
+        // не выполняется вообще.
+        if self.session_search_limit == 0 {
+            return None;
+        }
         let sessions =
             episodic::search_sessions(self.episodic, task_hint, self.session_search_limit)
                 .unwrap_or_default();
