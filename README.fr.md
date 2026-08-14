@@ -184,12 +184,12 @@ L'installateur détecte lui-même la plateforme, télécharge le binaire signé 
 
 ### Méthode 2 : binaire prêt à l'emploi depuis GitHub
 
-Les versions à jour se trouvent sur la page des [releases](https://github.com/devpilgrin/berimor/releases/latest). Ci-dessous — les commandes pour télécharger une version précise (remplacez `v0.19.0` par celle voulue si une version plus récente est sortie).
+Les versions à jour se trouvent sur la page des [releases](https://github.com/devpilgrin/berimor/releases/latest). Ci-dessous — les commandes de téléchargement ; la version est substituée automatiquement (dernière release).
 
 **Linux** (x64 ou arm64) :
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 ARCH=x64   # ou arm64
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-linux-${ARCH}.tar.gz"
 tar -xzf "berimor-${VERSION}-linux-${ARCH}.tar.gz"
@@ -201,7 +201,7 @@ berimor --version
 **macOS** (Apple Silicon uniquement — M1/M2/M3 et plus récent ; les builds Intel ne sont pas encore publiés, pour un Mac Intel — méthode 3 ci-dessous) :
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-darwin-arm64.tar.gz"
 tar -xzf "berimor-${VERSION}-darwin-arm64.tar.gz"
 xattr -d com.apple.quarantine berimor   # le binaire n'est pas encore signé Apple — sinon Gatekeeper refusera de le lancer
@@ -213,7 +213,7 @@ berimor --version
 **Windows** (x64), PowerShell :
 
 ```powershell
-$Version = "v0.19.0"
+$Version = (Invoke-RestMethod "https://api.github.com/repos/devpilgrin/berimor/releases/latest").tag_name
 Invoke-WebRequest -Uri "https://github.com/devpilgrin/berimor/releases/download/$Version/berimor-$Version-win32-x64.zip" -OutFile berimor.zip
 Expand-Archive -Path berimor.zip -DestinationPath .\
 .\berimor.exe --version

@@ -184,12 +184,12 @@ Der Installer erkennt Ihre Plattform automatisch, lädt das signierte Binary aus
 
 ### Weg 2: Fertiges Binary von GitHub
 
-Aktuelle Versionen finden Sie auf der [Releases](https://github.com/devpilgrin/berimor/releases/latest)-Seite. Nachfolgend die Befehle zum Herunterladen einer bestimmten Version (ersetzen Sie `v0.19.0` durch die gewünschte, falls ein neueres Release erschienen ist).
+Aktuelle Versionen finden Sie auf der [Releases](https://github.com/devpilgrin/berimor/releases/latest)-Seite. Nachfolgend die Download-Befehle; die Version wird automatisch eingesetzt (letztes Release).
 
 **Linux** (x64 oder arm64):
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 ARCH=x64   # oder arm64
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-linux-${ARCH}.tar.gz"
 tar -xzf "berimor-${VERSION}-linux-${ARCH}.tar.gz"
@@ -201,7 +201,7 @@ berimor --version
 **macOS** (nur Apple Silicon — M1/M2/M3 und neuer; Intel-Builds werden derzeit nicht veröffentlicht, für Intel-Macs siehe Weg 3 unten):
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-darwin-arm64.tar.gz"
 tar -xzf "berimor-${VERSION}-darwin-arm64.tar.gz"
 xattr -d com.apple.quarantine berimor   # das Binary ist noch nicht von Apple signiert — sonst verweigert Gatekeeper den Start
@@ -213,7 +213,7 @@ berimor --version
 **Windows** (x64), PowerShell:
 
 ```powershell
-$Version = "v0.19.0"
+$Version = (Invoke-RestMethod "https://api.github.com/repos/devpilgrin/berimor/releases/latest").tag_name
 Invoke-WebRequest -Uri "https://github.com/devpilgrin/berimor/releases/download/$Version/berimor-$Version-win32-x64.zip" -OutFile berimor.zip
 Expand-Archive -Path berimor.zip -DestinationPath .\
 .\berimor.exe --version

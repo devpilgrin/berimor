@@ -184,12 +184,12 @@ berimor --version
 
 ### 方法 2：GitHub のビルド済みバイナリ
 
-最新バージョンは[リリースページ](https://github.com/devpilgrin/berimor/releases/latest)にあります。以下は特定バージョンをダウンロードするコマンドです（より新しいバージョンが出ている場合は `v0.19.0` を置き換えてください）。
+最新バージョンは[リリースページ](https://github.com/devpilgrin/berimor/releases/latest)にあります。以下はダウンロード用コマンドです。バージョンは自動で代入されます（最新リリース）。
 
 **Linux**（x64 または arm64）：
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 ARCH=x64   # または arm64
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-linux-${ARCH}.tar.gz"
 tar -xzf "berimor-${VERSION}-linux-${ARCH}.tar.gz"
@@ -201,7 +201,7 @@ berimor --version
 **macOS**（Apple Silicon のみ——M1/M2/M3 以降；Intel 向けビルドはまだ公開されていません。Intel Mac は下の方法 3 を）：
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-darwin-arm64.tar.gz"
 tar -xzf "berimor-${VERSION}-darwin-arm64.tar.gz"
 xattr -d com.apple.quarantine berimor   # バイナリはまだ Apple 署名されていない——このままでは Gatekeeper が起動を拒否する
@@ -213,7 +213,7 @@ berimor --version
 **Windows**（x64）、PowerShell：
 
 ```powershell
-$Version = "v0.19.0"
+$Version = (Invoke-RestMethod "https://api.github.com/repos/devpilgrin/berimor/releases/latest").tag_name
 Invoke-WebRequest -Uri "https://github.com/devpilgrin/berimor/releases/download/$Version/berimor-$Version-win32-x64.zip" -OutFile berimor.zip
 Expand-Archive -Path berimor.zip -DestinationPath .\
 .\berimor.exe --version

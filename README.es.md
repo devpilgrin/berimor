@@ -184,12 +184,12 @@ El instalador detecta la plataforma por sí mismo, descarga el binario firmado d
 
 ### Método 2: binario listo desde GitHub
 
-Las versiones actuales están en la página de [releases](https://github.com/devpilgrin/berimor/releases/latest). Abajo — los comandos para descargar una versión concreta (sustituye `v0.19.0` por la que necesites si ha salido una más reciente).
+Las versiones actuales están en la página de [releases](https://github.com/devpilgrin/berimor/releases/latest). Abajo — los comandos de descarga; la versión se sustituye automáticamente (último release).
 
 **Linux** (x64 o arm64):
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 ARCH=x64   # o arm64
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-linux-${ARCH}.tar.gz"
 tar -xzf "berimor-${VERSION}-linux-${ARCH}.tar.gz"
@@ -201,7 +201,7 @@ berimor --version
 **macOS** (solo Apple Silicon — M1/M2/M3 y más nuevos; los builds para Intel aún no se publican, para Mac Intel — método 3 más abajo):
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-darwin-arm64.tar.gz"
 tar -xzf "berimor-${VERSION}-darwin-arm64.tar.gz"
 xattr -d com.apple.quarantine berimor   # el binario aún no está firmado por Apple — si no, Gatekeeper se negará a ejecutarlo
@@ -213,7 +213,7 @@ berimor --version
 **Windows** (x64), PowerShell:
 
 ```powershell
-$Version = "v0.19.0"
+$Version = (Invoke-RestMethod "https://api.github.com/repos/devpilgrin/berimor/releases/latest").tag_name
 Invoke-WebRequest -Uri "https://github.com/devpilgrin/berimor/releases/download/$Version/berimor-$Version-win32-x64.zip" -OutFile berimor.zip
 Expand-Archive -Path berimor.zip -DestinationPath .\
 .\berimor.exe --version

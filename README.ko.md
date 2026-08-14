@@ -184,12 +184,12 @@ berimor --version
 
 ### 방법 2: GitHub의 미리 빌드된 바이너리
 
-최신 버전은 [릴리스 페이지](https://github.com/devpilgrin/berimor/releases/latest)에 있습니다. 아래는 특정 버전을 다운로드하는 명령입니다(더 새로운 버전이 나왔다면 `v0.19.0`을 원하는 버전으로 바꾸세요).
+최신 버전은 [릴리스 페이지](https://github.com/devpilgrin/berimor/releases/latest)에 있습니다. 아래는 다운로드 명령입니다. 버전은 자동으로 대입됩니다(최신 릴리스).
 
 **Linux**(x64 또는 arm64):
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 ARCH=x64   # 또는 arm64
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-linux-${ARCH}.tar.gz"
 tar -xzf "berimor-${VERSION}-linux-${ARCH}.tar.gz"
@@ -201,7 +201,7 @@ berimor --version
 **macOS**(Apple Silicon 전용 — M1/M2/M3 이상; Intel 빌드는 아직 퍼블리시되지 않음, Intel Mac은 아래 방법 3 사용):
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-darwin-arm64.tar.gz"
 tar -xzf "berimor-${VERSION}-darwin-arm64.tar.gz"
 xattr -d com.apple.quarantine berimor   # 바이너리가 아직 Apple 서명되지 않음 — 그렇지 않으면 Gatekeeper가 실행을 거부함
@@ -213,7 +213,7 @@ berimor --version
 **Windows**(x64), PowerShell:
 
 ```powershell
-$Version = "v0.19.0"
+$Version = (Invoke-RestMethod "https://api.github.com/repos/devpilgrin/berimor/releases/latest").tag_name
 Invoke-WebRequest -Uri "https://github.com/devpilgrin/berimor/releases/download/$Version/berimor-$Version-win32-x64.zip" -OutFile berimor.zip
 Expand-Archive -Path berimor.zip -DestinationPath .\
 .\berimor.exe --version

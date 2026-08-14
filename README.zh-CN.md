@@ -184,12 +184,12 @@ berimor --version
 
 ### 方式 2：从 GitHub 获取预编译二进制
 
-最新版本见[发布页面](https://github.com/devpilgrin/berimor/releases/latest)。以下是下载特定版本的命令（如有更新版本发布，请将 `v0.19.0` 替换为所需版本）。
+最新版本见[发布页面](https://github.com/devpilgrin/berimor/releases/latest)。以下为下载命令；版本会自动替换（最新发布版）。
 
 **Linux**（x64 或 arm64）：
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 ARCH=x64   # 或 arm64
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-linux-${ARCH}.tar.gz"
 tar -xzf "berimor-${VERSION}-linux-${ARCH}.tar.gz"
@@ -201,7 +201,7 @@ berimor --version
 **macOS**（仅 Apple Silicon——M1/M2/M3 及更新；暂未发布 Intel 构建，Intel Mac 请使用下方方式 3）：
 
 ```sh
-VERSION=v0.19.0
+VERSION=$(curl -s https://api.github.com/repos/devpilgrin/berimor/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)
 curl -LO "https://github.com/devpilgrin/berimor/releases/download/${VERSION}/berimor-${VERSION}-darwin-arm64.tar.gz"
 tar -xzf "berimor-${VERSION}-darwin-arm64.tar.gz"
 xattr -d com.apple.quarantine berimor   # 二进制尚未经 Apple 签名——否则 Gatekeeper 将拒绝运行
@@ -213,7 +213,7 @@ berimor --version
 **Windows**（x64），PowerShell：
 
 ```powershell
-$Version = "v0.19.0"
+$Version = (Invoke-RestMethod "https://api.github.com/repos/devpilgrin/berimor/releases/latest").tag_name
 Invoke-WebRequest -Uri "https://github.com/devpilgrin/berimor/releases/download/$Version/berimor-$Version-win32-x64.zip" -OutFile berimor.zip
 Expand-Archive -Path berimor.zip -DestinationPath .\
 .\berimor.exe --version
