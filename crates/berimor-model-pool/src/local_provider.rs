@@ -48,8 +48,11 @@ pub struct LocalPrompt<'a> {
 /// провайдеру. Реализация на llama.cpp — за feature-флагом (см. выше);
 /// тесты используют фейк.
 pub trait GgufEngine: Send + Sync {
-    /// Синхронно, в потоке вызывающего.
-    fn generate(&self, prompt: &LocalPrompt) -> Result<String, ModelError>;
+    /// Синхронно, в потоке вызывающего. `grammar` — GBNF (см.
+    /// `crate::gbnf`) для принуждения структуры и порядка полей на
+    /// семплировании (issue #3), None — свободная генерация (валидация
+    /// всё равно на Mediation).
+    fn generate(&self, prompt: &LocalPrompt, grammar: Option<&str>) -> Result<String, ModelError>;
 }
 
 /// Провайдер Model Pool поверх локального движка. `identity.tier` — класс
@@ -58,15 +61,53 @@ pub trait GgufEngine: Send + Sync {
 pub struct LlamaLocalProvider<E: GgufEngine> {
     identity: ModelIdentity,
     engine: E,
+    /// GBNF-принуждение по схеме контракта (response_format =
+    /// "json_schema"|"grammar" у локального провайдера, issue #3).
+    use_grammar: bool,
 }
 
 impl<E: GgufEngine> LlamaLocalProvider<E> {
-    pub fn new(identity: ModelIdentity, engine: E) -> Self {
-        Self { identity, engine }
+    pub fn new(identity: ModelIdentity, engine: E, use_grammar: bool) -> Self {
+        Self {
+            identity,
+            engine,
+            use_grammar,
+        }
     }
 
     pub fn identity(&self) -> &ModelIdentity {
         &self.identity
+    }
+
+    /// Тестовая разборка: забрать движок обратно (проверка, что грамматика
+    /// дошла до движка, — через записи фейка).
+    #[cfg(test)]
+    fn into_engine(self) -> E {
+        self.engine
+    }
+
+    /// GBNF из схемы запроса — когда принуждение включено конфигом и
+    /// схема есть. Конвертер поддерживает подмножество схем: отказ —
+    /// предупреждение в stderr и свободная генерация (валидация всё
+    /// равно на Mediation, деградация честная и видимая).
+    fn grammar_for(&self, request: &CompletionRequest) -> Option<String> {
+        if !self.use_grammar || !request.expects_structured_output {
+            return None;
+        }
+        let schema = request.json_schema.as_ref()?;
+        match crate::gbnf::json_schema_to_gbnf(schema) {
+            Ok(grammar) => Some(grammar),
+            Err(reason) => {
+                eprintln!(
+                    "[berimor] GBNF не построен для '{}': {reason} — свободная генерация",
+                    request
+                        .contract_name
+                        .as_deref()
+                        .unwrap_or("<без контракта>")
+                );
+                None
+            }
+        }
     }
 }
 
@@ -82,11 +123,14 @@ impl<E: GgufEngine> ModelProvider for LlamaLocalProvider<E> {
             ),
             None => request.prompt.clone(),
         };
-        let raw_text = self.engine.generate(&LocalPrompt {
-            system_context: &request.system_context,
-            user: &user,
-            expects_json: request.expects_structured_output,
-        })?;
+        let raw_text = self.engine.generate(
+            &LocalPrompt {
+                system_context: &request.system_context,
+                user: &user,
+                expects_json: request.expects_structured_output,
+            },
+            self.grammar_for(&request).as_deref(),
+        )?;
         Ok(CompletionResponse {
             raw_text,
             model: self.identity.clone(),
@@ -188,7 +232,11 @@ mod llama_backend {
     }
 
     impl GgufEngine for LlamaCppEngine {
-        fn generate(&self, prompt: &LocalPrompt) -> Result<String, ModelError> {
+        fn generate(
+            &self,
+            prompt: &LocalPrompt,
+            _grammar: Option<&str>,
+        ) -> Result<String, ModelError> {
             let _guard = self.lock.lock().expect("мьютекс движка не отравлен");
 
             let ctx_params = LlamaContextParams::default()
@@ -285,7 +333,22 @@ mod llama_backend {
             ctx.decode(&mut batch)
                 .map_err(|err| ModelError::Unavailable(format!("decode: {err}")))?;
 
-            let mut sampler = LlamaSampler::chain_simple([LlamaSampler::greedy()]);
+            // GBNF-грамматика контракта (issue #3): сэмплер грамматики
+            // первым в цепочке — структура и порядок полей принуждаются
+            // на уровне логитов, не промпта. Ошибка компиляции
+            // грамматики — откат на свободную генерацию с
+            // предупреждением (валидация всё равно на Mediation).
+            let mut samplers = Vec::new();
+            if let Some(grammar) = _grammar {
+                match LlamaSampler::grammar(&self.model, grammar, "root") {
+                    Ok(grammar_sampler) => samplers.push(grammar_sampler),
+                    Err(err) => {
+                        eprintln!("[berimor] GBNF не принят движком ({err}) — свободная генерация")
+                    }
+                }
+            }
+            samplers.push(LlamaSampler::greedy());
+            let mut sampler = LlamaSampler::chain_simple(samplers);
             // Потоковый декодер: кусок токена может резать многобайтовый
             // UTF-8-символ — побайтовый from_utf8_lossy на каждый токен
             // такие символы калечит.
@@ -348,15 +411,24 @@ mod tests {
     struct FakeEngine {
         answer: Result<String, String>,
         seen_prompts: Mutex<Vec<(String, String, bool)>>,
+        seen_grammars: Mutex<Vec<Option<String>>>,
     }
 
     impl GgufEngine for FakeEngine {
-        fn generate(&self, prompt: &LocalPrompt) -> Result<String, ModelError> {
+        fn generate(
+            &self,
+            prompt: &LocalPrompt,
+            grammar: Option<&str>,
+        ) -> Result<String, ModelError> {
             self.seen_prompts.lock().unwrap().push((
                 prompt.system_context.to_string(),
                 prompt.user.to_string(),
                 prompt.expects_json,
             ));
+            self.seen_grammars
+                .lock()
+                .unwrap()
+                .push(grammar.map(str::to_string));
             match &self.answer {
                 Ok(text) => Ok(text.clone()),
                 Err(reason) => Err(ModelError::Unavailable(reason.clone())),
@@ -365,6 +437,13 @@ mod tests {
     }
 
     fn provider(engine: FakeEngine) -> LlamaLocalProvider<FakeEngine> {
+        provider_with_grammar(engine, true)
+    }
+
+    fn provider_with_grammar(
+        engine: FakeEngine,
+        use_grammar: bool,
+    ) -> LlamaLocalProvider<FakeEngine> {
         LlamaLocalProvider::new(
             ModelIdentity {
                 provider: "llama-local".to_string(),
@@ -372,7 +451,84 @@ mod tests {
                 tier: ModelTier::Weak,
             },
             engine,
+            use_grammar,
         )
+    }
+
+    #[test]
+    fn grammar_from_schema_reaches_engine_when_enabled() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {"category": {"type": "string"}},
+            "required": ["category"]
+        });
+        let engine = FakeEngine {
+            answer: Ok(r#"{"category": "card"}"#.to_string()),
+            seen_prompts: Mutex::new(Vec::new()),
+            seen_grammars: Mutex::new(Vec::new()),
+        };
+        let provider = provider_with_grammar(engine, true);
+        provider
+            .complete(CompletionRequest {
+                system_context: String::new(),
+                prompt: "x".into(),
+                contract_name: Some("C".into()),
+                expects_structured_output: true,
+                json_schema: Some(schema),
+            })
+            .unwrap();
+        let engine = provider.into_engine();
+        let grammars = engine.seen_grammars.lock().unwrap();
+        let grammar = grammars[0].as_deref().expect("грамматика ушла в движок");
+        assert!(grammar.contains("root ::="), "{grammar}");
+        assert!(grammar.contains("category"), "{grammar}");
+    }
+
+    #[test]
+    fn grammar_not_sent_when_disabled_by_config() {
+        let engine = FakeEngine {
+            answer: Ok(r#"{"category": "card"}"#.to_string()),
+            seen_prompts: Mutex::new(Vec::new()),
+            seen_grammars: Mutex::new(Vec::new()),
+        };
+        let provider = provider_with_grammar(engine, false);
+        provider
+            .complete(CompletionRequest {
+                system_context: String::new(),
+                prompt: "x".into(),
+                contract_name: Some("C".into()),
+                expects_structured_output: true,
+                json_schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {"category": {"type": "string"}},
+                    "required": ["category"]
+                })),
+            })
+            .unwrap();
+        let engine = provider.into_engine();
+        assert!(engine.seen_grammars.lock().unwrap()[0].is_none());
+    }
+
+    #[test]
+    fn unsupported_schema_falls_back_to_free_generation() {
+        // anyOf — вне подмножества конвертера: предупреждение + None.
+        let engine = FakeEngine {
+            answer: Ok(r#"{"a": "x"}"#.to_string()),
+            seen_prompts: Mutex::new(Vec::new()),
+            seen_grammars: Mutex::new(Vec::new()),
+        };
+        let provider = provider_with_grammar(engine, true);
+        provider
+            .complete(CompletionRequest {
+                system_context: String::new(),
+                prompt: "x".into(),
+                contract_name: Some("C".into()),
+                expects_structured_output: true,
+                json_schema: Some(serde_json::json!({"anyOf": [{"type": "string"}]})),
+            })
+            .unwrap();
+        let engine = provider.into_engine();
+        assert!(engine.seen_grammars.lock().unwrap()[0].is_none());
     }
 
     #[test]
@@ -380,6 +536,7 @@ mod tests {
         let provider = provider(FakeEngine {
             answer: Ok(r#"{"category": "card"}"#.to_string()),
             seen_prompts: Mutex::new(Vec::new()),
+            seen_grammars: Mutex::new(Vec::new()),
         });
         let response = provider
             .complete(CompletionRequest {
@@ -401,6 +558,7 @@ mod tests {
         let provider = provider(FakeEngine {
             answer: Ok("{}".to_string()),
             seen_prompts: Mutex::new(Vec::new()),
+            seen_grammars: Mutex::new(Vec::new()),
         });
         let _ = provider.complete(CompletionRequest {
             system_context: "СИСТЕМА-МАРКЕР".to_string(),
@@ -427,6 +585,7 @@ mod tests {
         let provider = provider(FakeEngine {
             answer: Err("веса не читаются".to_string()),
             seen_prompts: Mutex::new(Vec::new()),
+            seen_grammars: Mutex::new(Vec::new()),
         });
         let err = provider
             .complete(CompletionRequest {
@@ -447,6 +606,7 @@ mod tests {
         let provider = provider(FakeEngine {
             answer: Ok("ok".to_string()),
             seen_prompts: Mutex::new(Vec::new()),
+            seen_grammars: Mutex::new(Vec::new()),
         });
         let _ = provider.complete(CompletionRequest {
             system_context: String::new(),

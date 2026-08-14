@@ -17,6 +17,7 @@
 
 use berimor_types::model::{ModelIdentity, ModelTier, ModelTierRequirement};
 
+pub mod gbnf;
 pub mod http_provider;
 pub mod local_provider;
 

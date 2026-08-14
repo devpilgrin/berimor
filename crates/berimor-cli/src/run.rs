@@ -521,6 +521,15 @@ pub(crate) fn build_executor_bundle_with_session(
                     &identity,
                     model_path,
                     llama_backend.as_ref(),
+                    // GBNF-принуждение (issue #3): json_schema/grammar у
+                    // локального провайдера = схема контракта на
+                    // семплировании; none/json_object — без грамматики.
+                    matches!(
+                        p.effective_response_format()
+                            .map_err(|err| RunError::Provider(err.to_string()))?,
+                        berimor_types::model::ResponseFormat::JsonSchema
+                            | berimor_types::model::ResponseFormat::Grammar
+                    ),
                 )?),
             ));
             continue;
@@ -605,6 +614,7 @@ fn build_local_provider(
     identity: &ModelIdentity,
     model_path: &std::path::Path,
     backend: Option<&std::sync::Arc<berimor_model_pool::local_provider::LlamaBackend>>,
+    use_grammar: bool,
 ) -> Result<Box<dyn ModelProvider + Send + Sync>, RunError> {
     let backend = backend.cloned().ok_or_else(|| {
         RunError::Provider("внутренняя ошибка: llama.cpp backend не инициализирован".to_string())
@@ -612,7 +622,11 @@ fn build_local_provider(
     let engine = berimor_model_pool::local_provider::LlamaCppEngine::load(backend, model_path)
         .map_err(|err| RunError::Provider(err.to_string()))?;
     Ok(Box::new(
-        berimor_model_pool::local_provider::LlamaLocalProvider::new(identity.clone(), engine),
+        berimor_model_pool::local_provider::LlamaLocalProvider::new(
+            identity.clone(),
+            engine,
+            use_grammar,
+        ),
     ))
 }
 
@@ -623,6 +637,7 @@ fn build_local_provider(
     identity: &ModelIdentity,
     model_path: &std::path::Path,
     _backend: Option<&()>,
+    _use_grammar: bool,
 ) -> Result<Box<dyn ModelProvider + Send + Sync>, RunError> {
     Err(RunError::Provider(format!(
         "провайдер '{}': задан model_path ({}), но бинарник собран без локального инференса — пересоберите с `--features local-inference`",
