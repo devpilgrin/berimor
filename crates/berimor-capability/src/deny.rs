@@ -1025,13 +1025,35 @@ fn is_setuid_chmod(args: &[String]) -> bool {
     })
 }
 
-/// Можно ли доказать, что цель остаётся внутри рабочей области. `~` и
-/// `$VAR` не разворачиваются — недоказуемо, значит вне (консервативно).
+/// Можно ли доказать, что цель остаётся внутри рабочей области. `~/…`
+/// раскрывается в `$HOME` до проверки (BR-06, полевой тест 2026-08-14:
+/// путь, реально указывающий внутрь области, отбивался как внешний —
+/// ложное срабатывание на первом знакомстве). `$VAR` и формы `~user`
+/// не разворачиваются — недоказуемо, значит вне (консервативно).
 /// Лексическая проверка; symlink-обход — забота jail (S2).
 fn path_within(target: &str, workspace_root: &Path) -> bool {
-    if target.contains('~') || target.contains('$') {
+    let expanded;
+    let target = if target == "~" {
+        match std::env::var_os("HOME") {
+            Some(home) => {
+                expanded = PathBuf::from(home).to_string_lossy().into_owned();
+                expanded.as_str()
+            }
+            None => return false,
+        }
+    } else if let Some(rest) = target.strip_prefix("~/") {
+        match std::env::var_os("HOME") {
+            Some(home) => {
+                expanded = Path::new(&home).join(rest).to_string_lossy().into_owned();
+                expanded.as_str()
+            }
+            None => return false,
+        }
+    } else if target.contains('~') || target.contains('$') {
         return false;
-    }
+    } else {
+        target
+    };
     let candidate = if Path::new(target).is_absolute() {
         PathBuf::from(target)
     } else {
@@ -1097,6 +1119,22 @@ mod tests {
     use std::path::PathBuf;
 
     const FIXTURE: &str = include_str!("../../../fixtures/golden/security/denied-operations.json");
+
+    // BR-06 (полевой тест 2026-08-14): `~/...` внутрь области —
+    // доказуемо внутри после раскрытия; форма `~user` и `$VAR`
+    // остаются консервативно вне.
+    #[test]
+    fn tilde_expands_to_home_before_within_check() {
+        let home = std::env::var_os("HOME").expect("HOME в тестовом окружении");
+        let root = Path::new(&home).join("lab");
+        let inner = format!("~/{}", "lab/cron.log");
+        assert!(path_within(&inner, &root), "~/lab/cron.log — внутри");
+        assert!(path_within("~/lab", &root), "граница — внутри");
+        assert!(!path_within("~/other/x", &root), "вне области — вне");
+        assert!(!path_within("~root/lab/x", &root), "~user — недоказуемо");
+        assert!(!path_within("$HOME/lab/x", &root), "$VAR — недоказуемо");
+        // Без HOME раскрыть нельзя — консервативно вне (не падаем).
+    }
 
     #[derive(serde::Deserialize)]
     struct Fixture {
