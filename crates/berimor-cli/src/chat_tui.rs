@@ -3112,6 +3112,7 @@ mod tests {
                 description: "Ревью".into(),
                 triggers: vec!["/review".into()],
                 tools: vec![],
+                permissions: vec![],
                 model_tier: None,
                 body: String::new(),
                 origin: std::path::PathBuf::from("/tmp/x"),

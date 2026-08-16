@@ -42,6 +42,23 @@ pub enum ExtAction {
         #[arg(long)]
         project: bool,
     },
+    /// Статический линт расширения (0.32.0): манифест, известные
+    /// инструменты, согласованность permissions с потолком tools.
+    /// Ошибки — код выхода 1.
+    Lint {
+        /// Каталог скилла/субагента или файл SKILL.md/agent.yaml.
+        path: PathBuf,
+    },
+    /// Мультимодельное ревью содержимого (0.32.0, по мотивам
+    /// ouroboros skill_review): контент — недоверенные данные, вердикт
+    /// кворумом провайдеров. Печатает JSON-вердикт; `--out` — в файл.
+    Review {
+        /// Каталог скилла/субагента.
+        path: PathBuf,
+        /// Куда записать JSON-вердикт (по умолчанию — только stdout).
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 /// Тип расширения — параметризует каталог, префикс и маркер манифеста.
@@ -117,6 +134,32 @@ pub fn run(kind: ExtKind, action: ExtAction) -> i32 {
             }
         }
         ExtAction::Remove { name, project } => remove(&kind, &name, project),
+        ExtAction::Lint { path } => match kind {
+            ExtKind::Skill => match crate::skill_lint::lint_path(&path) {
+                Ok(true) => 0,
+                Ok(false) => 1,
+                Err(err) => {
+                    eprintln!("{err}");
+                    1
+                }
+            },
+            // Линт субагентов — отдельная проверка манифеста agent.yaml.
+            ExtKind::Agent => match crate::skill_lint::lint_agent_path(&path) {
+                Ok(true) => 0,
+                Ok(false) => 1,
+                Err(err) => {
+                    eprintln!("{err}");
+                    1
+                }
+            },
+        },
+        ExtAction::Review { path, out } => match crate::skill_review::review(&kind, &path, out) {
+            Ok(code) => code,
+            Err(err) => {
+                eprintln!("ревью не выполнено: {err}");
+                1
+            }
+        },
     }
 }
 
@@ -249,8 +292,31 @@ fn install(kind: &ExtKind, name: &str, project: bool, repo: Option<&str>) -> i32
     };
     match crate::catalog::install(repo, kind.prefix(), name, &root) {
         Ok(path) => {
-            println!("установлено: {}", path.display());
-            0
+            // Fail-closed гейт (0.32.0): установленное расширение обязано
+            // проходить линт; ошибки — откат (удаление) и код 1.
+            let lint_ok = match kind {
+                ExtKind::Skill => crate::skill_lint::lint_path(&path),
+                ExtKind::Agent => crate::skill_lint::lint_agent_path(&path),
+            };
+            match lint_ok {
+                Ok(true) => {
+                    println!("установлено: {}", path.display());
+                    0
+                }
+                Ok(false) => {
+                    let _ = std::fs::remove_dir_all(&path);
+                    eprintln!(
+                        "установка отклонена линтом (fail-closed): {}",
+                        path.display()
+                    );
+                    1
+                }
+                Err(err) => {
+                    let _ = std::fs::remove_dir_all(&path);
+                    eprintln!("линт не смог проверить расширение: {err} — откат установки");
+                    1
+                }
+            }
         }
         Err(err) => {
             eprintln!("установка не удалась: {err}");

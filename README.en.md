@@ -14,7 +14,7 @@ A universal LLM agent with a deterministic core: task routing, process branching
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-957%20green-brightgreen)](#project-infrastructure)
+[![Tests](https://img.shields.io/badge/tests-966%20green-brightgreen)](#project-infrastructure)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -132,6 +132,8 @@ The event journal covers checkpointing with a margin: any run can be resumed exa
 
 **SGR: the schema leads the reasoning** (0.30.0): a contract may declare reasoning fields BEFORE target ones — `risk_factors` (non-empty list) ahead of `risk` in `ClassificationOut`; having listed the factors, the model assigns the score with grounding instead of arbitrarily. Field order in the JSON Schema matches the declaration order (schemars `preserve_order`). On providers with constrained decoding (`response_format = "json_schema"` in `[[providers]]`: OpenAI-compatible, Ollama via `format`, llama.cpp) the generation order is physically enforced by the schema — the model cannot emit the number without filling the factors first. On providers without constrained decoding (DeepSeek, Kimi — `json_object` only) the soft level applies: field order in the prompt + schema requiredness + mediation validation. Rule for config contracts: declare reasoning fields before target ones. The autonomous in-process llama.cpp enforces the order via a GBNF grammar built from the contract schema (0.31.0).
 
+**Extension governance** (0.32.0): `berimor skill lint` / `berimor agent lint` — static manifest checks (name contract, known tools, `permissions` — net/exec/fs-write/spawn — consistent with the tools ceiling); catalog installs are fail-closed: a lint error rolls back. `berimor skill review` / `agent review` — multi-model review of the content as untrusted data: every configured provider renders an independent verdict, the result is by quorum (any fail = fail), JSON report with findings. Releases carry `release-evidence.json` (hashes, signatures, SBOM, CI trace) and `release-smoke-linux-x64.json`.
+
 **Turn-shape normalizer** (0.29.0): weak models often produce an "almost protocol" reply — a flat `{"thought", "tool", "args"}` form, `"action": "tool"` as a string, a top-level `reply`, or JSON truncated at the token limit. Known shapes are deterministically repaired into the protocol BEFORE mediation (repairs are journaled as `agent_turn_normalized` events; meaning is still decided by validation and the gate). The turn prompt gained a pair of few-shot examples.
 
 **Graph idioms as processes.** The classic patterns (routing, prompt chaining, parallelization, orchestrator-workers, evaluator-optimizer) are expressed without new code: `llm_structured` writes the routing decision into state → `branch` routes by the validated value; evaluator-optimizer is a `loop` with a verdict; orchestrator-workers is `parallel` + join. Process examples are in [`fixtures/golden/processes/`](fixtures/golden/processes/).
@@ -173,7 +175,7 @@ The model proposes the `verdict` — but only a value that passed the contract m
 
 **Rust workspace with one crate per component** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. The guest WASM module (`codeact-guest/`) lives as a separate crate and is committed as a ready-made artifact — normal builds are not slowed down.
 
-**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (957 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
+**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (966 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
 
 **Grown-up supply chain.** Cross-platform releases (Linux x64/arm64, macOS arm64, Windows x64) with keyless cosign/sigstore signing — the private key exists nowhere. Verification: `berimor verify <archive>`. npm publication with provenance, SBOM (CycloneDX) in the pipeline, self-update (`berimor self-update`) implemented on Process Engine primitives — the same journal and failure recovery as ordinary processes, not an ad-hoc script.
 

@@ -20,6 +20,11 @@ pub struct Skill {
     pub description: String,
     pub triggers: Vec<String>,
     pub tools: Vec<String>,
+    /// Декларируемые разрешения (0.32.0, идея манифеста — razzant/ouroboros):
+    /// net | exec | fs-write | spawn. Проверяет `berimor skill lint` и
+    /// установка из каталога (fail-closed); исполнение по-прежнему
+    /// ограничено потолком `tools` — permissions объясняют потолок.
+    pub permissions: Vec<String>,
     pub model_tier: Option<String>,
     /// Тело SKILL.md — системный контекст модели.
     pub body: String,
@@ -50,6 +55,7 @@ pub fn parse(text: &str, origin: &Path) -> Result<Skill, String> {
             match current_list {
                 Some("triggers") => skill.triggers.push(item),
                 Some("tools") => skill.tools.push(item),
+                Some("permissions") => skill.permissions.push(item),
                 _ => return Err(format!("элемент списка вне ключа: {trimmed}")),
             }
             continue;
@@ -67,6 +73,7 @@ pub fn parse(text: &str, origin: &Path) -> Result<Skill, String> {
             "model_tier" => skill.model_tier = Some(value.to_string()),
             "triggers" => current_list = Some("triggers"),
             "tools" => current_list = Some("tools"),
+            "permissions" => current_list = Some("permissions"),
             _ => {} // неизвестные ключи — вперёд-совместимо
         }
     }

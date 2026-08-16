@@ -45,6 +45,8 @@ mod self_update;
 mod serve;
 mod sessions;
 mod setup;
+mod skill_lint;
+mod skill_review;
 mod skills;
 mod trust;
 mod tui_mermaid;

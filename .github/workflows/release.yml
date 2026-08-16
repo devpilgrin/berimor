@@ -243,6 +243,45 @@ jobs:
           npm ci --ignore-scripts
           npm sbom --sbom-format cyclonedx > "../release-assets/bootstrap-${TAG#v}.cdx.json"
 
+      # Smoke + evidence (идея — razzant/ouroboros, 2026-08-14): ДО
+      # `gh release create` — GitHub Immutable Releases не даёт дозалить
+      # ассет после создания релиза, поэтому smoke прогоняется на
+      # артефакте linux-x64 из release-assets, а evidence собирается из
+      # того, что уже лежит в каталоге (архивы, подписи, SBOM).
+      - name: smoke linux-x64 artifact + release evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          archive=(release-assets/berimor-*-linux-x64.tar.gz)
+          mkdir -p /tmp/berimor-smoke && tar -xzf "${archive[0]}" -C /tmp/berimor-smoke
+          bin=$(find /tmp/berimor-smoke -name berimor -type f | head -1)
+          version_out=$("$bin" --version)
+          "$bin" --help >/dev/null
+          printf '{\n  "target": "linux-x64",\n  "binary": "%s",\n  "version_output": "%s",\n  "checks": ["--version", "--help"],\n  "ok": true\n}\n' \
+            "$(basename "${archive[0]}")" "$version_out" \
+            > "release-assets/release-smoke-linux-x64.json"
+          # Единый манифест выпуска: что опубликовано, хэши, подписи,
+          # SBOM, след CI. Потребитель — не установщик (пин хэшей живёт
+          # в npm-пакете, D3), а аудитор: одним файлом видно, что релиз
+          # целостен и из какого прогона собран.
+          {
+            printf '{\n  "tag": "%s",\n  "commit": "%s",\n  "run": "%s",\n  "artifacts": {\n' \
+              "$TAG" "${{ github.sha }}" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            sep=""
+            for f in release-assets/berimor-*.tar.gz release-assets/berimor-*.zip; do
+              name="$(basename "$f")"; hex="$(sha256sum "$f" | cut -d' ' -f1)"
+              sig="false"; [ -f "release-assets/${name}.sigstore.json" ] && sig="true"
+              printf '%s    "%s": {"sha256": "%s", "sigstore": %s}' "$sep" "$name" "$hex" "$sig"
+              sep=$',\n'
+            done
+            printf '\n  },\n  "sbom": ['
+            sep=""
+            for f in release-assets/*.cdx.json; do printf '%s"%s"' "$sep" "$(basename "$f")"; sep=", "; done
+            printf '],\n  "smoke": ["release-smoke-linux-x64.json"]\n}\n'
+          } > release-assets/release-evidence.json
+          cat release-assets/release-evidence.json
+
       - name: create release with all assets attached atomically
         env:
           GH_TOKEN: ${{ github.token }}

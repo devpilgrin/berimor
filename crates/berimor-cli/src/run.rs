@@ -347,6 +347,16 @@ pub(crate) struct ExecutorBundle {
 }
 
 impl ExecutorBundle {
+    /// Клиенты провайдеров поимённо (ревью расширений, 0.32.0: кворум
+    /// по всем настроенным провайдерам, не failover-порядок).
+    pub(crate) fn provider_clients(
+        &self,
+    ) -> &[(String, std::sync::Arc<dyn ModelProvider + Send + Sync>)] {
+        &self.provider_clients
+    }
+}
+
+impl ExecutorBundle {
     pub(crate) fn providers(&self) -> HashMap<String, &dyn ModelProvider> {
         self.provider_clients
             .iter()
