@@ -132,6 +132,8 @@ berimor 的主要“实战”模式是**流程**：一个以图形式执行的�
 
 **SGR：模式引导推理**（0.30.0）：契约可以在目标字段之前声明论证字段 — `ClassificationOut` 中 `risk_factors`（非空列表）位于 `risk` 之前；模型先列举因素，再有依据地给出评分，而不是随意赋值。JSON Schema 中的字段顺序与声明顺序一致（schemars `preserve_order`）。在支持受限解码的提供商上（`[[providers]]` 中 `response_format = "json_schema"`：OpenAI 兼容、Ollama 通过 `format`、llama.cpp），生成顺序由模式物理强制 — 模型不填因素就无法输出数字。在不支持受限解码的提供商上（DeepSeek、Kimi — 仅 `json_object`），采用软层级：提示中的字段顺序 + 模式必填 + 调解验证。配置契约规则：论证字段声明在目标字段之前。 自治的进程内 llama.cpp 通过由契约模式构建的 GBNF 语法强制顺序（0.31.0）。
 
+**带 PoC 验证的渗透测试**（0.33.0，借鉴 usestrix/strix）：参考流程 [`fixtures/golden/processes/pentest/`](fixtures/golden/processes/pentest/) — 侦察 → 假设（evidence 先于 class，SGR）→ `human_gate` → 主动验证 → 报告，只有带执行证据的发现才被接受；未确认的假设诚实地进入 `unconfirmed`。护栏为强制项：目标来自显式 scope，主动操作须经人工确认，全程记入日志。另外：自由循环中的静态 capability 拒绝现在是回合观察而非终止运行 — 模型按规则修正动作，门禁依旧拦截每次尝试。
+
 **扩展治理**（0.32.0）：`berimor skill lint` / `berimor agent lint` — 清单静态检查（命名约定、已知工具、`permissions`（net/exec/fs-write/spawn）与 tools 上限的一致性）；目录安装为 fail-closed：lint 错误即回滚。`berimor skill review` / `agent review` — 将内容作为不可信数据的多模型审查：每个已配置的提供商独立给出结论，结果按法定多数裁决（任一 fail 即 fail），输出含发现的 JSON 报告。发行版附带 `release-evidence.json`（哈希、签名、SBOM、CI 追踪）和 `release-smoke-linux-x64.json`。
 
 

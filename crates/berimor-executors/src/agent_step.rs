@@ -241,7 +241,23 @@ impl AgentStepExecutor<'_> {
                             Value::String(format!("вызов инструмента завершился ошибкой: {err}")),
                             false,
                         ),
-                        // CapabilityDenied/ConfirmationRejected —
+                        // CapabilityDenied от СТАТИЧЕСКИХ правил (путь
+                        // вне области и т.п.) — не «нет» миссии, а
+                        // нарушение ограничения конкретного действия:
+                        // гейт уже не дал ему исполниться, привилегии
+                        // не расширяются; вердикт гейта — наблюдение,
+                        // модель корректирует ДЕЙСТВИЕ под правила
+                        // (полевой задел 2026-08-15: scratch в /tmp
+                        // вне jail убивал весь прогон на первом ходу).
+                        Err(tool_only::ToolOnlyError::CapabilityDenied(reason)) => (
+                            Value::String(format!(
+                                "действие заблокировано capability-слоем: {reason}. \
+                                 Скорректируй действие под правила (например, пути внутри \
+                                 рабочей области) — повтор того же действия будет отклонён снова."
+                            )),
+                            false,
+                        ),
+                        // ConfirmationRejected — ЧЕЛОВЕК сказал «нет»:
                         // решение, которое цикл обязан уважать, не
                         // пытаться обойти переформулировкой
                         // (security-model.md: «нет неявного расширения
@@ -1171,8 +1187,14 @@ mod tests {
 
     #[test]
     fn capability_deny_blocks_the_action_before_dispatch_is_ever_called() {
-        let provider: &'static ScriptedProvider =
-            Box::leak(Box::new(ScriptedProvider::new(vec![TOOL_TURN])));
+        // DenyAll отклоняет действие до диспетча (PanicsIfCalled не
+        // вызывается); с 0.32.x статический deny — НАБЛЮДЕНИЕ цикла, не
+        // терминальный отказ: модель получает вердикт гейта и обязана
+        // скорректировать действие. Здесь второй ход — finish.
+        let provider: &'static ScriptedProvider = Box::leak(Box::new(ScriptedProvider::new(vec![
+            TOOL_TURN,
+            FINISH_TURN,
+        ])));
         let (pool, providers) = pool_and_providers(provider);
         let executor = AgentStepExecutor {
             secrets: &EMPTY_MASKER,
@@ -1190,9 +1212,10 @@ mod tests {
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
-        let result = executor.execute("answer", "SupportReply", 5, false, false, &state, None);
-
-        assert!(matches!(result, Err(AgentStepError::ActionRejected { .. })));
+        let patch = executor
+            .execute("answer", "SupportReply", 5, false, false, &state, None)
+            .expect("deny-наблюдение + finish: цикл завершается патчем");
+        assert!(patch.changes.is_object());
     }
 
     const UNKNOWN_TOOL_TURN: &str = r#"{"thought": "Пробую этот инструмент.", "action": {"kind": "tool", "tool": "crm.unknown_tool", "args": {}}}"#;

@@ -132,6 +132,8 @@ berimor の主な「実戦」モードは**プロセス**——グラフとし�
 
 **SGR：スキーマが推論を導く**（0.30.0）：コントラクトは対象フィールドの前に根拠フィールドを宣言できます — `ClassificationOut` では `risk_factors`（非空リスト）が `risk` の前。要因を列挙してからスコアを付けるため、モデルの評価は恣意的ではなく根拠に基づきます。JSON Schema のフィールド順は宣言順に一致します（schemars `preserve_order`）。constrained decoding 対応プロバイダ（`[[providers]]` の `response_format = "json_schema"`：OpenAI 互換、Ollama は `format` 経由、llama.cpp）では生成順がスキーマによって物理的に強制され、要因を埋めずに数値を出力できません。非対応プロバイダ（DeepSeek、Kimi — `json_object` のみ）ではソフトレベルが働きます：プロンプト内のフィールド順 + スキーマ必須 + メディエーション検証。設定コントラクトの規則：根拠フィールドは対象フィールドより先に宣言してください。 自律的な in-process llama.cpp は、コントラクトスキーマから構築された GBNF 文法で順序を強制します（0.31.0）。
 
+**PoC 検証付きペンテスト**（0.33.0、usestrix/strix に着想）：リファレンスプロセス [`fixtures/golden/processes/pentest/`](fixtures/golden/processes/pentest/) — 偵察 → 仮説（evidence が class より先、SGR）→ `human_gate` → 能動検証 → レポート。発見は実行証拠がある場合のみ受理され、未確認のものは正直に `unconfirmed` に入ります。ガードレールは必須：ターゲットは明示的な scope から、能動的アクションは人間経由、すべてジャーナルに記録。あわせて、自由ループでの capability 層の静的 deny はランを殺すのではなくターンの観測になりました — モデルはルールに合わせてアクションを修正し、ゲートは毎回の試行を引き続き遮断します。
+
 **拡張ガバナンス**（0.32.0）：`berimor skill lint` / `berimor agent lint` — マニフェストの静的チェック（名前の契約、既知ツール、`permissions`（net/exec/fs-write/spawn）と tools 上限の整合性）。カタログからのインストールは fail-closed：lint エラーでロールバック。`berimor skill review` / `agent review` — 内容を信頼できないデータとして扱うマルチモデルレビュー：設定済みの各プロバイダが独立に判定し、結果はクォーラム（1件の fail で fail）、所見付きの JSON レポート。リリースには `release-evidence.json`（ハッシュ、署名、SBOM、CI トレース）と `release-smoke-linux-x64.json` が付属します。
 
 
