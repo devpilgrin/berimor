@@ -96,6 +96,28 @@ pub struct ProviderConfig {
     pub request_timeout_secs: Option<u64>,
 }
 
+/// Настройки свободного агентного цикла (0.34.0).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentConfig {
+    /// Ходов на одно сообщение чата. Дефолт поднят 12 → 32: со стражем
+    /// зацикливания высокий потолок безопасен, а анализ проекта за
+    /// десяток разных чтений не должен умирать по лимиту.
+    #[serde(default = "default_agent_max_turns")]
+    pub max_turns: u32,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            max_turns: default_agent_max_turns(),
+        }
+    }
+}
+
+fn default_agent_max_turns() -> u32 {
+    32
+}
+
 fn default_true() -> bool {
     true
 }
@@ -296,6 +318,11 @@ pub struct Config {
     /// области (`.berimor/allow`, пишет модал «для проекта»).
     #[serde(default)]
     pub auto_confirm: Vec<String>,
+    /// Свободный агентный цикл (0.34.0): бюджет ходов на сообщение чата.
+    /// Страж зацикливания (повтор действия подряд) отдельно и раньше —
+    /// этот лимит защищает от длинной работы, не от бессмысленной.
+    #[serde(default)]
+    pub agent: AgentConfig,
     #[serde(default)]
     pub serve: ServeConfig,
     /// Интерфейс (2026-08-09): `[ui] locale = "en"` — локаль TUI из 8
@@ -324,6 +351,7 @@ impl Default for Config {
             mcp_servers: Vec::new(),
             secret_envs: Vec::new(),
             auto_confirm: Vec::new(),
+            agent: AgentConfig::default(),
             serve: ServeConfig::default(),
             ui: UiConfig::default(),
         }
@@ -426,6 +454,7 @@ pub struct PartialConfig {
     pub secret_envs: Vec<String>,
     #[serde(default)]
     pub auto_confirm: Vec<String>,
+    pub agent: Option<AgentConfig>,
     pub serve: Option<ServeConfig>,
     pub ui: Option<UiConfig>,
 }
@@ -638,6 +667,8 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
         secret_envs,
         auto_confirm,
         serve: local.serve.or(global.serve).unwrap_or(defaults.serve),
+        // `[agent]` — секция целиком, локальный слой сильнее (как [ui]).
+        agent: local.agent.or(global.agent).unwrap_or_default(),
         // `[ui]` — как `[memory]`: секция заменяется целиком, локальный
         // слой сильнее (осознанное упрощение, задокументировано здесь).
         ui: local.ui.or(global.ui).unwrap_or(defaults.ui),

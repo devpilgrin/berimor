@@ -33,3 +33,4 @@ Thumbs.db
 
 # Claude Code CLI (чужой инструмент; не коммитить)
 .claude/
+.worktrees/

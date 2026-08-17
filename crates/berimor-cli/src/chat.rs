@@ -40,7 +40,12 @@ use std::path::{Path, PathBuf};
 
 /// Ходов агента на одно сообщение пользователя — потолок, не цель;
 /// каждый ход — до 4 вызовов модели (см. AgentStepExecutor::execute).
-const MAX_TURNS_PER_MESSAGE: u32 = 12;
+/// Потолок ходов на сообщение чата — из `[agent] max_turns` (0.34.0;
+/// прежняя константа 12 убивала легитимную многократную работу —
+/// анализ проекта. Страж зацикливания — отдельно, в исполнителе).
+fn max_turns_per_message(config: &Config) -> u32 {
+    config.agent.max_turns
+}
 
 /// Исход сессии REPL: выход из чата или перезагрузка рантайма после
 /// изменения конфигурации (`/models add`).
@@ -453,7 +458,7 @@ pub(crate) fn execute_turn(
         .execute(
             "chat",
             ChatReply::NAME,
-            MAX_TURNS_PER_MESSAGE,
+            max_turns_per_message(config),
             false,
             false,
             &state,
@@ -909,7 +914,7 @@ fn run_repl(
                 turn_agent.execute(
                     "chat",
                     ChatReply::NAME,
-                    MAX_TURNS_PER_MESSAGE,
+                    max_turns_per_message(config),
                     false,
                     false,
                     &state,
@@ -919,7 +924,7 @@ fn run_repl(
             None => agent.execute(
                 "chat",
                 ChatReply::NAME,
-                MAX_TURNS_PER_MESSAGE,
+                max_turns_per_message(config),
                 false,
                 false,
                 &state,

@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-966%20green-brightgreen)](#项目基础设施)
+[![Tests](https://img.shields.io/badge/tests-968%20green-brightgreen)](#项目基础设施)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -132,6 +132,8 @@ berimor 的主要“实战”模式是**流程**：一个以图形式执行的�
 
 **SGR：模式引导推理**（0.30.0）：契约可以在目标字段之前声明论证字段 — `ClassificationOut` 中 `risk_factors`（非空列表）位于 `risk` 之前；模型先列举因素，再有依据地给出评分，而不是随意赋值。JSON Schema 中的字段顺序与声明顺序一致（schemars `preserve_order`）。在支持受限解码的提供商上（`[[providers]]` 中 `response_format = "json_schema"`：OpenAI 兼容、Ollama 通过 `format`、llama.cpp），生成顺序由模式物理强制 — 模型不填因素就无法输出数字。在不支持受限解码的提供商上（DeepSeek、Kimi — 仅 `json_object`），采用软层级：提示中的字段顺序 + 模式必填 + 调解验证。配置契约规则：论证字段声明在目标字段之前。 自治的进程内 llama.cpp 通过由契约模式构建的 GBNF 语法强制顺序（0.31.0）。
 
+**自由循环的回合预算**（0.34.0）：每条消息的上限为 `[agent] max_turns`（默认 32，原为 12）。防卡死与长度上限分离：连续重复同一动作（工具 + 相同参数）会在提示中给出警告，连续四次则以明确的 `StuckLoop` 错误停止；而较长的多样工作（数十次读取的项目分析）不受上限惩罚。接近上限约 20% 时，引擎会在提示中加入「还剩 N 个回合 — 请将结果汇总到 Finish」的说明。
+
 **带 PoC 验证的渗透测试**（0.33.0，借鉴 usestrix/strix）：参考流程 [`fixtures/golden/processes/pentest/`](fixtures/golden/processes/pentest/) — 侦察 → 假设（evidence 先于 class，SGR）→ `human_gate` → 主动验证 → 报告，只有带执行证据的发现才被接受；未确认的假设诚实地进入 `unconfirmed`。护栏为强制项：目标来自显式 scope，主动操作须经人工确认，全程记入日志。另外：自由循环中的静态 capability 拒绝现在是回合观察而非终止运行 — 模型按规则修正动作，门禁依旧拦截每次尝试。
 
 **扩展治理**（0.32.0）：`berimor skill lint` / `berimor agent lint` — 清单静态检查（命名约定、已知工具、`permissions`（net/exec/fs-write/spawn）与 tools 上限的一致性）；目录安装为 fail-closed：lint 错误即回滚。`berimor skill review` / `agent review` — 将内容作为不可信数据的多模型审查：每个已配置的提供商独立给出结论，结果按法定多数裁决（任一 fail 即 fail），输出含发现的 JSON 报告。发行版附带 `release-evidence.json`（哈希、签名、SBOM、CI 追踪）和 `release-smoke-linux-x64.json`。
@@ -177,7 +179,7 @@ flowchart LR
 
 **Rust workspace，每个组件一个 crate**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。Guest WASM 模块（`codeact-guest/`）作为独立的 crate 存在，并以预构建产物提交——常规构建不会变慢。
 
-**检查纪律。** 每次发布：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（966 个测试：单元、集成、通过真实二进制的 e2e、流程和恶意输入的黄金夹具）。关键组件必须通过强制性的独立评审。完整的独立审计（`docs/audit-2026-07-31.md`）——**所有发现均已关闭或有意识地记录在案**。
+**检查纪律。** 每次发布：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（968 个测试：单元、集成、通过真实二进制的 e2e、流程和恶意输入的黄金夹具）。关键组件必须通过强制性的独立评审。完整的独立审计（`docs/audit-2026-07-31.md`）——**所有发现均已关闭或有意识地记录在案**。
 
 **成人级的供应链。** 跨平台发布（Linux x64/arm64、macOS arm64、Windows x64），使用 cosign/sigstore 无钥匙签名——私钥在任何地方都不存在。验证：`berimor verify <归档文件>`。npm 发布带 provenance，流水线中包含 SBOM（CycloneDX），自更新（`berimor self-update`）基于 Process Engine 原语实现——与普通流程共享同一套日志与故障恢复，而非临时脚本。
 

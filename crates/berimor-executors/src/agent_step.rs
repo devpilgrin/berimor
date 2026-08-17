@@ -92,6 +92,14 @@ pub enum AgentStepError {
     VerificationFailed(String),
     #[error("свободный цикл исчерпал лимит ходов ({max_turns}) без Finish")]
     TurnsExhausted { max_turns: u32 },
+    /// Защита от зацикливания (0.34.0): одно и то же действие
+    /// (инструмент и канонические аргументы) повторено подряд
+    /// MAX_IDENTICAL_TURNS раз без новой информации. Лимит ходов —
+    /// защита от длинной работы, этот страж — от бессмысленной:
+    /// различие принципиально (анализ проекта за 30 разных чтений ≠ 12
+    /// одинаковых вызовов).
+    #[error("свободный цикл зациклен: действие '{tool}' повторено {repeats} раз подряд без новой информации")]
+    StuckLoop { tool: String, repeats: u32 },
     /// TD1.5: `SecurityEvent` уже журналируется хуком `on_attempt`.
     #[error("инцидент безопасности: {reason}")]
     SecurityViolation { reason: String },
@@ -204,8 +212,23 @@ impl AgentStepExecutor<'_> {
 
         let mut history: Vec<TurnRecord> = Vec::new();
         let mut retry_feedback: Option<String> = None;
+        // Страж зацикливания (0.34.0): подпись последнего действия и
+        // счётчик его подряд-повторов. Разные действия счётчик сбрасывают.
+        let mut last_action_signature: Option<String> = None;
+        let mut identical_repeats: u32 = 0;
 
-        for _turn in 0..max_turns {
+        for turn in 0..max_turns {
+            // Замечание движка в промпт хода (0.34.0): предупреждение о
+            // приближении потолка ходов — модель начинает сводить результат
+            // заранее, а не узнаёт об исчерпании по ошибке.
+            let remaining = max_turns - turn;
+            let wrap_up_note = if remaining <= wrap_up_threshold(max_turns) {
+                Some(format!(
+                    "осталось ходов: {remaining} — начинай сводить результат в Finish"
+                ))
+            } else {
+                None
+            };
             let decision = self.decide_turn(
                 step_id,
                 &final_adapter,
@@ -214,10 +237,39 @@ impl AgentStepExecutor<'_> {
                 model_tier,
                 &history,
                 retry_feedback.take(),
+                wrap_up_note.as_deref(),
             )?;
 
             match decision.action {
                 AgentAction::Tool { tool, args } => {
+                    // Страж зацикливания: повтор действия с теми же
+                    // аргументами не даёт новой информации. Первый повтор
+                    // — предупреждение в промпт следующего хода; предел —
+                    // остановка с говорящей ошибкой (не путать с
+                    // TurnsExhausted: длинная РАЗНАЯ работа дозволена).
+                    let signature = format!(
+                        "{tool}:{}",
+                        serde_json::to_string(&args).unwrap_or_default()
+                    );
+                    if last_action_signature.as_deref() == Some(signature.as_str()) {
+                        identical_repeats += 1;
+                    } else {
+                        last_action_signature = Some(signature);
+                        identical_repeats = 0;
+                    }
+                    if identical_repeats + 1 >= MAX_IDENTICAL_TURNS {
+                        return Err(AgentStepError::StuckLoop {
+                            tool: tool.clone(),
+                            repeats: identical_repeats + 1,
+                        });
+                    }
+                    if identical_repeats >= 1 {
+                        retry_feedback = Some(format!(
+                            "действие '{tool}' уже выполнялось с теми же аргументами — \
+                             новой информации повтор не даст: смени действие или подведи \
+                             итог (Finish)"
+                        ));
+                    }
                     let (observation, ok) = match tool_only::dispatch_confirmed(
                         &tool,
                         &args,
@@ -349,6 +401,7 @@ impl AgentStepExecutor<'_> {
         model_tier: ModelTier,
         history: &[TurnRecord],
         initial_feedback: Option<String>,
+        engine_note: Option<&str>,
     ) -> Result<AgentTurnDecision, AgentStepError> {
         // Контроль утечек (S5): значения из реестра запуска.
         let known_secrets = self.secrets.known_values();
@@ -364,6 +417,7 @@ impl AgentStepExecutor<'_> {
                 history,
                 retry_feedback.as_deref(),
                 &self.tool_lines,
+                engine_note,
             );
             let response = provider.complete(CompletionRequest {
                 system_context: system_context.to_string(),
@@ -823,6 +877,7 @@ fn build_turn_prompt(
     history: &[TurnRecord],
     retry_feedback: Option<&str>,
     tool_lines: &[String],
+    engine_note: Option<&str>,
 ) -> String {
     let turn_schema = serde_json::to_string_pretty(&schemars::schema_for!(AgentTurnDecision))
         .expect("схема derive-типа всегда сериализуема");
@@ -873,8 +928,24 @@ fn build_turn_prompt(
         prompt.push_str(feedback);
     }
 
+    // Замечание движка (бюджет ходов) — отдельной секцией, после всего:
+    // это не ошибка модели, а рамка исполнения.
+    if let Some(note) = engine_note {
+        prompt.push_str(&format!("\n\nЗамечание движка: {note}"));
+    }
+
     prompt
 }
+
+/// Порог предупреждения о потолке ходов: последние ~20% бюджета
+/// (минимум 2 хода) — время сводить результат в Finish.
+fn wrap_up_threshold(max_turns: u32) -> u32 {
+    (max_turns / 5).clamp(2, 6)
+}
+
+/// Подряд-повторов одного действия до остановки: первый повтор —
+/// предупреждение в промпт, четвёртый подряд — StuckLoop.
+const MAX_IDENTICAL_TURNS: u32 = 4;
 
 #[cfg(test)]
 mod tests {
@@ -942,12 +1013,89 @@ mod tests {
             &[],
             None,
             &["- files.read {path} — прочитать файл".to_string()],
+            None,
         );
         assert!(prompt.contains("Доступные инструменты"));
         assert!(prompt.contains("files.read"));
         // Пустой перечень — секции нет (обратная совместимость тестов).
-        let bare = build_turn_prompt("s1", adapter, &[], None, &[]);
+        let bare = build_turn_prompt("s1", adapter, &[], None, &[], None);
         assert!(!bare.contains("Доступные инструменты"));
+        // Замечание движка (бюджет ходов, 0.34.0) — отдельной секцией.
+        let noted = build_turn_prompt("s1", adapter, &[], None, &[], Some("осталось ходов: 2"));
+        assert!(noted.contains("Замечание движка: осталось ходов: 2"));
+    }
+
+    /// Страж зацикливания (0.34.0): одно и то же действие подряд —
+    /// StuckLoop с четвёртого; TurnsExhausted остаётся для длинной
+    /// разной работы, упёршейся в потолок.
+    #[test]
+    fn identical_action_loop_stops_with_stuck_loop() {
+        let provider: &'static ScriptedProvider = Box::leak(Box::new(ScriptedProvider::new(vec![
+            TOOL_TURN,
+            TOOL_TURN,
+            TOOL_TURN,
+            TOOL_TURN,
+            FINISH_TURN,
+        ])));
+        let (pool, providers) = pool_and_providers(provider);
+        let executor = AgentStepExecutor {
+            secrets: &EMPTY_MASKER,
+            on_tool_turn: None,
+            on_provider_switch: None,
+            tool_lines: vec![],
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            gate: &AllowAll,
+            mode: ConfirmationMode::Off,
+            confirmer: &AutoConfirm,
+            dispatch: &FakeCrm,
+        };
+        let state = json!({"user": {"card_id": "c-1"}});
+        let result = executor.execute("answer", "SupportReply", 20, false, false, &state, None);
+        match result {
+            Err(AgentStepError::StuckLoop { tool, repeats }) => {
+                assert_eq!(repeats, MAX_IDENTICAL_TURNS);
+                assert!(!tool.is_empty());
+            }
+            other => panic!("ожидался StuckLoop, получено {other:?}"),
+        }
+    }
+
+    /// Разные действия подряд страж не сбрасывает: легитимная работа
+    /// (чтение разных файлов) длиной в max_turns завершается нормально.
+    #[test]
+    fn varying_actions_are_not_stuck() {
+        let turn_a = r#"{"thought": "a", "action": {"kind": "tool", "tool": "crm.get_card_status", "args": {"id": "1"}}}"#;
+        let turn_b = r#"{"thought": "b", "action": {"kind": "tool", "tool": "crm.get_card_status", "args": {"id": "2"}}}"#;
+        let provider: &'static ScriptedProvider = Box::leak(Box::new(ScriptedProvider::new(vec![
+            turn_a,
+            turn_b,
+            turn_a,
+            turn_b,
+            FINISH_TURN,
+        ])));
+        let (pool, providers) = pool_and_providers(provider);
+        let executor = AgentStepExecutor {
+            secrets: &EMPTY_MASKER,
+            on_tool_turn: None,
+            on_provider_switch: None,
+            tool_lines: vec![],
+            pool: &pool,
+            providers: &providers,
+            context: &SimpleContextBuilder,
+            on_attempt: None,
+            gate: &AllowAll,
+            mode: ConfirmationMode::Off,
+            confirmer: &AutoConfirm,
+            dispatch: &FakeCrm,
+        };
+        let state = json!({"user": {"card_id": "c-1"}});
+        let patch = executor
+            .execute("answer", "SupportReply", 5, false, false, &state, None)
+            .expect("разные действия — не зацикливание");
+        assert!(patch.changes.is_object());
     }
 
     /// Пустой реестр — прежнее поведение (контроль утечек no-op).
