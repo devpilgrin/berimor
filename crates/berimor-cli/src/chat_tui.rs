@@ -306,6 +306,11 @@ struct App {
     /// `handle_mouse`).
     log_area: Rect,
     input_area: Rect,
+    /// Полоса прокрутки журнала (0.35.1): область и последний известный
+    /// max_scroll — для мышиного взаимодействия (клик по дорожке =
+    /// переход к позиции, драг = протяжка). Обновляются каждым кадром.
+    log_bar_area: Option<Rect>,
+    log_max_scroll: usize,
     /// Прокрутка многострочного поля ввода (первая видимая экранная
     /// строка): поле растёт до потолка, дальше крутится само.
     input_scroll: u16,
@@ -399,6 +404,8 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         mouse_capture: true,
         locale,
         log_area: Rect::default(),
+        log_bar_area: None,
+        log_max_scroll: 0,
         input_area: Rect::default(),
         input_scroll: 0,
         tx,
@@ -1713,14 +1720,47 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
             }
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            if in_log {
+            if app
+                .log_bar_area
+                .is_some_and(|bar| point_in_rect(bar, mouse.column, mouse.row))
+            {
+                // Полоса прокрутки (0.35.1): клик по дорожке — переход к
+                // позиции пропорционально высоте клика; ▲/▼ — шаг.
+                scroll_log_to_ratio(app, mouse.row);
+                app.focus = Focus::Log;
+            } else if in_log {
                 app.focus = Focus::Log;
             } else if in_input {
                 app.focus = Focus::Input;
             }
         }
+        MouseEventKind::Drag(MouseButton::Left)
+            if app
+                .log_bar_area
+                .is_some_and(|bar| point_in_rect(bar, mouse.column, mouse.row)) =>
+        {
+            scroll_log_to_ratio(app, mouse.row);
+        }
         _ => {}
     }
+}
+
+/// Позиция прокрутки по высоте клика/драга на полосе: верх дорожки —
+/// начало журнала, низ — конец (пропорция по высоте полосы).
+fn scroll_log_to_ratio(app: &mut App, row: u16) {
+    let Some(bar) = app.log_bar_area else { return };
+    if bar.height < 2 {
+        return;
+    }
+    if row == bar.y {
+        app.scroll = app.scroll.saturating_sub(1); // ▲ — шаг назад
+    } else if row == bar.y + bar.height - 1 {
+        app.scroll = app.scroll.saturating_add(1); // ▼ — шаг вперёд
+    } else {
+        let ratio = f64::from(row - bar.y) / f64::from(bar.height - 1);
+        app.scroll = (ratio * app.log_max_scroll as f64) as u16;
+    }
+    app.follow_tail = false;
 }
 
 /// Точка внутри прямоугольника (hit-test мыши).
@@ -2195,7 +2235,7 @@ fn inline_spans(text: &str) -> Line<'static> {
     }
 }
 
-fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
+fn draw_log(frame: &mut Frame, app: &mut App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     for entry in &app.log {
         match entry {
@@ -2270,6 +2310,9 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
             .thumb_style(Style::default().fg(Color::DarkGray));
         frame.render_stateful_widget(bar, bar_area, &mut state);
     }
+    // Для мыши (0.35.1): область полосы и потолок прокрутки этого кадра.
+    app.log_bar_area = bar_area;
+    app.log_max_scroll = max_scroll;
 }
 
 fn draw_input(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -2531,6 +2574,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -2598,6 +2643,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -2687,6 +2734,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -2756,6 +2805,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -2834,6 +2885,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3004,6 +3057,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3094,6 +3149,34 @@ mod tests {
             .map(|c| c.symbol())
             .collect();
         assert!(!content.contains('▲'), "без полосы на коротком журнале");
+    }
+
+    /// Полоса прокрутки интерактивна (0.35.1): клик по середине дорожки
+    /// — позиция пропорционально; ▲/▼ — шаг; драг — та же пропорция.
+    #[test]
+    fn scrollbar_track_click_and_arrows_scroll_the_log() {
+        let mut app = test_app();
+        app.log_bar_area = Some(Rect {
+            x: 99,
+            y: 4,
+            width: 1,
+            height: 22,
+        });
+        app.log_max_scroll = 100;
+        // Середина дорожки (row 4+11 из 21 интервала) — примерно половина.
+        scroll_log_to_ratio(&mut app, 15);
+        assert!((45..=60).contains(&app.scroll), "середина: {}", app.scroll);
+        assert!(!app.follow_tail);
+        // ▲/▼ — шаги.
+        let before = app.scroll;
+        scroll_log_to_ratio(&mut app, 4);
+        assert_eq!(app.scroll, before - 1, "▲ — шаг назад");
+        scroll_log_to_ratio(&mut app, 4 + 21);
+        assert_eq!(app.scroll, before, "▼ — шаг вперёд");
+        // Без полосы — no-op.
+        app.log_bar_area = None;
+        scroll_log_to_ratio(&mut app, 10);
+        assert_eq!(app.scroll, before);
     }
 
     #[test]
@@ -3218,6 +3301,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3286,6 +3371,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3354,6 +3441,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3418,6 +3507,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3467,6 +3558,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3604,6 +3697,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3699,6 +3794,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3770,6 +3867,8 @@ mod tests {
             mouse_capture: true,
             locale: i18n::Locale::Ru,
             log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
