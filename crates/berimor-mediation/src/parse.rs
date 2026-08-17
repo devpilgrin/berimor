@@ -17,12 +17,51 @@ pub struct ParseError {
     pub source: serde_json::Error,
 }
 
+/// Достройка оборванного JSON (полевой репорт 2026-08-16: локальные
+/// модели утыкаются в потолок генерации — «EOF while parsing an object»
+/// на десятках килобайт — и процесс умирал эскалацией после 3 ретраев).
+/// Это НЕ угадывание содержимого (табу из шапки): достраивается только
+/// СТРУКТУРА — закрывающие кавычки/скобки по таблице суффиксов, первое
+/// парсящееся — принимается. Содержимое не меняется. Каждый ремонт
+/// виден в трассе медиации (MediationParseRepaired).
+pub fn repair_truncated_json(candidate: &str) -> Option<serde_json::Value> {
+    // Кандидаты: сначала закрыть незакрытую строку, затем скобки;
+    // порядок — от меньшего вмешательства к большему.
+    const SUFFIXES: &[&str] = &[
+        "\"", "\"}", "}", "\"]}", "]}", "}", "\"}]}", "}]}", "}}", "]}", "\"]", "]",
+    ];
+    for suffix in SUFFIXES {
+        let repaired = format!("{candidate}{suffix}");
+        if let Ok(value) = serde_json::from_str(&repaired) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+/// Разбор с достройкой обрыва. Возвращает (значение, был_ремонт).
+pub fn parse_with_repair(raw: &str) -> Result<(serde_json::Value, bool), ParseError> {
+    let candidate = strip_markdown_fence(raw);
+    match serde_json::from_str(candidate) {
+        Ok(value) => Ok((value, false)),
+        Err(source) => {
+            // Достройка — только для EOF-класса (обрыв генерации);
+            // прочие ошибки (мусор, не-JSON) — честный отказ.
+            if source.to_string().contains("EOF while parsing") {
+                if let Some(value) = repair_truncated_json(candidate) {
+                    return Ok((value, true));
+                }
+            }
+            Err(ParseError { source })
+        }
+    }
+}
+
 /// Разбирает сырой вывод модели в `serde_json::Value`. Снимает ровно один
 /// слой markdown-обёртки на границах текста, если она есть; содержимое
 /// внутри — либо валидный JSON, либо отказ.
 pub fn parse(raw: &str) -> Result<serde_json::Value, ParseError> {
-    let candidate = strip_markdown_fence(raw);
-    serde_json::from_str(candidate).map_err(|source| ParseError { source })
+    parse_with_repair(raw).map(|(value, _)| value)
 }
 
 /// Снимает markdown code fence (```` ``` ```` или ```` ```json ````) с
@@ -58,6 +97,29 @@ mod tests {
     fn parses_bare_json_without_fence() {
         let result = parse(r#"{"a": 1}"#).unwrap();
         assert_eq!(result, json!({"a": 1}));
+    }
+
+    /// EOF-ремонт (0.35.2, репорт о локальных моделях): обрыв генерации
+    /// достраивается структурно; ремонт помечается флагом.
+    #[test]
+    fn truncated_output_is_repaired_and_flagged() {
+        // Обрыв внутри строки.
+        let (value, repaired) =
+            parse_with_repair(r#"{"summary": "клиент жалуется на задерж"#).unwrap();
+        assert!(repaired);
+        assert_eq!(value["summary"], "клиент жалуется на задерж");
+        // Обрыв после значения, объект не закрыт.
+        let (value, repaired) = parse_with_repair(r#"{"risk": 8"#).unwrap();
+        assert!(repaired);
+        assert_eq!(value["risk"], json!(8));
+        // Обрыв внутри массива внутри объекта.
+        let (value, repaired) =
+            parse_with_repair(r#"{"risk_factors": ["просрочка", "угроза ЦБ""#).unwrap();
+        assert!(repaired);
+        assert_eq!(value["risk_factors"], json!(["просрочка", "угроза ЦБ"]));
+        // Мусор (не EOF) — честный отказ без ремонта.
+        assert!(parse_with_repair("это не json вовсе").is_err());
+        assert!(parse_with_repair(r#"{"a": }"#).is_err());
     }
 
     #[test]
@@ -105,8 +167,14 @@ mod tests {
 
     #[test]
     fn unterminated_fence_fails_naturally_without_special_casing() {
-        let raw = "```json\n{\"a\": 1"; // нет закрывающей обёртки
+        // Незакрытая обёртка с НЕ-JSON содержимым — отказ (EOF-ремонт
+        // достраивает структуру оборванного JSON, не спасает мусор).
+        let raw = "```json\nне json вовсе";
         assert!(parse(raw).is_err());
+        // А оборванный валидный JSON в незакрытой обёртке — достраивается
+        // (0.35.2: обрыв генерации локальной модели выглядит ровно так).
+        let raw = "```json\n{\"a\": 1";
+        assert_eq!(parse(raw).unwrap(), json!({"a": 1}));
     }
 
     /// Композиция с M1: то, что вернул parse, обязано ложиться в реальный

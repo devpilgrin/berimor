@@ -158,7 +158,6 @@ mod llama_backend {
     /// токенов: подсказка StructuredLlm (схема + пример + контекст)
     /// больше — реальный прогон на Qwen3-0.6B упал с `NoKvCacheSlot`
     /// (smoke E4). 4 КиБ покрывает подсказки узких шагов с запасом.
-    const N_CTX: u32 = 4096;
 
     /// Максимум генерируемых токенов на один вызов — защита от бесконечной
     /// генерации (у HTTP-провайдера аналог — таймаут; здесь вычисление
@@ -168,6 +167,12 @@ mod llama_backend {
     /// llama.cpp-модель, загруженная один раз на процесс из пути в
     /// конфигурации. Контекст создаётся на каждый вызов — состояние KV не
     /// протекает между шагами процесса (детерминизм инстанса).
+    /// Контекст по умолчанию (токены): 8192 — поднято с 4096 по репорту
+    /// 2026-08-16 (большой структурный ответ обрывался об потолок —
+    /// «EOF while parsing» на эскалации). Переопределяется конфигом
+    /// провайдера (`local_ctx_tokens`).
+    const DEFAULT_N_CTX: u32 = 8192;
+
     pub struct LlamaCppEngine {
         model: LlamaModel,
         // `LlamaBackend` инициализируется один раз; держим внутри, чтобы
@@ -175,6 +180,7 @@ mod llama_backend {
         // состоянием llama.cpp).
         _backend: Arc<LlamaBackend>,
         model_path: PathBuf,
+        n_ctx: u32,
         // llama.cpp-контекст не `Sync` — сериализуем вызовы внутри
         // провайдера (ModelProvider требует &self-вызовов из разных
         // потоков: Engine запускает параллельные ветки P3).
@@ -183,6 +189,14 @@ mod llama_backend {
 
     impl LlamaCppEngine {
         pub fn load(backend: Arc<LlamaBackend>, model_path: &Path) -> Result<Self, ModelError> {
+            Self::load_with_ctx(backend, model_path, DEFAULT_N_CTX)
+        }
+
+        pub fn load_with_ctx(
+            backend: Arc<LlamaBackend>,
+            model_path: &Path,
+            n_ctx: u32,
+        ) -> Result<Self, ModelError> {
             let model =
                 LlamaModel::load_from_file(&backend, model_path, &LlamaModelParams::default())
                     .map_err(|err| {
@@ -195,6 +209,7 @@ mod llama_backend {
                 model,
                 _backend: backend,
                 model_path: model_path.to_path_buf(),
+                n_ctx,
                 lock: Mutex::new(()),
             })
         }
@@ -240,8 +255,8 @@ mod llama_backend {
             let _guard = self.lock.lock().expect("мьютекс движка не отравлен");
 
             let ctx_params = LlamaContextParams::default()
-                .with_n_ctx(NonZeroU32::new(N_CTX))
-                .with_n_batch(N_CTX);
+                .with_n_ctx(NonZeroU32::new(self.n_ctx))
+                .with_n_batch(self.n_ctx);
             let mut ctx = self
                 .model
                 .new_context(&self._backend, ctx_params)
@@ -316,10 +331,11 @@ mod llama_backend {
             // процесса, из Rust не поймать) — гипотеза независимого
             // ревью E4, подтверждённая их probe. Ошибка — возобновляемая
             // семантика ModelError, не падение агента.
-            if tokens.len() >= N_CTX as usize {
+            if tokens.len() >= self.n_ctx as usize {
                 return Err(ModelError::Unavailable(format!(
-                    "подсказка ({} токенов) превышает контекст ({N_CTX})",
-                    tokens.len()
+                    "подсказка ({} токенов) превышает контекст ({})",
+                    tokens.len(),
+                    self.n_ctx
                 )));
             }
 
@@ -355,7 +371,7 @@ mod llama_backend {
             let mut decoder = encoding_rs::UTF_8.new_decoder();
             let mut out = String::new();
             let start_pos = tokens.len();
-            let budget = MAX_NEW_TOKENS.min((N_CTX as usize).saturating_sub(start_pos));
+            let budget = MAX_NEW_TOKENS.min((self.n_ctx as usize).saturating_sub(start_pos));
             for offset in 0..budget {
                 let token = sampler.sample(&ctx, batch.n_tokens() - 1);
                 if self.model.is_eog_token(token) {

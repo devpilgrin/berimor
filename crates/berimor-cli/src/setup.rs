@@ -374,6 +374,7 @@ mod tests {
             temperature: None,
             json_object_response_format: true,
             response_format: None,
+            local_ctx_tokens: None,
             request_timeout_secs: None,
         }
     }

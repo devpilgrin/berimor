@@ -315,8 +315,13 @@ pub(crate) fn mediate_config_contract(
     attempt: u8,
     trace: &mut Vec<berimor_types::event::EventKind>,
 ) -> MediationOutcome<Patch> {
-    let parsed = match berimor_mediation::parse::parse(raw) {
-        Ok(value) => value,
+    let parsed = match berimor_mediation::parse::parse_with_repair(raw) {
+        Ok((value, repaired)) => {
+            if repaired {
+                trace.push(berimor_types::event::EventKind::MediationParseRepaired);
+            }
+            value
+        }
         Err(err) => return retry_or_escalate(MediationStage::Parse, err.to_string(), attempt),
     };
     trace.push(berimor_types::event::EventKind::MediationParsed);

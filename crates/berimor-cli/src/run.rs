@@ -540,6 +540,7 @@ pub(crate) fn build_executor_bundle_with_session(
                         berimor_types::model::ResponseFormat::JsonSchema
                             | berimor_types::model::ResponseFormat::Grammar
                     ),
+                    p.local_ctx_tokens,
                 )?),
             ));
             continue;
@@ -625,12 +626,17 @@ fn build_local_provider(
     model_path: &std::path::Path,
     backend: Option<&std::sync::Arc<berimor_model_pool::local_provider::LlamaBackend>>,
     use_grammar: bool,
+    local_ctx: Option<u32>,
 ) -> Result<Box<dyn ModelProvider + Send + Sync>, RunError> {
     let backend = backend.cloned().ok_or_else(|| {
         RunError::Provider("внутренняя ошибка: llama.cpp backend не инициализирован".to_string())
     })?;
-    let engine = berimor_model_pool::local_provider::LlamaCppEngine::load(backend, model_path)
-        .map_err(|err| RunError::Provider(err.to_string()))?;
+    let engine = berimor_model_pool::local_provider::LlamaCppEngine::load_with_ctx(
+        backend,
+        model_path,
+        local_ctx.unwrap_or(8192),
+    )
+    .map_err(|err| RunError::Provider(err.to_string()))?;
     Ok(Box::new(
         berimor_model_pool::local_provider::LlamaLocalProvider::new(
             identity.clone(),
@@ -648,6 +654,7 @@ fn build_local_provider(
     model_path: &std::path::Path,
     _backend: Option<&()>,
     _use_grammar: bool,
+    _local_ctx: Option<u32>,
 ) -> Result<Box<dyn ModelProvider + Send + Sync>, RunError> {
     Err(RunError::Provider(format!(
         "провайдер '{}': задан model_path ({}), но бинарник собран без локального инференса — пересоберите с `--features local-inference`",
@@ -1284,6 +1291,7 @@ mod oauth_wiring_tests {
             temperature: None,
             json_object_response_format: true,
             response_format: None,
+            local_ctx_tokens: None,
             request_timeout_secs: None,
         }
     }

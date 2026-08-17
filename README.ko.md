@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-968%20green-brightgreen)](#프로젝트-인프라)
+[![Tests](https://img.shields.io/badge/tests-971%20green-brightgreen)](#프로젝트-인프라)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -132,6 +132,8 @@ berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 
 
 **SGR: 스키마가 추론을 이끈다** (0.30.0): 계약은 대상 필드보다 근거 필드를 먼저 선언할 수 있습니다 — `ClassificationOut`에서 `risk_factors`(비어 있지 않은 목록)가 `risk`보다 앞에 옵니다. 요인을 나열한 뒤 점수를 매기므로 모델의 평가는 임의적이 아니라 근거에 기반합니다. JSON Schema의 필드 순서는 선언 순서와 일치합니다(schemars `preserve_order`). constrained decoding을 지원하는 프로바이더(`[[providers]]`의 `response_format = "json_schema"`: OpenAI 호환, Ollama는 `format` 경유, llama.cpp)에서는 생성 순서가 스키마에 의해 물리적으로 강제되어 요인을 채우지 않고는 숫자를 출력할 수 없습니다. 미지원 프로바이더(DeepSeek, Kimi — `json_object`만 해당)에서는 소프트 레벨이 적용됩니다: 프롬프트의 필드 순서 + 스키마 필수 + 미디에이션 검증. 설정 계약 규칙: 근거 필드를 대상 필드보다 먼저 선언하십시오. 자립형 in-process llama.cpp는 계약 스키마로부터 생성된 GBNF 문법으로 순서를 강제합니다(0.31.0).
 
+**생성 절단 내성** (0.35.2): 토큰 한도에 도달한 로컬 모델은 JSON을 중간에 자릅니다(«EOF while parsing») — 이전에는 재시도 3회를 소모하고 에스컬레이션으로 프로세스가 중단되었습니다. 이제 미디에이션의 parse 단계가 절단을 구조적으로 보완합니다(닫는 따옴표/괄호만, 내용 불변, 쓰레기는 여전히 거부). 복구는 저널에 기록됩니다(`mediation_parse_repaired`) — 재시도와 에스컬레이션은 실제 오류를 위해 남습니다. 로컬 프로바이더 컨텍스트는 8192로 상향되었고 설정 가능합니다(`local_ctx_tokens`).
+
 **자유 루프 턴 예산** (0.34.0): 메시지당 상한은 `[agent] max_turns`(기본 32, 이전 12). 루프 방지는 길이 상한과 분리: 동일 액션(도구 + 동일 인자) 연속 반복 시 프롬프트 경고, 4회 연속이면 명확한 `StuckLoop` 오류로 중단; 긴 다양한 작업(수십 번의 읽기를 동반한 프로젝트 분석)은 상한으로 처벌하지 않습니다. 상한의 ~20% 전에 엔진은 프롬프트에 «턴이 N개 남았습니다 — 결과를 Finish로 정리하세요»라는 주석을 추가합니다.
 
 **PoC 검증 펜테스트** (0.33.0, usestrix/strix에서 영감): 참조 프로세스 [`fixtures/golden/processes/pentest/`](fixtures/golden/processes/pentest/) — 정찰 → 가설(evidence가 class보다 먼저, SGR) → `human_gate` → 능동 검증 → 보고서. 발견은 실행 증거가 있을 때만 인정되고, 미확인은 정직하게 `unconfirmed`에 기록됩니다. 가드레일은 필수: 대상은 명시적 scope에서만, 능동 행동은 사람을 거치며, 모든 것이 저널에 기록됩니다. 또한 자유 루프에서 capability 계층의 정적 deny는 이제 실행 중단이 아니라 턴 관찰입니다 — 모델은 규칙에 맞게 행동을 수정하고, 게이트는 매번 시도를 계속 차단합니다.
@@ -179,7 +181,7 @@ flowchart LR
 
 **컴포넌트당 하나의 크레이트로 구성된 Rust workspace** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. 게스트 WASM 모듈(`codeact-guest/`)은 별도의 crate로 존재하며 빌드된 아티팩트로 커밋되어 있습니다 — 일반 빌드가 느려지지 않습니다.
 
-**검증 규율.** 모든 릴리스: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace`(968개 테스트: 유닛, 통합, 실제 바이너리를 통한 e2e, 프로세스 및 악의적 입력의 골든 픽스처). 중요 컴포넌트는 필수 독립 리뷰를 거칩니다. 전체 독립 감사(`docs/audit-2026-07-31.md`) — **모든 지적 사항이 해결되었거나 의식적으로 문서화됨**.
+**검증 규율.** 모든 릴리스: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace`(971개 테스트: 유닛, 통합, 실제 바이너리를 통한 e2e, 프로세스 및 악의적 입력의 골든 픽스처). 중요 컴포넌트는 필수 독립 리뷰를 거칩니다. 전체 독립 감사(`docs/audit-2026-07-31.md`) — **모든 지적 사항이 해결되었거나 의식적으로 문서화됨**.
 
 **어른의 서플라이 체인.** 크로스 플랫폼 릴리스(Linux x64/arm64, macOS arm64, Windows x64)에 cosign/sigstore 키리스 서명 — 개인 키는 어디에도 존재하지 않습니다. 검증: `berimor verify <아카이브>`. npm 퍼블리시는 provenance와 함께, 파이프라인에 SBOM(CycloneDX), 셀프 업데이트(`berimor self-update`)는 Process Engine 프리미티브 위에 구현 — 임시 스크립트가 아니라 일반 프로세스와 동일한 저널과 장애 복구.
 

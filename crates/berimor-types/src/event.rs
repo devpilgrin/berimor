@@ -77,6 +77,10 @@ pub enum EventKind {
         branch_step_id: String,
     },
     MediationParsed,
+    /// Сырой вывод модели был оборван генерацией (EOF) и достроен
+    /// структурно (закрывающие кавычки/скобки) до разбора — 0.35.2,
+    /// полевой репорт о локальных моделях. Содержимое не менялось.
+    MediationParseRepaired,
     MediationValidated,
     MediationCommitted,
     MediationRejected {

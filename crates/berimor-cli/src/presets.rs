@@ -227,6 +227,7 @@ pub fn instantiate(
         temperature: preset.temperature,
         json_object_response_format: preset.json_object_response_format,
         response_format: None,
+        local_ctx_tokens: None,
         request_timeout_secs: preset.request_timeout_secs,
     }
 }

@@ -77,8 +77,13 @@ pub fn mediate_traced<C: Contract>(
     attempt: u8,
     trace: &mut Vec<berimor_types::event::EventKind>,
 ) -> MediationOutcome<commit::CommitOutcome> {
-    let parsed = match parse::parse(raw) {
-        Ok(value) => value,
+    let parsed = match parse::parse_with_repair(raw) {
+        Ok((value, repaired)) => {
+            if repaired {
+                trace.push(berimor_types::event::EventKind::MediationParseRepaired);
+            }
+            value
+        }
         Err(err) => return retry_or_escalate(MediationStage::Parse, err.to_string(), attempt),
     };
     trace.push(berimor_types::event::EventKind::MediationParsed);
