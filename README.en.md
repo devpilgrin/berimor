@@ -99,7 +99,7 @@ Type `/` — the palette shows commands with descriptions in the interface langu
 | `/models` | providers: list, `/models add` — wizard (presets → choice → key/OAuth), removal — via picker with confirmation |
 | `/skills`, `/agents` | skills and subagents (global/project), open a skill with Enter on its row |
 | `/config` | **settings menu**: shows the effective configuration and the "Interface locale" item (with the current value) → language choice from 8 (ru, en, de, fr, es, zh-CN, ja, ko). Saved to the local config (`[ui]`), takes effect immediately. Shortcut: `/config locale ja` |
-| `/mouse` | mouse toggle: captured — the wheel scrolls the journal, clicking the journal gives it scroll focus; released — native terminal selection/copy (when captured, selection is via Shift) |
+| `/mouse` | mouse toggle: captured — the wheel scrolls the journal (a scrollbar with position on the right), clicking the journal gives it scroll focus; released — selection mode: the info panel hides, the journal takes full width, native selection covers only the journal (with capture on, select via Shift) |
 | `/copy` | last agent reply — to clipboard (wl-copy/xclip/xsel/pbcopy) |
 | `/clear`, `/exit` | clear the dialog journal; quit |
 

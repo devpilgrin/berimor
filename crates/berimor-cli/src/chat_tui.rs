@@ -34,7 +34,10 @@ use crossterm::ExecutableCommand;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{
+    Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Wrap,
+};
 use ratatui::{Frame, Terminal};
 use serde_json::Value;
 use std::io::Stdout;
@@ -1872,7 +1875,10 @@ fn draw(frame: &mut Frame, app: &mut App) {
     draw_header(frame, app, chunks[0]);
     // §20.26: инфо-панель справа — только при достаточной ширине
     // (узкий терминал не теряет журнал: панель — чистый бонус).
-    if chunks[1].width >= 110 {
+    // Репорт 2026-08-16: при отпущенном захвате мыши (/mouse — режим
+    // нативного выделения) панель НЕ рендерится, журнал занимает всю
+    // ширину: иначе Shift+drag захватывал текст панели в выделение.
+    if chunks[1].width >= 110 && app.mouse_capture {
         let cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(76), Constraint::Percentage(24)])
@@ -2236,9 +2242,34 @@ fn draw_log(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         (app.scroll as usize).min(max_scroll)
     };
+    // Слайдер прокрутки (репорт 2026-08-16): видимый индикатор позиции —
+    // текстовая колонка уступает правый столбец полосе, когда контент
+    // длиннее экрана; иначе полоса не нужна и не рисуется.
+    let (text_area, bar_area) = if total > height {
+        let text = Rect {
+            width: area.width.saturating_sub(1),
+            ..area
+        };
+        let bar = Rect {
+            x: area.x + area.width - 1,
+            width: 1,
+            ..area
+        };
+        (text, Some(bar))
+    } else {
+        (area, None)
+    };
     let visible: Vec<Line> = lines.into_iter().skip(scroll).collect();
     let log = Paragraph::new(visible).wrap(Wrap { trim: false });
-    frame.render_widget(log, area);
+    frame.render_widget(log, text_area);
+    if let Some(bar_area) = bar_area {
+        let mut state = ScrollbarState::new(max_scroll).position(scroll);
+        let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .thumb_style(Style::default().fg(Color::DarkGray));
+        frame.render_stateful_widget(bar, bar_area, &mut state);
+    }
 }
 
 fn draw_input(frame: &mut Frame, app: &mut App, area: Rect) {
@@ -2931,15 +2962,11 @@ mod tests {
         )));
     }
 
-    #[test]
-    fn side_panel_renders_only_when_wide() {
-        use ratatui::backend::TestBackend;
-        use ratatui::Terminal;
-
-        let config = Config::default();
+    /// Общая фикстура App для рендер-тестов (панель/слайдер).
+    fn test_app() -> App {
         let (tx, rx) = channel();
-        let mut app = App {
-            config,
+        App {
+            config: Config::default(),
             explicit_config: None,
             log: vec![],
             input: String::new(),
@@ -2980,7 +3007,15 @@ mod tests {
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
-        };
+        }
+    }
+
+    #[test]
+    fn side_panel_renders_only_when_wide() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut app = test_app();
 
         let wide = TestBackend::new(140, 30);
         let mut terminal = Terminal::new(wide).expect("terminal");
@@ -3005,6 +3040,60 @@ mod tests {
             .map(|c| c.symbol())
             .collect();
         assert!(!content.contains("сессия"), "без панели при 90 колонках");
+
+        // Репорт 2026-08-16: режим выделения (захват отпущен, /mouse)
+        // прячет панель даже на широком терминале — нативное выделение
+        // покрывает только журнал, не текст панели.
+        app.mouse_capture = false;
+        let wide = TestBackend::new(140, 30);
+        let mut terminal = Terminal::new(wide).expect("terminal");
+        terminal.draw(|f| draw(f, &mut app)).expect("draw wide");
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(!content.contains("сессия"), "без панели в режиме выделения");
+    }
+
+    /// Слайдер прокрутки журнала (репорт 2026-08-16): контент длиннее
+    /// экрана — полоса с ▲/▼ справа от текста; короткий журнал — без неё.
+    #[test]
+    fn log_scrollbar_appears_only_when_content_overflows() {
+        use ratatui::backend::TestBackend;
+        use ratatui::Terminal;
+
+        let mut app = test_app();
+        for i in 0..100 {
+            app.log.push(LogLine::Sys(format!("строка {i}")));
+        }
+        let wide = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(wide).expect("terminal");
+        terminal.draw(|f| draw(f, &mut app)).expect("draw");
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(content.contains('▲'), "полоса прокрутки при переполнении");
+
+        let mut app = test_app();
+        app.log.push(LogLine::Sys("коротко".into()));
+        let wide = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(wide).expect("terminal");
+        terminal.draw(|f| draw(f, &mut app)).expect("draw");
+        let content: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect();
+        assert!(!content.contains('▲'), "без полосы на коротком журнале");
     }
 
     #[test]

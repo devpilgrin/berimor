@@ -99,7 +99,7 @@ Escribe `/` — la paleta muestra los comandos con descripciones en el idioma de
 | `/models` | proveedores: lista, `/models add` — asistente (presets → elección → clave/OAuth), eliminación — mediante un selector con confirmación |
 | `/skills`, `/agents` | skills y subagentes (globales/del proyecto), un skill — Enter sobre la línea |
 | `/config` | **menú de parámetros**: muestra la configuración efectiva y el ítem «Localización de la interfaz» (con el valor actual) → elección del idioma entre 8 (ru, en, de, fr, es, zh-CN, ja, ko). Se guarda en la config local (`[ui]`), surte efecto de inmediato. Atajo: `/config locale ja` |
-| `/mouse` | interruptor del ratón: capturado — la rueda desplaza el registro, un clic en el registro da el foco de desplazamiento; liberado — selección/copiado nativos del terminal (con captura, la selección — vía Shift) |
+| `/mouse` | interruptor del ratón: capturado — la rueda desplaza el registro (barra de desplazamiento con posición a la derecha), un clic en el registro da el foco de desplazamiento; liberado — modo selección: el panel de información se oculta, el registro a todo lo ancho, la selección nativa cubre solo el registro (con captura, selección con Mayús) |
 | `/copy` | última respuesta del agente — al portapapeles (wl-copy/xclip/xsel/pbcopy) |
 | `/clear`, `/exit` | limpieza del registro del diálogo; salida |
 

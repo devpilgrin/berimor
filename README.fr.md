@@ -99,7 +99,7 @@ Tapez `/` — la palette affiche les commandes avec des descriptions dans la lan
 | `/models` | fournisseurs : liste, `/models add` — assistant (préréglages → choix → clé/OAuth), suppression — via un sélecteur avec confirmation |
 | `/skills`, `/agents` | skills et sous-agents (globaux/projet), un skill — Entrée sur la ligne |
 | `/config` | **menu des paramètres** : affichage de la configuration effective et item « Locale de l'interface » (avec la valeur courante) → choix de la langue parmi 8 (ru, en, de, fr, es, zh-CN, ja, ko). Enregistré dans la config locale (`[ui]`), effet immédiat. Raccourci : `/config locale ja` |
-| `/mouse` | bascule de la souris : capturée — la molette fait défiler le journal, un clic sur le journal donne le focus de défilement ; relâchée — sélection/copie natives du terminal (lors de la capture, la sélection se fait via Maj) |
+| `/mouse` | bascule de la souris : capturée — la molette fait défiler le journal (barre de défilement avec position à droite), un clic sur le journal donne le focus de défilement ; relâchée — mode sélection : le panneau d'info se masque, le journal en pleine largeur, la sélection native ne couvre que le journal (avec capture, sélection via Maj) |
 | `/copy` | dernière réponse de l'agent — dans le presse-papiers (wl-copy/xclip/xsel/pbcopy) |
 | `/clear`, `/exit` | effacement du journal de dialogue ; sortie |
 

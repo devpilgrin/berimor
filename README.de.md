@@ -99,7 +99,7 @@ Geben Sie `/` ein — die Palette zeigt Befehle mit Beschreibungen in der Sprach
 | `/models` | Provider: Liste, `/models add` — Assistent (Presets → Auswahl → Schlüssel/OAuth), Entfernen — über Picker mit Bestätigung |
 | `/skills`, `/agents` | Skills und Subagenten (global/projektbezogen), Skill per Enter auf der Zeile öffnen |
 | `/config` | **Einstellungsmenü**: Anzeige der effektiven Konfiguration und der Punkt „Sprache der Oberfläche" (mit dem aktuellen Wert) → Sprachauswahl aus 8 (ru, en, de, fr, es, zh-CN, ja, ko). Wird in der lokalen Konfiguration gespeichert (`[ui]`), wirkt sofort. Shortcut: `/config locale ja` |
-| `/mouse` | Maus-Umschalter: gefangen — das Rad scrollt das Journal, ein Klick ins Journal gibt ihm den Scroll-Fokus; freigegeben — native Terminal-Markierung/Kopieren (bei gefangener Maus Markierung per Shift) |
+| `/mouse` | Maus-Umschalter: gefangen — das Rad scrollt das Journal (rechts eine Scrollbar mit Position), ein Klick ins Journal gibt ihm den Scroll-Fokus; freigegeben — Auswahlmodus: Info-Panel ausgeblendet, Journal in voller Breite, native Auswahl erfasst nur das Journal (bei Fang Auswahl per Shift) |
 | `/copy` | letzte Agentenantwort — in die Zwischenablage (wl-copy/xclip/xsel/pbcopy) |
 | `/clear`, `/exit` | Journal des Dialogs leeren; Beenden |
 
