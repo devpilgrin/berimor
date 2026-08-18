@@ -94,9 +94,18 @@ struct BgProc {
 pub struct BgRegistry {
     procs: Arc<Mutex<HashMap<u64, BgProc>>>,
     counter: AtomicU64,
+    /// Landlock-режим для порождаемых фоновых процессов (0.36.0);
+    /// синхронизируется из BuiltinToolDispatch::set_landlock.
+    landlock: std::sync::Mutex<crate::landlock::LandlockMode>,
 }
 
 impl BgRegistry {
+    /// Режим Landlock для фоновых процессов (0.36.0) — синхронизация
+    /// из BuiltinToolDispatch::set_landlock.
+    pub(crate) fn set_landlock(&self, mode: crate::landlock::LandlockMode) {
+        *self.landlock.lock().expect("landlock lock") = mode;
+    }
+
     /// Монотонный счётчик идентификаторов от 1 (1, 2, 3, ...).
     /// Публичный по спеке — родитель может опрашивать при клее.
     pub fn next_id(&self) -> u64 {
@@ -134,12 +143,21 @@ impl BgRegistry {
         } else {
             ("sh", "-c")
         };
-        let mut child = Command::new(shell)
+        let mut command_builder = Command::new(shell);
+        command_builder
             .arg(flag)
             .arg(command)
             .current_dir(root)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        // Landlock-песочница (0.36.0) — как у terminal.exec.
+        crate::landlock::apply(
+            &mut command_builder,
+            root,
+            *self.landlock.lock().expect("landlock lock"),
+        )
+        .map_err(|e| err_str(TOOL_START, e))?;
+        let mut child = command_builder
             .spawn()
             .map_err(|e| err_str(TOOL_START, format!("не удалось запустить sh: {e}")))?;
 

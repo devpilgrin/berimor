@@ -290,6 +290,7 @@ impl AgentRunDispatch {
             // BR-01: ребёнок получает перечень СВОИХ имён — потолок
             // agent.yaml; угадывание внутри потолка бессмысленно.
             tool_lines: def.tools.iter().map(|name| format!("- {name}")).collect(),
+            observation_budget: berimor_executors::agent_step::DEFAULT_OBSERVATION_BUDGET,
         };
         let outcome = agent.execute(
             &instance_id.0,

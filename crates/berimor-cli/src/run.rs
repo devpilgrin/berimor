@@ -241,6 +241,7 @@ pub fn run(
         // BR-01: свободный цикл в процессе получает имена инструментов
         // в промпте — без них модель угадывала (полевой тест).
         tool_lines: crate::chat::tool_prompt_lines(config),
+        observation_budget: crate::chat::observation_budget(config),
     };
 
     let wasm_host = WasmHost::new(
@@ -458,6 +459,11 @@ pub(crate) fn build_executor_bundle_with_session(
     // Диспетчер: подписанные/доверенные артефакты — инструменты первого
     // класса (слой между встроенными и MCP).
     let builtin = crate::builtin_dispatch::BuiltinToolDispatch::new(workspace_root.clone());
+    // Landlock-песочница из [sandbox] конфига (0.36.0); невалидное
+    // значение — ошибка конфигурации на старте.
+    builtin
+        .set_landlock(&config.sandbox.landlock)
+        .map_err(RunError::Provider)?;
     if let Some((journal, session_id)) = session {
         builtin.set_session(journal, session_id);
     }

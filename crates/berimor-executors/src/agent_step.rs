@@ -133,6 +133,33 @@ pub struct AgentStepExecutor<'a> {
     /// имена (list_files вместо files.list) и жгла ходы. Пустой список
     /// валиден — секция просто не добавляется (тесты, заглушки).
     pub tool_lines: Vec<String>,
+    /// Бюджет наблюдения в промпте (0.36.0, по мотивам dsh
+    /// compaction-tool-result-pruner): наблюдение длиннее бюджета
+    /// обрезается голова+маркер+хвост ТОЛЬКО в копии для модели; в
+    /// журнале (TurnRecord/события) остаётся полный текст — обрезка
+    /// безпотерьна и детерминирована (без модели).
+    pub observation_budget: usize,
+}
+
+/// Бюджет наблюдения по умолчанию (символов): 8000. Переопределяется
+/// конфигом `[agent] tool_result_max_chars`.
+pub const DEFAULT_OBSERVATION_BUDGET: usize = 8000;
+
+/// Обрезка наблюдения для промпта: голова (70%) + маркер + хвост (30%).
+/// Маркер сообщает объём пропуска и где лежит оригинал. Char-safe.
+pub fn prune_observation(observation: &str, budget: usize) -> std::borrow::Cow<'_, str> {
+    let total = observation.chars().count();
+    if total <= budget {
+        return std::borrow::Cow::Borrowed(observation);
+    }
+    let head = budget * 7 / 10;
+    let tail = budget - head;
+    let omitted = total - head - tail;
+    let head_str: String = observation.chars().take(head).collect();
+    let tail_str: String = observation.chars().skip(total - tail).collect::<String>();
+    std::borrow::Cow::Owned(format!(
+        "{head_str}\n\n…[пропущено {omitted} символов из {total}; полный результат — в журнале сессии]…\n\n{tail_str}"
+    ))
 }
 
 /// (инструмент, замаскированные аргументы, замаскированное наблюдение,
@@ -418,6 +445,7 @@ impl AgentStepExecutor<'_> {
                 retry_feedback.as_deref(),
                 &self.tool_lines,
                 engine_note,
+                self.observation_budget,
             );
             let response = provider.complete(CompletionRequest {
                 system_context: system_context.to_string(),
@@ -878,6 +906,7 @@ fn build_turn_prompt(
     retry_feedback: Option<&str>,
     tool_lines: &[String],
     engine_note: Option<&str>,
+    observation_budget: usize,
 ) -> String {
     let turn_schema = serde_json::to_string_pretty(&schemars::schema_for!(AgentTurnDecision))
         .expect("схема derive-типа всегда сериализуема");
@@ -918,7 +947,7 @@ fn build_turn_prompt(
                 i + 1,
                 turn.thought,
                 turn.action,
-                turn.observation
+                prune_observation(&turn.observation, observation_budget)
             ));
         }
     }
@@ -1014,15 +1043,50 @@ mod tests {
             None,
             &["- files.read {path} — прочитать файл".to_string()],
             None,
+            DEFAULT_OBSERVATION_BUDGET,
         );
         assert!(prompt.contains("Доступные инструменты"));
         assert!(prompt.contains("files.read"));
         // Пустой перечень — секции нет (обратная совместимость тестов).
-        let bare = build_turn_prompt("s1", adapter, &[], None, &[], None);
+        let bare = build_turn_prompt(
+            "s1",
+            adapter,
+            &[],
+            None,
+            &[],
+            None,
+            DEFAULT_OBSERVATION_BUDGET,
+        );
         assert!(!bare.contains("Доступные инструменты"));
         // Замечание движка (бюджет ходов, 0.34.0) — отдельной секцией.
-        let noted = build_turn_prompt("s1", adapter, &[], None, &[], Some("осталось ходов: 2"));
+        let noted = build_turn_prompt(
+            "s1",
+            adapter,
+            &[],
+            None,
+            &[],
+            Some("осталось ходов: 2"),
+            DEFAULT_OBSERVATION_BUDGET,
+        );
         assert!(noted.contains("Замечание движка: осталось ходов: 2"));
+    }
+
+    /// Обрезка наблюдения (0.36.0): короткое — как есть; длинное —
+    /// голова+маркер+хвост, строго короче оригинала, маркер сообщает
+    /// объём и источник оригинала. Char-safe (кириллица не бьётся).
+    #[test]
+    fn observation_pruning_is_head_marker_tail_and_char_safe() {
+        let short = "короткое наблюдение";
+        assert_eq!(prune_observation(short, 8000), short);
+        let long: String = "я".repeat(20000);
+        let pruned = prune_observation(&long, 8000);
+        assert!(pruned.contains("пропущено"));
+        assert!(pruned.contains("журнале сессии"));
+        let pruned_len = pruned.chars().count();
+        assert!(pruned_len < 20000, "строго короче: {pruned_len}");
+        // Хвост сохранён: последние символы оригинала в конце копии
+        // (все 'я' — поэтому проверяем структуру, не содержимое).
+        assert!(pruned.starts_with(&"я".repeat(100)));
     }
 
     /// Страж зацикливания (0.34.0): одно и то же действие подряд —
@@ -1051,6 +1115,7 @@ mod tests {
             mode: ConfirmationMode::Off,
             confirmer: &AutoConfirm,
             dispatch: &FakeCrm,
+            observation_budget: DEFAULT_OBSERVATION_BUDGET,
         };
         let state = json!({"user": {"card_id": "c-1"}});
         let result = executor.execute("answer", "SupportReply", 20, false, false, &state, None);
@@ -1090,6 +1155,7 @@ mod tests {
             mode: ConfirmationMode::Off,
             confirmer: &AutoConfirm,
             dispatch: &FakeCrm,
+            observation_budget: DEFAULT_OBSERVATION_BUDGET,
         };
         let state = json!({"user": {"card_id": "c-1"}});
         let patch = executor
@@ -1232,6 +1298,7 @@ mod tests {
             mode: ConfirmationMode::Off,
             confirmer: &AutoConfirm,
             dispatch: &FakeCrm,
+            observation_budget: DEFAULT_OBSERVATION_BUDGET,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -1266,6 +1333,7 @@ mod tests {
             mode: ConfirmationMode::Off,
             confirmer: &AutoConfirm,
             dispatch: &PanicsIfCalled,
+            observation_budget: DEFAULT_OBSERVATION_BUDGET,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -1296,6 +1364,7 @@ mod tests {
             mode: ConfirmationMode::Off,
             confirmer: &AutoConfirm,
             dispatch: &FakeCrm,
+            observation_budget: DEFAULT_OBSERVATION_BUDGET,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -1322,6 +1391,7 @@ mod tests {
             mode: ConfirmationMode::Off,
             confirmer: &AutoConfirm,
             dispatch: &FakeCrm,
+            observation_budget: DEFAULT_OBSERVATION_BUDGET,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -1357,6 +1427,7 @@ mod tests {
             mode: ConfirmationMode::Off,
             confirmer: &AutoConfirm,
             dispatch: &PanicsIfCalled,
+            observation_budget: DEFAULT_OBSERVATION_BUDGET,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -1393,6 +1464,7 @@ mod tests {
             mode: ConfirmationMode::Off,
             confirmer: &AutoConfirm,
             dispatch: &FakeCrm,
+            observation_budget: DEFAULT_OBSERVATION_BUDGET,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -1431,6 +1503,7 @@ mod tests {
             mode: ConfirmationMode::Off,
             confirmer: &AutoConfirm,
             dispatch: &PanicsIfCalled,
+            observation_budget: DEFAULT_OBSERVATION_BUDGET,
         };
 
         let state = json!({"user": {"card_id": "c-1"}});
@@ -1462,6 +1535,7 @@ mod tests {
             mode: ConfirmationMode::Off,
             confirmer: &AutoConfirm,
             dispatch: &PanicsIfCalled,
+            observation_budget: DEFAULT_OBSERVATION_BUDGET,
         };
 
         let result = executor.execute(

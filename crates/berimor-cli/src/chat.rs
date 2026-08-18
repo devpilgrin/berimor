@@ -47,6 +47,88 @@ fn max_turns_per_message(config: &Config) -> u32 {
     config.agent.max_turns
 }
 
+/// Бюджет наблюдения инструмента (0.36.0): 0 в конфиге = без обрезки.
+pub(crate) fn observation_budget(config: &Config) -> usize {
+    let budget = config.agent.tool_result_max_chars;
+    if budget == 0 {
+        usize::MAX
+    } else {
+        budget
+    }
+}
+
+/// Compaction диалога чата (0.36.0; перенос идеи dsh compaction на нашу
+/// архитектуру): история длиннее порога — старые сообщения сжимаются
+/// провайдером в конспект-заметку, хвост (≈треть порога) остаётся
+/// дословно. Триггер детерминирован (символьный бюджет), конспект пишет
+/// модель — это её честная работа. Сбой суммаризации НЕ роняет ход:
+/// история остаётся как есть (None = «не сжато»).
+pub(crate) fn compact_conversation(
+    providers: &[(
+        String,
+        std::sync::Arc<dyn berimor_types::executor::ModelProvider + Send + Sync>,
+    )],
+    conversation: &mut Vec<Value>,
+    threshold: usize,
+) -> Option<String> {
+    if threshold == 0 || conversation.len() < 4 {
+        return None;
+    }
+    let total: usize = conversation
+        .iter()
+        .map(|m| m.to_string().chars().count())
+        .sum();
+    if total <= threshold {
+        return None;
+    }
+    // Хвост — последние сообщения суммарно до трети порога.
+    let tail_budget = threshold / 3;
+    let mut split = conversation.len();
+    let mut tail_chars = 0usize;
+    while split > 0 {
+        let len = conversation[split - 1].to_string().chars().count();
+        if tail_chars + len > tail_budget || split <= 2 {
+            break;
+        }
+        tail_chars += len;
+        split -= 1;
+    }
+    if split == 0 {
+        return None; // сжимать нечего — хвост и есть история
+    }
+    let old = &conversation[..split];
+    let mut dump = String::new();
+    for m in old {
+        let role = m["role"].as_str().unwrap_or("?");
+        let content = m["content"].as_str().unwrap_or("");
+        let kept: String = content.chars().take(2000).collect();
+        dump.push_str(&format!("{role}: {kept}\n\n"));
+    }
+    let (name, provider) = providers.first()?;
+    let request = berimor_types::model::CompletionRequest {
+        system_context: "Ты — компрессор контекста агентной сессии. Сожми диалог в конспект: \
+            решения, факты, имена, пути, ошибки и их разрешения, незавершённые намерения. \
+            Без воды, по-русски, до 1500 слов."
+            .to_string(),
+        prompt: format!("Диалог для сжатия:\n\n{dump}"),
+        contract_name: None,
+        expects_structured_output: false,
+        json_schema: None,
+    };
+    let note = provider.complete(request).ok()?.raw_text;
+    let compacted = split;
+    conversation.splice(
+        0..split,
+        [json!({
+            "role": "user",
+            "content": format!("[конспект предыдущего диалога — {compacted} сообщений сжаты]:\n{note}")
+        })],
+    );
+    Some(format!(
+        "контекст сжат: {compacted} сообщений → конспект (провайдер {name})"
+    ))
+}
+
 /// Исход сессии REPL: выход из чата или перезагрузка рантайма после
 /// изменения конфигурации (`/models add`).
 enum SessionOutcome {
@@ -351,6 +433,16 @@ pub(crate) fn execute_turn(
     let bundle = build_executor_bundle(config).map_err(|err| err.to_string())?;
     let storage = SqliteEventLog::open(&config.storage_path).map_err(|err| err.to_string())?;
     let providers = bundle.providers();
+    // Compaction диалога (0.36.0) ДО сборки state: длинная история
+    // сжимается в конспект старшим провайдером, хвост дословно.
+    let mut conversation = conversation;
+    if let Some(note) = compact_conversation(
+        bundle.provider_clients(),
+        &mut conversation,
+        config.agent.compact_threshold_chars,
+    ) {
+        let _ = tx.send(crate::chat_tui::WorkerMsg::Sys(note));
+    }
     let instance_id = ProcessInstanceId(format!(
         "chat-{}",
         std::time::SystemTime::now()
@@ -448,6 +540,7 @@ pub(crate) fn execute_turn(
         on_tool_turn: Some(&on_tool_turn),
         on_provider_switch: None,
         tool_lines: crate::chat::tool_prompt_lines(config),
+        observation_budget: observation_budget(config),
     };
     let state = json!({
         "goal": message,
@@ -624,6 +717,7 @@ fn run_repl(
         on_tool_turn: Some(&on_tool_turn),
         on_provider_switch: None,
         tool_lines: tool_prompt_lines(config),
+        observation_budget: observation_budget(config),
     };
 
     let catalog = tools_catalog(config);
@@ -910,6 +1004,7 @@ fn run_repl(
                             .collect(),
                         None => agent.tool_lines.clone(),
                     },
+                    observation_budget: agent.observation_budget,
                 };
                 turn_agent.execute(
                     "chat",
@@ -1007,6 +1102,70 @@ fn run_repl(
 #[cfg(test)]
 mod swarm_note_tests {
     use super::*;
+
+    /// Compaction (0.36.0): сверх порога — старое в конспект, хвост
+    /// дословно; под порогом и при сбое провайдера — без изменений.
+    #[test]
+    fn compaction_compresses_old_keeps_tail_and_fails_soft() {
+        use berimor_types::executor::ModelProvider;
+        use berimor_types::model::{
+            CompletionRequest, CompletionResponse, ModelError, ModelIdentity,
+        };
+
+        struct Stub {
+            fail: bool,
+        }
+        impl ModelProvider for Stub {
+            fn complete(
+                &self,
+                _request: CompletionRequest,
+            ) -> Result<CompletionResponse, ModelError> {
+                if self.fail {
+                    return Err(ModelError::Unavailable("stub down".into()));
+                }
+                Ok(CompletionResponse {
+                    raw_text: "КОНСПЕКТ: обсуждали X".into(),
+                    model: ModelIdentity {
+                        provider: "stub".into(),
+                        model_id: "stub-1".into(),
+                        tier: berimor_types::model::ModelTier::Strong,
+                    },
+                })
+            }
+        }
+        let ok: Vec<(String, std::sync::Arc<dyn ModelProvider + Send + Sync>)> =
+            vec![("stub".into(), std::sync::Arc::new(Stub { fail: false }))];
+        let down: Vec<(String, std::sync::Arc<dyn ModelProvider + Send + Sync>)> =
+            vec![("stub".into(), std::sync::Arc::new(Stub { fail: true }))];
+
+        let mut history: Vec<Value> = (0..20)
+            .map(|i| {
+                json!({"role": if i % 2 == 0 { "user" } else { "assistant" },
+                       "content": "сообщение ".repeat(2000) + &i.to_string()})
+            })
+            .collect();
+        let note = compact_conversation(&ok, &mut history, 100_000).expect("сверх порога");
+        assert!(note.contains("контекст сжат"), "{note}");
+        // Конспект на месте первого сообщения, хвост — дословно.
+        assert!(history[0]["content"].as_str().unwrap().contains("КОНСПЕКТ"));
+        assert!(history.len() < 20, "история короче: {}", history.len());
+        assert!(history.last().unwrap()["content"]
+            .as_str()
+            .unwrap()
+            .ends_with('9'));
+
+        // Под порогом — None.
+        let mut short = vec![json!({"role": "user", "content": "привет"}); 6];
+        assert!(compact_conversation(&ok, &mut short, 100_000).is_none());
+
+        // Сбой провайдера — мягко: None, история не тронута.
+        let mut history2: Vec<Value> = (0..20)
+            .map(|i| json!({"role": "user", "content": "x".repeat(9000) + &i.to_string()}))
+            .collect();
+        let before = history2.len();
+        assert!(compact_conversation(&down, &mut history2, 100_000).is_none());
+        assert_eq!(history2.len(), before, "при сбое история не меняется");
+    }
 
     /// §20.22 v3: заметка модели несёт путь/сессию/операцию и роль system.
     #[test]

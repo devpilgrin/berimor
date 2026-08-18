@@ -115,6 +115,9 @@ pub struct BuiltinToolDispatch {
     /// как известен session_id). None — события не журналируются (тесты
     /// инструментов, внешние вызовы).
     session: std::sync::Mutex<Option<SessionCtx>>,
+    /// Landlock-песочница подпроцессов (0.36.0): режим из `[sandbox]
+    /// landlock`. Устанавливается после конструкции из конфига.
+    landlock: std::sync::Mutex<crate::landlock::LandlockMode>,
 }
 
 struct SessionCtx {
@@ -131,7 +134,23 @@ impl BuiltinToolDispatch {
             terminal_timeout: TERMINAL_TIMEOUT,
             bg: crate::builtin_terminal_bg::BgRegistry::default(),
             session: std::sync::Mutex::new(None),
+            landlock: std::sync::Mutex::new(crate::landlock::LandlockMode::Auto),
         }
+    }
+
+    /// Режим Landlock из конфига (0.36.0). Невалидное значение —
+    /// ошибка на старте (как прочие поля конфига).
+    pub fn set_landlock(&self, value: &str) -> Result<(), String> {
+        let mode = crate::landlock::LandlockMode::parse(value)?;
+        *self.landlock.lock().expect("landlock lock") = mode;
+        self.bg.set_landlock(mode);
+        Ok(())
+    }
+
+    /// Обвязка команды песочницей (0.36.0) — общая логика в landlock.rs.
+    fn confine_command(&self, command: &mut std::process::Command) -> Result<(), String> {
+        let mode = *self.landlock.lock().expect("landlock lock");
+        crate::landlock::apply(command, &self.workspace_root, mode)
     }
 
     /// Прикрепить сессионный контекст (§20.22 v2) — после сборки бандла.
@@ -180,6 +199,7 @@ impl BuiltinToolDispatch {
             terminal_timeout: timeout,
             bg: crate::builtin_terminal_bg::BgRegistry::default(),
             session: std::sync::Mutex::new(None),
+            landlock: std::sync::Mutex::new(crate::landlock::LandlockMode::Auto),
         }
     }
 
@@ -420,12 +440,17 @@ impl ToolDispatch for BuiltinToolDispatch {
                 } else {
                     ("sh", "-c")
                 };
-                let mut child = Command::new(shell)
+                let mut command_builder = Command::new(shell);
+                command_builder
                     .arg(flag)
                     .arg(command)
                     .current_dir(&self.workspace_root)
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
+                    .stderr(Stdio::piped());
+                // Landlock-песочница (0.36.0): OS-уровень поверх гейта.
+                self.confine_command(&mut command_builder)
+                    .map_err(|e| Self::err(tool, e))?;
+                let mut child = command_builder
                     .spawn()
                     .map_err(|e| Self::err(tool, format!("не удалось запустить {shell}: {e}")))?;
                 // Потоки читаются с капом СРАЗУ — `yes` не съест память

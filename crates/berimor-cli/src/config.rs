@@ -102,20 +102,63 @@ pub struct ProviderConfig {
     pub local_ctx_tokens: Option<u32>,
 }
 
+/// Песочница подпроцессов (0.36.0).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SandboxConfig {
+    /// Landlock для terminal.exec/terminal.start: "auto" (по умолчанию)
+    /// — применять при поддержке ядром; "require" — без Landlock
+    /// команда не запускается; "off" — выключено.
+    #[serde(default = "default_landlock_mode")]
+    pub landlock: String,
+}
+
+fn default_landlock_mode() -> String {
+    "auto".to_string()
+}
+
+impl Default for SandboxConfig {
+    fn default() -> Self {
+        Self {
+            landlock: default_landlock_mode(),
+        }
+    }
+}
+
 /// Настройки свободного агентного цикла (0.34.0).
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
     /// Ходов на одно сообщение чата. Дефолт поднят 12 → 32: со стражем
-    /// зацикливания высокий потолок безопасен, а анализ проекта за
-    /// десяток разных чтений не должен умирать по лимиту.
+    /// зацикливания (повтор действия подряд) потолок — защита длины
+    /// легитимной работы (анализ проекта), не единственный сторож.
     #[serde(default = "default_agent_max_turns")]
     pub max_turns: u32,
+    /// Бюджет наблюдения инструмента в промпте цикла (0.36.0, по мотивам
+    /// dsh tool-result-pruner): длиннее — голова+маркер+хвост; оригинал
+    /// остаётся в журнале. 0 = без обрезки.
+    #[serde(default = "default_tool_result_max_chars")]
+    pub tool_result_max_chars: usize,
+    /// Порог compaction диалога чата в символах (0.36.0, по мотивам dsh
+    /// compaction): история длиннее порога сжимается старшим
+    /// провайдером в конспект (старые сообщения), хвост сохраняется
+    /// дословно. 0 = выключено.
+    #[serde(default = "default_compact_threshold")]
+    pub compact_threshold_chars: usize,
+}
+
+fn default_compact_threshold() -> usize {
+    100_000
+}
+
+fn default_tool_result_max_chars() -> usize {
+    berimor_executors::agent_step::DEFAULT_OBSERVATION_BUDGET
 }
 
 impl Default for AgentConfig {
     fn default() -> Self {
         Self {
             max_turns: default_agent_max_turns(),
+            tool_result_max_chars: default_tool_result_max_chars(),
+            compact_threshold_chars: default_compact_threshold(),
         }
     }
 }
@@ -329,6 +372,10 @@ pub struct Config {
     /// этот лимит защищает от длинной работы, не от бессмысленной.
     #[serde(default)]
     pub agent: AgentConfig,
+    /// Landlock-песочница terminal.exec (0.36.0, по мотивам dsh
+    /// landlock-run): "off" | "auto" (дефолт) | "require" (fail-closed).
+    #[serde(default)]
+    pub sandbox: SandboxConfig,
     #[serde(default)]
     pub serve: ServeConfig,
     /// Интерфейс (2026-08-09): `[ui] locale = "en"` — локаль TUI из 8
@@ -358,6 +405,7 @@ impl Default for Config {
             secret_envs: Vec::new(),
             auto_confirm: Vec::new(),
             agent: AgentConfig::default(),
+            sandbox: SandboxConfig::default(),
             serve: ServeConfig::default(),
             ui: UiConfig::default(),
         }
@@ -461,6 +509,7 @@ pub struct PartialConfig {
     #[serde(default)]
     pub auto_confirm: Vec<String>,
     pub agent: Option<AgentConfig>,
+    pub sandbox: Option<SandboxConfig>,
     pub serve: Option<ServeConfig>,
     pub ui: Option<UiConfig>,
 }
@@ -675,6 +724,7 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
         serve: local.serve.or(global.serve).unwrap_or(defaults.serve),
         // `[agent]` — секция целиком, локальный слой сильнее (как [ui]).
         agent: local.agent.or(global.agent).unwrap_or_default(),
+        sandbox: local.sandbox.or(global.sandbox).unwrap_or_default(),
         // `[ui]` — как `[memory]`: секция заменяется целиком, локальный
         // слой сильнее (осознанное упрощение, задокументировано здесь).
         ui: local.ui.or(global.ui).unwrap_or(defaults.ui),

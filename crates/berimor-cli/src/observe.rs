@@ -149,6 +149,7 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         on_tool_turn: None,
         on_provider_switch: None,
         tool_lines: crate::chat::tool_prompt_lines(config),
+        observation_budget: berimor_executors::agent_step::DEFAULT_OBSERVATION_BUDGET,
     };
     let wasm_host = WasmHost::new(
         bundle.dispatch.clone(),

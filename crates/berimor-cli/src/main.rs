@@ -33,6 +33,7 @@ mod config;
 mod daemon;
 mod ext_cmd;
 mod i18n;
+mod landlock;
 mod mcp_dispatch;
 mod memory;
 mod oauth;
