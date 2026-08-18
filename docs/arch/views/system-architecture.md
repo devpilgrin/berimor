@@ -1,6 +1,7 @@
 # Системная архитектура — Context, Container, Deployment
 
 > C4, уровни 1–2, плюс диаграмма развёртывания. См. `ideal-agent-architecture.md` §2, `deployment.md`, `stack.md`.
+> Интерактивная версия компонентной карты с привязкой к крейтам: [`diagrams/component-map.html`](diagrams/component-map.html).
 
 ## 1. Контекст (C4 Level 1)
 

@@ -165,6 +165,8 @@ flowchart TD
     POOL --> LLM["LLM: облачные и локальные"]
 ```
 
+Интерактивные версии (тёмная/светлая тема, фокус по узлам, экспорт): [компонентная карта](docs/arch/views/diagrams/component-map.html), [жизненный цикл задачи](docs/arch/views/diagrams/task-lifecycle.html), [состояния процесса](docs/arch/views/diagrams/process-states.html), [шаг через Mediation](docs/arch/views/diagrams/mediation-sequence.html) — см. `docs/arch/views/diagrams/`.
+
 ### Пример графа процесса (evaluator-optimizer)
 
 ```mermaid
@@ -287,7 +289,7 @@ berimor plugin install-local ./my-plugin --allow-unsigned               # лок
 | Ядро агента | `crates/` | Rust-workspace — по одному крейту на компонент: Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage |
 | Песочница CodeAct | `codeact-guest/` | QuickJS-гость под wasm32-wasip1 — отдельный crate, закоммичен как готовый артефакт |
 | Bootstrap | `bootstrap/` | npm-пакет установщика/обновления (TypeScript), см. «Установка» выше |
-| Архитектура | `docs/arch/` | самодостаточная спецификация — принципы, компоненты, диаграммы (`docs/arch/views/`). См. `docs/arch/README.md` |
+| Архитектура | `docs/arch/` | самодостаточная спецификация — принципы, компоненты, диаграммы (`docs/arch/views/`), интерактивные HTML-диаграммы (`docs/arch/views/diagrams/`). См. `docs/arch/README.md` |
 | Решения | `docs/ADR/` | журнал архитектурных решений: контекст, альтернативы, последствия. См. `docs/ADR/README.md` |
 | План разработки | `docs/ROADMAP.md` | очередь задач по фазам, декомпозиция на подзадачи, сложность, класс модели-исполнителя |
 | Аудит | `docs/audit-2026-07-31.md` | независимый аудит безопасности — все находки закрыты или осознанно задокументированы |

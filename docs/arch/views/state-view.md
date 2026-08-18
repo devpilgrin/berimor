@@ -1,6 +1,7 @@
 # State View — жизненные циклы ключевых сущностей
 
 > См. `process-engine.md` §4–5, `deployment.md` §5, `ideal-agent-architecture.md` §3.10.
+> Интерактивная версия диаграммы состояний инстанса процесса: [`diagrams/process-states.html`](diagrams/process-states.html).
 
 ## 1. Инстанс процесса
 

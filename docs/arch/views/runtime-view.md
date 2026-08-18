@@ -1,6 +1,7 @@
 # Runtime View — сценарии взаимодействия во времени
 
 > Диаграммы последовательности для ключевых сценариев. Структурные представления (system/component) показывают связи; здесь — как именно они срабатывают по шагам. См. `ideal-agent-architecture.md` §4, `mediation.md` §2, `deployment.md` §5.
+> Интерактивные версии: жизненный цикл задачи — [`diagrams/task-lifecycle.html`](diagrams/task-lifecycle.html); шаг с моделью через Mediation — [`diagrams/mediation-sequence.html`](diagrams/mediation-sequence.html).
 
 ## 1. Жизненный цикл задачи (структурированный процесс)
 

@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "Berimor — состояния процесса",
+    "quality_profile": "showcase",
+    "viewBox": [
+      1120,
+      660
+    ],
+    "views": [
+      {
+        "id": "main-path",
+        "label": "Основной цикл",
+        "focus": [
+          "created",
+          "running",
+          "completed"
+        ],
+        "note": "От инстанциации процессной модели до завершения последнего шага."
+      },
+      {
+        "id": "human-wait",
+        "label": "Ожидание человека",
+        "focus": [
+          "running",
+          "waitinghuman",
+          "defaultbranch"
+        ],
+        "note": "human_gate ставит процесс на паузу; таймаут ведёт в ветку по умолчанию или в отказ."
+      },
+      {
+        "id": "exits",
+        "label": "Завершение и отказ",
+        "focus": [
+          "running",
+          "waitinghuman",
+          "failed",
+          "completed"
+        ],
+        "note": "Превышение max_steps, timeout, token_budget или cost_budget — детерминированный отказ."
+      }
+    ]
+  },
+  "lanes": [
+    {
+      "id": "main",
+      "label": "Основной цикл"
+    },
+    {
+      "id": "waiting",
+      "label": "Ожидание"
+    },
+    {
+      "id": "terminal",
+      "label": "Завершение"
+    }
+  ],
+  "states": [
+    {
+      "id": "created",
+      "type": "start",
+      "label": "Создан",
+      "sublabel": "instantiate",
+      "lane": "main",
+      "col": 0,
+      "step": "01"
+    },
+    {
+      "id": "running",
+      "type": "active",
+      "label": "Running",
+      "sublabel": "шаги графа · патч + событие",
+      "lane": "main",
+      "col": 2,
+      "step": "02"
+    },
+    {
+      "id": "completed",
+      "type": "success",
+      "label": "Completed",
+      "sublabel": "последний шаг выполнен",
+      "lane": "main",
+      "col": 4,
+      "step": "03",
+      "tag": "терминал"
+    },
+    {
+      "id": "waitinghuman",
+      "type": "waiting",
+      "label": "WaitingHuman",
+      "sublabel": "human_gate",
+      "lane": "waiting",
+      "col": 0,
+      "tag": "пауза"
+    },
+    {
+      "id": "defaultbranch",
+      "type": "decision",
+      "label": "DefaultBranch",
+      "sublabel": "ветка по умолчанию",
+      "lane": "waiting",
+      "col": 2,
+      "tag": "таймаут"
+    },
+    {
+      "id": "failed",
+      "type": "failure",
+      "label": "Failed",
+      "sublabel": "max_steps · timeout · бюджеты",
+      "lane": "terminal",
+      "col": 1,
+      "tag": "терминал"
+    }
+  ],
+  "transitions": [
+    {
+      "id": "instantiate",
+      "from": "created",
+      "to": "running",
+      "variant": "emphasis"
+    },
+    {
+      "id": "finish",
+      "from": "running",
+      "to": "completed",
+      "label": "последний шаг",
+      "variant": "emphasis"
+    },
+    {
+      "id": "open-gate",
+      "from": "running",
+      "to": "waitinghuman",
+      "label": "human_gate",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "route": "drop",
+      "labelDx": -40
+    },
+    {
+      "id": "confirm-resume",
+      "from": "waitinghuman",
+      "to": "running",
+      "label": "подтверждено",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [
+        [
+          520,
+          307
+        ],
+        [
+          520,
+          230
+        ],
+        [
+          402,
+          230
+        ]
+      ],
+      "labelSegment": 1
+    },
+    {
+      "id": "timeout-default",
+      "from": "waitinghuman",
+      "to": "defaultbranch",
+      "label": "таймаут",
+      "variant": "default",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "route": "bottom-channel"
+    },
+    {
+      "id": "default-resume",
+      "from": "defaultbranch",
+      "to": "running",
+      "label": "продолжение",
+      "variant": "default",
+      "fromSide": "top",
+      "toSide": "right",
+      "route": "drop",
+      "labelSegment": 1
+    },
+    {
+      "id": "timeout-fail",
+      "from": "waitinghuman",
+      "to": "failed",
+      "label": "таймаут по политике",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "left",
+      "route": "drop",
+      "labelSegment": 1,
+      "labelDy": 12
+    },
+    {
+      "id": "budget-fail",
+      "from": "running",
+      "to": "failed",
+      "label": "лимиты исчерпаны",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "right",
+      "via": [
+        [
+          402,
+          90
+        ],
+        [
+          800,
+          90
+        ],
+        [
+          800,
+          479
+        ]
+      ]
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Детерминированный остов",
+      "items": [
+        "Шаг возвращает патч; движок применяет атомарно и пишет событие",
+        "Ветвление — только код на валидированных данных (I1)"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Восстановление (I7)",
+      "items": [
+        "Состояние — свёртка событий от последнего снапшота",
+        "Любой прогон воспроизводится из журнала без моделей"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Прерыватели",
+      "items": [
+        "max_steps, timeout, token_budget, cost_budget — код",
+        "cost_budget останавливает вызовы дорогих провайдеров"
+      ]
+    }
+  ]
+}

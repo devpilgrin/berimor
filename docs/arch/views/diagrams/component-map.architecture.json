@@ -1,0 +1,289 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Berimor — компонентная карта системы",
+    "quality_profile": "showcase",
+    "viewBox": [1740, 810],
+    "repository": {
+      "url": "https://github.com/devpilgrin/berimor",
+      "revision": "661e3ba0b5d13a92ec5d5e956d3241c91690dc0a"
+    },
+    "views": [
+      {
+        "id": "deterministic-core",
+        "label": "Детерминированное ядро",
+        "focus": ["process-engine", "actors", "context-engine", "executors", "mediation", "capability"],
+        "note": "Маршрутизация, ветвление и отбор контекста — только код (I1); модель — исполнитель внутри шага."
+      },
+      {
+        "id": "model-path",
+        "label": "Путь выхода модели",
+        "focus": ["executors", "mediation", "model-pool", "remote-models", "storage"],
+        "note": "Выход модели становится состоянием только через контракт Mediation (I3) и журнал событий (I7)."
+      },
+      {
+        "id": "trust-boundary",
+        "label": "Граница доверия",
+        "focus": ["capability", "tool-runtime", "plugins", "remote-models"],
+        "note": "Deny-статика и ACL-гейты до выполнения (I6); плагины и провайдеры — за границей самодостаточного ядра (I5)."
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "surfaces",
+      "type": "frontend",
+      "label": "Поверхности",
+      "sublabel": "CLI · MCP-сервер наружу",
+      "tag": "berimor-cli",
+      "sources": [{ "path": "crates/berimor-cli/Cargo.toml", "label": "berimor-cli" }],
+      "pos": [40, 80],
+      "size": [180, 72]
+    },
+    {
+      "id": "process-engine",
+      "type": "backend",
+      "label": "Process Engine",
+      "sublabel": "конечный автомат · журнал · снапшоты",
+      "tag": "berimor-process-engine",
+      "sources": [{ "path": "crates/berimor-process-engine/Cargo.toml", "label": "process-engine" }],
+      "pos": [400, 80],
+      "size": [200, 72]
+    },
+    {
+      "id": "actors",
+      "type": "backend",
+      "label": "Actors & Scheduler",
+      "sublabel": "доска задач · конверты · расписания",
+      "tag": "berimor-actors",
+      "sources": [{ "path": "crates/berimor-actors/Cargo.toml", "label": "actors" }],
+      "pos": [760, 80],
+      "size": [200, 72]
+    },
+    {
+      "id": "context-engine",
+      "type": "backend",
+      "label": "Context Engine",
+      "sublabel": "маршрутизатор · сборщик · оценщик",
+      "tag": "berimor-context-engine",
+      "sources": [{ "path": "crates/berimor-context-engine/Cargo.toml", "label": "context-engine" }],
+      "pos": [400, 260],
+      "size": [200, 72]
+    },
+    {
+      "id": "executors",
+      "type": "backend",
+      "label": "Executors",
+      "sublabel": "StructuredLLM · CodeAct (Wasmtime) · ToolOnly",
+      "tag": "berimor-executors",
+      "sources": [{ "path": "crates/berimor-executors/Cargo.toml", "label": "executors" }],
+      "pos": [760, 260],
+      "size": [200, 72]
+    },
+    {
+      "id": "mediation",
+      "type": "security",
+      "label": "Mediation",
+      "sublabel": "parse → schema → policy → commit",
+      "tag": "berimor-mediation",
+      "sources": [{ "path": "crates/berimor-mediation/Cargo.toml", "label": "mediation" }],
+      "pos": [400, 440],
+      "size": [200, 72]
+    },
+    {
+      "id": "capability",
+      "type": "security",
+      "label": "Capability & Safety",
+      "sublabel": "deny-статика · гейты · маскировщик секретов",
+      "tag": "berimor-capability",
+      "sources": [{ "path": "crates/berimor-capability/Cargo.toml", "label": "capability" }],
+      "pos": [760, 440],
+      "size": [200, 72]
+    },
+    {
+      "id": "tool-runtime",
+      "type": "messagebus",
+      "label": "Tool Runtime",
+      "sublabel": "встроенные инструменты · MCP клиент/сервер",
+      "tag": "berimor-tool-runtime",
+      "sources": [{ "path": "crates/berimor-tool-runtime/Cargo.toml", "label": "tool-runtime" }],
+      "pos": [1120, 440],
+      "size": [200, 72]
+    },
+    {
+      "id": "model-pool",
+      "type": "cloud",
+      "label": "Model Pool",
+      "sublabel": "классы способностей · llama.cpp · HTTP-клиенты",
+      "tag": "berimor-model-pool",
+      "sources": [{ "path": "crates/berimor-model-pool/Cargo.toml", "label": "model-pool" }],
+      "pos": [1120, 80],
+      "size": [200, 72]
+    },
+    {
+      "id": "storage",
+      "type": "database",
+      "label": "Память / SQLite",
+      "sublabel": "события · FTS5 · sqlite-vec · 4 слоя памяти",
+      "tag": "berimor-storage + berimor-memory",
+      "sources": [
+        { "path": "crates/berimor-storage/Cargo.toml", "label": "storage" },
+        { "path": "crates/berimor-memory/Cargo.toml", "label": "memory" }
+      ],
+      "pos": [340, 620],
+      "size": [400, 72]
+    },
+    {
+      "id": "plugins",
+      "type": "external",
+      "label": "Плагины-коннекторы",
+      "sublabel": "изолированные процессы · манифест + ACL",
+      "pos": [1480, 440],
+      "size": [190, 72]
+    },
+    {
+      "id": "remote-models",
+      "type": "external",
+      "label": "Удалённые провайдеры моделей",
+      "sublabel": "цепочка отказоустойчивости · cost_budget",
+      "pos": [1480, 8],
+      "size": [190, 72]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Машина пользователя — один самодостаточный артефакт (I5)",
+      "wraps": ["surfaces", "process-engine", "actors", "context-engine", "executors", "mediation", "capability", "tool-runtime", "model-pool", "storage", "plugins"]
+    },
+    {
+      "kind": "security-group",
+      "label": "Детерминированное ядро (Rust): решения принимает только код (I1)",
+      "wraps": ["process-engine", "actors", "context-engine", "executors", "mediation", "capability"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "surface-intake",
+      "from": "surfaces",
+      "to": "process-engine",
+      "label": "событие «новая задача»",
+      "variant": "emphasis"
+    },
+    {
+      "id": "actors-assign",
+      "from": "actors",
+      "to": "process-engine",
+      "label": "назначение по правилам"
+    },
+    {
+      "id": "engine-context",
+      "from": "process-engine",
+      "to": "context-engine",
+      "label": "build(step, state)",
+      "labelDy": 24
+    },
+    {
+      "id": "context-executor",
+      "from": "context-engine",
+      "to": "executors",
+      "label": "контекст по бюджету класса"
+    },
+    {
+      "id": "executor-mediation",
+      "from": "executors",
+      "to": "mediation",
+      "label": "сырой вывод → commit",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "executor-capability",
+      "from": "executors",
+      "to": "capability",
+      "label": "гейт на host-вызовы (I6)",
+      "variant": "security",
+      "labelDx": -100,
+      "labelDy": 30
+    },
+    {
+      "id": "executor-models",
+      "from": "executors",
+      "to": "model-pool",
+      "label": "вызов модели по классу",
+      "fromSide": "right",
+      "toSide": "bottom"
+    },
+    {
+      "id": "pool-remote",
+      "from": "model-pool",
+      "to": "remote-models",
+      "label": "HTTPS · прайс-таблица",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "capability-tools",
+      "from": "capability",
+      "to": "tool-runtime",
+      "label": "allow / deny / confirm"
+    },
+    {
+      "id": "tools-plugins",
+      "from": "tool-runtime",
+      "to": "plugins",
+      "label": "MCP по IPC · ACL",
+      "variant": "dashed"
+    },
+    {
+      "id": "mediation-storage",
+      "from": "mediation",
+      "to": "storage",
+      "label": "commit: патч + событие",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "context-storage",
+      "from": "context-engine",
+      "to": "storage",
+      "label": "чтение слоёв памяти",
+      "fromSide": "left",
+      "toSide": "top",
+      "labelDx": -40
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Код решает, модель исполняет",
+      "items": [
+        "Маршрутизация, ветвление, отбор контекста и запись в память — детерминированный код (I1)",
+        "Модель извлекает, суммаризирует и генерирует внутри шага — под контрактом Mediation (I3)",
+        "Замена модели меняет качество шагов, но не поведение системы"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Безопасность до выполнения",
+      "items": [
+        "Deny-статика блокирует деструктивное безусловно — подтверждение человека deny не отменяет (I6)",
+        "Секреты недоступны модели: на границах данных стоит маскировщик, модель видит алиасы (I4)",
+        "Плагины — изолированные процессы с манифестом и ACL; отказ плагина не останавливает ядро (I5)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Воспроизводимость",
+      "items": [
+        "Каждый шаг — событие в журнале; состояние — свёртка событий (I7)",
+        "Снапшот автоматически перед каждым мутирующим шагом",
+        "SQLite — единый встроенный движок: события, полнотекст, векторы, граф"
+      ]
+    }
+  ]
+}

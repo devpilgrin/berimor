@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Berimor — шаг с моделью через Mediation",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [
+      1400,
+      700
+    ],
+    "views": [
+      {
+        "id": "execute",
+        "label": "Исполнение шага",
+        "focus": [
+          "pe",
+          "ex",
+          "model"
+        ],
+        "note": "Исполнитель получает контекст от движка и вызывает модель по контракту схемы."
+      },
+      {
+        "id": "mediate",
+        "label": "Повтор и эскалация",
+        "focus": [
+          "ex",
+          "med",
+          "model",
+          "human"
+        ],
+        "note": "Невалидный вывод — повтор с текстом ошибки (до 2); нарушение политики — эскалация без повтора."
+      },
+      {
+        "id": "commit",
+        "label": "Commit в журнал",
+        "focus": [
+          "med",
+          "store",
+          "pe"
+        ],
+        "note": "Только валидный выход становится состоянием: патч + событие + снапшот (I3, I7)."
+      }
+    ]
+  },
+  "participants": [
+    {
+      "id": "pe",
+      "type": "backend",
+      "label": "Process Engine",
+      "sublabel": "цикл по шагам"
+    },
+    {
+      "id": "ex",
+      "type": "backend",
+      "label": "Исполнитель",
+      "sublabel": "structured · codeact"
+    },
+    {
+      "id": "model",
+      "type": "cloud",
+      "label": "Модель",
+      "sublabel": "Model Pool · класс"
+    },
+    {
+      "id": "med",
+      "type": "security",
+      "label": "Mediation",
+      "sublabel": "схема → политика"
+    },
+    {
+      "id": "human",
+      "type": "security",
+      "label": "Human Gate",
+      "sublabel": "эскалация"
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "Журнал SQLite",
+      "sublabel": "события · снапшоты"
+    }
+  ],
+  "segments": [
+    {
+      "from": 165,
+      "to": 300,
+      "label": "Исполнение"
+    },
+    {
+      "from": 320,
+      "to": 490,
+      "label": "Mediation: повтор и эскалация"
+    },
+    {
+      "from": 510,
+      "to": 625,
+      "label": "Commit в журнал"
+    }
+  ],
+  "messages": [
+    {
+      "id": "run-step",
+      "from": "pe",
+      "to": "ex",
+      "y": 180,
+      "label": "run(step, ctx)",
+      "variant": "emphasis"
+    },
+    {
+      "id": "call-model",
+      "from": "ex",
+      "to": "model",
+      "y": 222,
+      "label": "запрос по схеме шага",
+      "variant": "default"
+    },
+    {
+      "id": "raw-output",
+      "from": "model",
+      "to": "ex",
+      "y": 262,
+      "label": "сырой вывод",
+      "variant": "return"
+    },
+    {
+      "id": "commit-request",
+      "from": "ex",
+      "to": "med",
+      "y": 304,
+      "label": "commit(step, output)",
+      "variant": "security"
+    },
+    {
+      "id": "retry-hint",
+      "from": "med",
+      "to": "model",
+      "y": 348,
+      "label": "повтор с текстом ошибки (до 2)",
+      "variant": "dashed"
+    },
+    {
+      "id": "retry-output",
+      "from": "model",
+      "to": "med",
+      "y": 390,
+      "label": "исправленный вывод",
+      "variant": "return"
+    },
+    {
+      "id": "escalate",
+      "from": "med",
+      "to": "human",
+      "y": 434,
+      "label": "нарушение политики — без повтора",
+      "variant": "security"
+    },
+    {
+      "id": "human-decision",
+      "from": "human",
+      "to": "med",
+      "y": 476,
+      "label": "решение человека",
+      "variant": "return"
+    },
+    {
+      "id": "commit-patch",
+      "from": "med",
+      "to": "store",
+      "y": 520,
+      "label": "патч + событие",
+      "variant": "emphasis"
+    },
+    {
+      "id": "snapshot",
+      "from": "store",
+      "to": "pe",
+      "y": 562,
+      "label": "снапшот · step.applied",
+      "variant": "return"
+    },
+    {
+      "id": "commit-result",
+      "from": "med",
+      "to": "pe",
+      "y": 604,
+      "label": "результат commit",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "pe",
+      "from": 180,
+      "to": 610,
+      "type": "backend"
+    },
+    {
+      "participant": "ex",
+      "from": 180,
+      "to": 310,
+      "type": "backend"
+    },
+    {
+      "participant": "model",
+      "from": 222,
+      "to": 396,
+      "type": "cloud"
+    },
+    {
+      "participant": "med",
+      "from": 304,
+      "to": 610,
+      "type": "security"
+    },
+    {
+      "participant": "human",
+      "from": 434,
+      "to": 482,
+      "type": "security"
+    },
+    {
+      "participant": "store",
+      "from": 520,
+      "to": 568,
+      "type": "database"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Контракт, а не доверие",
+      "items": [
+        "Подсказка модели собирается из схемы шага, а не пишется вручную",
+        "Проверка политики — детерминированная: диапазоны, перечисления, межполевые правила"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Повторы и эскалация",
+      "items": [
+        "Ошибка разбора или схемы — повтор с подсказкой формата, не более двух",
+        "Нарушение политики — эскалация к человеку сразу, без повтора"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Телеметрия отказов",
+      "items": [
+        "Каждый отказ валидации — событие с причиной в журнале",
+        "Доля отказов — вход офлайн-оценки и детектор деградации модели"
+      ]
+    }
+  ]
+}

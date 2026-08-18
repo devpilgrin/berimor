@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Berimor — жизненный цикл задачи",
+    "quality_profile": "showcase",
+    "viewBox": [1120, 714],
+    "legend": { "mode": "hidden" },
+    "views": [
+      {
+        "id": "happy-path",
+        "label": "Основной путь",
+        "focus": ["task", "router", "instance", "context", "executor", "mediation", "journal", "report"],
+        "note": "От события «новая задача» до отчёта: все решения на пути принимает код."
+      },
+      {
+        "id": "gates",
+        "label": "Гейты и эскалация",
+        "focus": ["instance", "capability", "mediation", "humangate"],
+        "note": "Deny-статика до мутации, повторы валидации и детерминированная эскалация к человеку."
+      },
+      {
+        "id": "memory-loop",
+        "label": "Память и журнал",
+        "focus": ["memory", "journal"],
+        "note": "Факты консолидируются в слои памяти через дедупликацию; чтение — только через Context Engine."
+      }
+    ]
+  },
+  "lanes": [
+    { "id": "surface", "label": "Поверхность" },
+    { "id": "core", "label": "Детерминированное ядро" },
+    { "id": "exec", "label": "Исполнители" },
+    { "id": "guard", "label": "Контракты и гейты" },
+    { "id": "data", "label": "Память и журнал" }
+  ],
+  "phases": [
+    { "id": "intake", "label": "Intake", "fromCol": 0, "toCol": 1 },
+    { "id": "step-loop", "label": "Цикл по шагам графа", "fromCol": 2, "toCol": 4, "variant": "emphasis" },
+    { "id": "finish", "label": "Завершение", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["task", "router", "instance", "context", "executor", "mediation", "journal", "report"],
+  "nodes": [
+    { "id": "task", "lane": "surface", "col": 0, "type": "external", "label": "Новая задача", "sublabel": "событие от поверхности" },
+    { "id": "report", "lane": "surface", "col": 5, "type": "frontend", "label": "Отчёт", "sublabel": "публикуемые поля" },
+    { "id": "router", "lane": "core", "col": 0, "type": "backend", "label": "Маршрутизатор", "sublabel": "правила в коде", "tag": "I1" },
+    { "id": "instance", "lane": "core", "col": 2, "type": "backend", "label": "Процесс", "sublabel": "Process Engine" },
+    { "id": "context", "lane": "core", "col": 4, "type": "backend", "label": "Контекст", "sublabel": "слои по бюджету" },
+    { "id": "executor", "lane": "exec", "col": 5, "type": "backend", "label": "Исполнитель", "sublabel": "structured · codeact" },
+    { "id": "capability", "lane": "guard", "col": 1, "type": "security", "label": "Capability", "sublabel": "deny · confirm", "tag": "I6" },
+    { "id": "humangate", "lane": "guard", "col": 3, "type": "security", "label": "Human Gate", "sublabel": "эскалация" },
+    { "id": "mediation", "lane": "guard", "col": 5, "type": "security", "label": "Mediation", "sublabel": "схема → политика", "tag": "I3" },
+    { "id": "memory", "lane": "data", "col": 3, "type": "database", "label": "Память", "sublabel": "4 слоя" },
+    { "id": "journal", "lane": "data", "col": 5, "type": "database", "label": "Журнал", "sublabel": "патч · снапшот", "tag": "I7" }
+  ],
+  "edges": [
+    { "id": "task-route", "from": "task", "to": "router", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "id": "route-instance", "from": "router", "to": "instance", "label": "модель процесса", "variant": "emphasis", "labelDy": -20 },
+    { "id": "instance-context", "from": "instance", "to": "context", "variant": "emphasis" },
+    { "id": "context-executor", "from": "context", "to": "executor", "label": "контекст", "variant": "emphasis", "fromSide": "right", "toSide": "top", "route": "drop", "labelSegment": 1 },
+    { "id": "executor-mediation", "from": "executor", "to": "mediation", "label": "сырой вывод", "variant": "security", "labelDx": -70 },
+    { "id": "mediation-journal", "from": "mediation", "to": "journal", "label": "commit: патч", "variant": "emphasis", "labelDy": 12 },
+    { "id": "journal-report", "from": "journal", "to": "report", "label": "результат", "variant": "emphasis", "role": "return", "fromSide": "right", "toSide": "right", "route": "outside-right", "channelX": 730 },
+    { "id": "instance-capability", "from": "instance", "to": "capability", "label": "перед мутацией", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelSegment": 1, "labelDx": -40 },
+    { "id": "capability-humangate", "from": "capability", "to": "humangate", "label": "подтверждение", "variant": "security", "role": "branch", "labelDy": -18 },
+    { "id": "mediation-escalate", "from": "mediation", "to": "humangate", "label": "эскалация", "variant": "security", "role": "error", "labelDy": -18 },
+    { "id": "humangate-instance", "from": "humangate", "to": "instance", "label": "решение человека", "variant": "dashed", "role": "return", "fromSide": "top", "toSide": "bottom", "route": "drop", "labelSegment": 1, "labelDx": 40 },
+    { "id": "mediation-retry", "from": "mediation", "to": "executor", "label": "повтор до 2", "variant": "dashed", "role": "branch", "fromSide": "top", "toSide": "bottom", "route": "up-channel", "channelX": 692, "labelDx": -90, "labelDy": 30 },
+    { "id": "journal-memory", "from": "journal", "to": "memory", "label": "консолидация", "variant": "dashed", "labelDy": -18 }
+  ]
+}

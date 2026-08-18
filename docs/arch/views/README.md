@@ -19,6 +19,17 @@
 | `domain-glossary.md` | Domain view | Единый словарь понятий и их связи (ubiquitous language) |
 | `risks-and-debt.md` | Risk view (arc42 §11) | Что осознанно принято как компромисс/риск и что ещё открыто |
 
+## Интерактивные диаграммы
+
+Четыре ключевых представления оформлены как standalone HTML (тёмная/светлая тема, поиск и фокус по узлам, guided views, экспорт в PNG/SVG/WebM) в `diagrams/`. Источник истины — JSON-спецификации рядом с каждым HTML; править диаграмму = править спецификацию и пересобрать.
+
+| Файл | Представление | Что показывает |
+|---|---|---|
+| [`diagrams/component-map.html`](diagrams/component-map.html) | Компонентная карта | Поверхности, детерминированное ядро (Process Engine, Actors, Context Engine, Executors, Mediation, Capability), Tool Runtime, Model Pool, память на SQLite, внешняя граница (плагины, провайдеры моделей). Соответствует `system-architecture.md` и `component-architecture.md`; узлы привязаны к крейтам `crates/` |
+| [`diagrams/task-lifecycle.html`](diagrams/task-lifecycle.html) | Жизненный цикл задачи | Поток «intake → маршрутизация кодом → цикл по шагам → отчёт» с гейтами Capability/Mediation, Human Gate и записью в журнал. Соответствует `../ideal-agent-architecture.md` §4 и `runtime-view.md` §1 |
+| [`diagrams/process-states.html`](diagrams/process-states.html) | Состояния инстанса процесса | Running / WaitingHuman / DefaultBranch / Failed / Completed, переходы по human_gate, таймаутам и бюджетным прерывателям. Соответствует `state-view.md` §1 |
+| [`diagrams/mediation-sequence.html`](diagrams/mediation-sequence.html) | Шаг с моделью через Mediation | Последовательность «исполнение → повторы валидации → эскалация → commit в журнал». Соответствует `runtime-view.md` §2 и `../mediation.md` |
+
 ## Зачем эти семь сверх запрошенных четырёх
 
 Системная, компонентная, данных и сетевая архитектуры описывают *структуру*. Без представления *поведения во времени* (runtime, state) читатель не увидит, как структура на самом деле работает под нагрузкой и при сбое — а именно там живут инварианты I2/I6/I7. Security view переупаковывает уже существующую таблицу угроз в картинку, потому что эшелонированность (L0–L8) — пространственное свойство, которое таблица передаёт хуже диаграммы. Quality attributes и risks-and-debt — стандартные разделы arc42, без которых архитектурный пакет не даёт ответа на «а как проверить, что это вообще работает» и «что мы сознательно не решили». Domain glossary фиксирует словарь до того, как разные части кода начнут называть одно и то же по-разному.
