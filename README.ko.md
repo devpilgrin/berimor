@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-976%20green-brightgreen)](#프로젝트-인프라)
+[![Tests](https://img.shields.io/badge/tests-981%20green-brightgreen)](#프로젝트-인프라)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -132,6 +132,8 @@ berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 
 
 **SGR: 스키마가 추론을 이끈다** (0.30.0): 계약은 대상 필드보다 근거 필드를 먼저 선언할 수 있습니다 — `ClassificationOut`에서 `risk_factors`(비어 있지 않은 목록)가 `risk`보다 앞에 옵니다. 요인을 나열한 뒤 점수를 매기므로 모델의 평가는 임의적이 아니라 근거에 기반합니다. JSON Schema의 필드 순서는 선언 순서와 일치합니다(schemars `preserve_order`). constrained decoding을 지원하는 프로바이더(`[[providers]]`의 `response_format = "json_schema"`: OpenAI 호환, Ollama는 `format` 경유, llama.cpp)에서는 생성 순서가 스키마에 의해 물리적으로 강제되어 요인을 채우지 않고는 숫자를 출력할 수 없습니다. 미지원 프로바이더(DeepSeek, Kimi — `json_object`만 해당)에서는 소프트 레벨이 적용됩니다: 프롬프트의 필드 순서 + 스키마 필수 + 미디에이션 검증. 설정 계약 규칙: 근거 필드를 대상 필드보다 먼저 선언하십시오. 자립형 in-process llama.cpp는 계약 스키마로부터 생성된 GBNF 문법으로 순서를 강제합니다(0.31.0).
 
+**규칙 계층과 MCP 서버로서의 berimor** (0.37.0, Harness AI 3.0 참고): (1) **규칙** — `~/.config/berimor/rules/`와 `.berimor/rules/`의 Markdown 표준이 생성 전 모든 모델 스텝의 컨텍스트에 주입됩니다(소프트 계층; 하드 계층은 여전히 미디에이션). 프로젝트 규칙이 글로벌보다 우선; (2) **`berimor mcp-serve`** — stdio 기반 MCP 서버: 외부 에이전트(Claude Code, Cursor)가 `process.list`/`process.run`/`trace.read`로 berimor 프로세스를 구동 — 모델은 밖에서 생각하고 코드는 안에서 결정; (3) **GitHub Action** `devpilgrin/berimor-action@v1` — 프로세스를 CI 스텝으로.
+
 **DeepSeek Harness에서 차용** (0.36.0): (1) **관찰 프루너** — 긴 도구 결과는 프롬프트에서 잘림(머리+마커+꼬리, 원본은 저널에 보존; `[agent] tool_result_max_chars`, 0 = 끔); (2) **Landlock 샌드박스** — `terminal.exec`/`terminal.start`용, libc 자체 구현(외부 바이너리 없음): 하위 프로세스는 물리적으로 작업 영역을 벗어날 수 없고 시스템 디렉터리는 읽기 전용; `[sandbox] landlock = off|auto|require`, require는 fail-closed; (3) **채팅 컴팩션** — 임계값을 넘는 기록은 상위 프로바이더가 요약 노트로 압축, 꼬리는 그대로 유지, 요약 실패가 턴을 중단시키지 않음(`[agent] compact_threshold_chars`, 0 = 끔).
 
 **생성 절단 내성** (0.35.2): 토큰 한도에 도달한 로컬 모델은 JSON을 중간에 자릅니다(«EOF while parsing») — 이전에는 재시도 3회를 소모하고 에스컬레이션으로 프로세스가 중단되었습니다. 이제 미디에이션의 parse 단계가 절단을 구조적으로 보완합니다(닫는 따옴표/괄호만, 내용 불변, 쓰레기는 여전히 거부). 복구는 저널에 기록됩니다(`mediation_parse_repaired`) — 재시도와 에스컬레이션은 실제 오류를 위해 남습니다. 로컬 프로바이더 컨텍스트는 8192로 상향되었고 설정 가능합니다(`local_ctx_tokens`).
@@ -183,7 +185,7 @@ flowchart LR
 
 **컴포넌트당 하나의 크레이트로 구성된 Rust workspace** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. 게스트 WASM 모듈(`codeact-guest/`)은 별도의 crate로 존재하며 빌드된 아티팩트로 커밋되어 있습니다 — 일반 빌드가 느려지지 않습니다.
 
-**검증 규율.** 모든 릴리스: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace`(976개 테스트: 유닛, 통합, 실제 바이너리를 통한 e2e, 프로세스 및 악의적 입력의 골든 픽스처). 중요 컴포넌트는 필수 독립 리뷰를 거칩니다. 전체 독립 감사(`docs/audit-2026-07-31.md`) — **모든 지적 사항이 해결되었거나 의식적으로 문서화됨**.
+**검증 규율.** 모든 릴리스: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace`(981개 테스트: 유닛, 통합, 실제 바이너리를 통한 e2e, 프로세스 및 악의적 입력의 골든 픽스처). 중요 컴포넌트는 필수 독립 리뷰를 거칩니다. 전체 독립 감사(`docs/audit-2026-07-31.md`) — **모든 지적 사항이 해결되었거나 의식적으로 문서화됨**.
 
 **어른의 서플라이 체인.** 크로스 플랫폼 릴리스(Linux x64/arm64, macOS arm64, Windows x64)에 cosign/sigstore 키리스 서명 — 개인 키는 어디에도 존재하지 않습니다. 검증: `berimor verify <아카이브>`. npm 퍼블리시는 provenance와 함께, 파이프라인에 SBOM(CycloneDX), 셀프 업데이트(`berimor self-update`)는 Process Engine 프리미티브 위에 구현 — 임시 스크립트가 아니라 일반 프로세스와 동일한 저널과 장애 복구.
 

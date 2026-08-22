@@ -123,6 +123,7 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         }),
         masker: Some(bundle.masker.as_ref()),
     };
+    let context_with_rules = crate::rules::wrap(&memory_context, config);
     // Без телеметрии Mediation (on_attempt: None): у неё нет
     // фиксированного instance_id до вызова engine::instantiate ВНУТРИ
     // run_golden_set (id — "{процесс}::{сценарий}", решает сам стенд, не
@@ -132,14 +133,14 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
     let llm = StructuredLlm {
         pool: &bundle.pool,
         providers: &providers,
-        context: &memory_context,
+        context: &context_with_rules,
         on_attempt: None,
         secrets: bundle.masker.as_ref(),
     };
     let agent_step = AgentStepExecutor {
         pool: &bundle.pool,
         providers: &providers,
-        context: &memory_context,
+        context: &context_with_rules,
         on_attempt: None,
         gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
@@ -161,7 +162,7 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
     let codeact = CodeActExecutor {
         pool: &bundle.pool,
         providers: &providers,
-        context: &memory_context,
+        context: &context_with_rules,
         on_attempt: None,
         wasm_host: &wasm_host,
         secrets: bundle.masker.as_ref(),

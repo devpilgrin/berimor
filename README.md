@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-976%20green-brightgreen)](#инфраструктура-проекта)
+[![Tests](https://img.shields.io/badge/tests-981%20green-brightgreen)](#инфраструктура-проекта)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -134,6 +134,8 @@ Deny-таблица деструктивных операций не переи�
 
 **SGR: схема ведёт рассуждение** (0.30.0): контракт может объявлять поля-обоснования ДО целевых — `risk_factors` (непустой список) перед `risk` в `ClassificationOut`; заполнив факторы, модель назначает оценку с опорой, а не произвольно. Порядок полей в JSON Schema соответствует порядку объявления (schemars `preserve_order`). На провайдерах с constrained decoding (`response_format = "json_schema"` в `[[providers]]`: OpenAI-совместимые, Ollama через `format`, llama.cpp) порядок генерации принуждается схемой физически — модель не может выдать число, не заполнив факторы. На провайдерах без constrained decoding (DeepSeek, Kimi — только `json_object`) работает мягкий уровень: порядок полей в промпте + обязательность по схеме + валидация медиации. Правило для конфиг-контрактов: поля-обоснования объявляйте раньше целевых. Автономный llama.cpp (in-process) принуждает порядок GBNF-грамматикой, построенной из схемы контракта (0.31.0).
 
+**Слой правил и berimor как MCP-сервер** (0.37.0, по мотивам Harness AI 3.0): (1) **правила** — markdown-стандарты из `~/.config/berimor/rules/` и `.berimor/rules/` подмешиваются в контекст всех шагов с моделью ДО генерации (мягкий слой; жёсткий — по-прежнему медиация); проектные сильнее глобальных; (2) **`berimor mcp-serve`** — MCP-сервер по stdio: внешние агенты (Claude Code, Cursor) гоняют процессы berimor через инструменты `process.list`/`process.run`/`trace.read` — модель думает снаружи, код решает внутри; (3) **GitHub Action** `devpilgrin/berimor-action@v1` — процессы как шаги CI.
+
 **Заимствования из DeepSeek Harness** (0.36.0): (1) **pruner наблюдений** — длинный результат инструмента обрезается в промпте (голова+маркер+хвост, оригинал в журнале; `[agent] tool_result_max_chars`, 0 = выкл); (2) **Landlock-песочница** для `terminal.exec`/`terminal.start` — собственная реализация на libc (без внешнего бинаря): подпроцесс физически не выходит за рабочую область, системные каталоги — read-only; `[sandbox] landlock = off|auto|require`, require — fail-closed; (3) **compaction чата** — история длиннее порога сжимается в конспект старшим провайдером, хвост дословно, сбой суммаризации не роняет ход (`[agent] compact_threshold_chars`, 0 = выкл).
 
 **Устойчивость к обрыву генерации** (0.35.2): локальная модель, упёршаяся в потолок токенов, обрывает JSON («EOF while parsing») — раньше это сжигало 3 попытки и останавливало процесс эскалацией. Теперь стадия parse медиации достраивает обрыв структурно (закрывающие кавычки/скобки, содержимое не трогается; мусор по-прежнему отклоняется), ремонт виден в журнале (`mediation_parse_repaired`) — ретраи и эскалация остаются для настоящих ошибок. Контекст локального провайдера поднят до 8192 и настраивается (`local_ctx_tokens`).
@@ -185,7 +187,7 @@ flowchart LR
 
 **Rust-workspace по крейту на компонент** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. Гостевой WASM-модуль (`codeact-guest/`) живёт отдельным crate и закоммичен как готовый артефакт — обычная сборка не замедляется.
 
-**Дисциплина проверок.** Каждый релиз: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (976 тестов: юнит, интеграционные, e2e через настоящий бинарник, золотые фикстуры процессов и вредоносных вводов). Критические компоненты проходят обязательное независимое ревью. Полный самостоятельный аудит (`docs/audit-2026-07-31.md`) — **все находки закрыты или осознанно задокументированы**.
+**Дисциплина проверок.** Каждый релиз: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (981 тестов: юнит, интеграционные, e2e через настоящий бинарник, золотые фикстуры процессов и вредоносных вводов). Критические компоненты проходят обязательное независимое ревью. Полный самостоятельный аудит (`docs/audit-2026-07-31.md`) — **все находки закрыты или осознанно задокументированы**.
 
 **Supply chain как у взрослых.** Кросс-платформенные релизы (Linux x64/arm64, macOS arm64, Windows x64) с keyless-подписью cosign/sigstore — приватного ключа не существует нигде. Проверка: `berimor verify <архив>`. npm-публикация с provenance, SBOM (CycloneDX) в пайплайне, самообновление (`berimor self-update`) реализовано на примитивах Process Engine — тот же журнал и восстановление после сбоя, что у обычных процессов, а не ad hoc скрипт.
 

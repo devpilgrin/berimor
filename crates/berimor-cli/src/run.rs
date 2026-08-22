@@ -201,11 +201,12 @@ pub fn run(
         // что вывод инструментов и подтверждения.
         masker: Some(bundle.masker.as_ref()),
     };
+    let context_with_rules = crate::rules::wrap(&memory_context, config);
 
     let llm = StructuredLlm {
         pool: &bundle.pool,
         providers: &providers,
-        context: &memory_context,
+        context: &context_with_rules,
         on_attempt: Some(&on_attempt),
         secrets: bundle.masker.as_ref(),
     };
@@ -229,7 +230,7 @@ pub fn run(
     let agent_step = AgentStepExecutor {
         pool: &bundle.pool,
         providers: &providers,
-        context: &memory_context,
+        context: &context_with_rules,
         on_attempt: Some(&on_attempt),
         gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
@@ -254,7 +255,7 @@ pub fn run(
     let codeact = CodeActExecutor {
         pool: &bundle.pool,
         providers: &providers,
-        context: &memory_context,
+        context: &context_with_rules,
         on_attempt: Some(&on_attempt),
         wasm_host: &wasm_host,
         secrets: bundle.masker.as_ref(),

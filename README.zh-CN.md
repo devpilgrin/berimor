@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-976%20green-brightgreen)](#项目基础设施)
+[![Tests](https://img.shields.io/badge/tests-981%20green-brightgreen)](#项目基础设施)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -132,6 +132,8 @@ berimor 的主要“实战”模式是**流程**：一个以图形式执行的�
 
 **SGR：模式引导推理**（0.30.0）：契约可以在目标字段之前声明论证字段 — `ClassificationOut` 中 `risk_factors`（非空列表）位于 `risk` 之前；模型先列举因素，再有依据地给出评分，而不是随意赋值。JSON Schema 中的字段顺序与声明顺序一致（schemars `preserve_order`）。在支持受限解码的提供商上（`[[providers]]` 中 `response_format = "json_schema"`：OpenAI 兼容、Ollama 通过 `format`、llama.cpp），生成顺序由模式物理强制 — 模型不填因素就无法输出数字。在不支持受限解码的提供商上（DeepSeek、Kimi — 仅 `json_object`），采用软层级：提示中的字段顺序 + 模式必填 + 调解验证。配置契约规则：论证字段声明在目标字段之前。 自治的进程内 llama.cpp 通过由契约模式构建的 GBNF 语法强制顺序（0.31.0）。
 
+**规则层与 berimor 作为 MCP 服务器**（0.37.0，借鉴 Harness AI 3.0）：(1) **规则**——来自 `~/.config/berimor/rules/` 与 `.berimor/rules/` 的 Markdown 标准在生成之前注入所有模型步骤的上下文（软层；硬层仍是调解）；项目规则优先于全局规则；(2) **`berimor mcp-serve`**——基于 stdio 的 MCP 服务器：外部智能体（Claude Code、Cursor）通过 `process.list`/`process.run`/`trace.read` 驱动 berimor 流程——模型在外思考，代码在内决策；(3) **GitHub Action** `devpilgrin/berimor-action@v1`——流程作为 CI 步骤。
+
 **借鉴自 DeepSeek Harness**（0.36.0）：(1) **观察剪枝**——超长工具结果在提示中被裁剪（头部+标记+尾部，原件保留在日志中；`[agent] tool_result_max_chars`，0 = 关闭）；(2) **Landlock 沙箱**用于 `terminal.exec`/`terminal.start`——基于 libc 的自有实现（无外部二进制）：子进程在物理上无法离开工作区，系统目录为只读；`[sandbox] landlock = off|auto|require`，require 为 fail-closed；(3) **聊天压缩**——超过阈值的历史由首选提供方压缩为摘要，尾部逐字保留，摘要失败不会中断回合（`[agent] compact_threshold_chars`，0 = 关闭）。
 
 **抗生成截断**（0.35.2）：本地模型达到 token 上限会截断 JSON（「EOF while parsing」）——过去这会耗尽 3 次重试并以升级停止整个流程。现在调解的解析阶段会结构化地补全截断（闭合引号/括号；内容不变；垃圾依旧拒绝），修复会记入日志（`mediation_parse_repaired`）——重试和升级留给真正的错误。本地提供商的上下文提升至 8192 并可配置（`local_ctx_tokens`）。
@@ -183,7 +185,7 @@ flowchart LR
 
 **Rust workspace，每个组件一个 crate**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。Guest WASM 模块（`codeact-guest/`）作为独立的 crate 存在，并以预构建产物提交——常规构建不会变慢。
 
-**检查纪律。** 每次发布：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（976 个测试：单元、集成、通过真实二进制的 e2e、流程和恶意输入的黄金夹具）。关键组件必须通过强制性的独立评审。完整的独立审计（`docs/audit-2026-07-31.md`）——**所有发现均已关闭或有意识地记录在案**。
+**检查纪律。** 每次发布：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（981 个测试：单元、集成、通过真实二进制的 e2e、流程和恶意输入的黄金夹具）。关键组件必须通过强制性的独立评审。完整的独立审计（`docs/audit-2026-07-31.md`）——**所有发现均已关闭或有意识地记录在案**。
 
 **成人级的供应链。** 跨平台发布（Linux x64/arm64、macOS arm64、Windows x64），使用 cosign/sigstore 无钥匙签名——私钥在任何地方都不存在。验证：`berimor verify <归档文件>`。npm 发布带 provenance，流水线中包含 SBOM（CycloneDX），自更新（`berimor self-update`）基于 Process Engine 原语实现——与普通流程共享同一套日志与故障恢复，而非临时脚本。
 

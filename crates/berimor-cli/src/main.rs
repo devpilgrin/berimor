@@ -35,12 +35,14 @@ mod ext_cmd;
 mod i18n;
 mod landlock;
 mod mcp_dispatch;
+mod mcp_serve;
 mod memory;
 mod oauth;
 mod observe;
 mod plugin_install;
 mod plugin_runtime;
 mod presets;
+mod rules;
 mod run;
 mod self_update;
 mod serve;
@@ -129,6 +131,10 @@ enum Command {
         #[arg(long)]
         port: Option<u16>,
     },
+    /// MCP-сервер (stdio, 0.37.0): внешние агенты гоняют процессы
+    /// berimor как детерминированный контур — process.list/run,
+    /// trace.read.
+    McpServe,
     /// Память: консолидация семантических дублей (prompt-next-wave.md
     /// задача 3). Требует `[memory] embeddings = true` и сборки с
     /// `--features embeddings`.
@@ -399,6 +405,9 @@ fn main() -> ExitCode {
                 eprintln!("[berimor] {err}");
                 return ExitCode::FAILURE;
             }
+        }
+        Command::McpServe => {
+            return ExitCode::from(mcp_serve::serve() as u8);
         }
         Command::Memory { action } => match action {
             MemoryAction::Consolidate => {

@@ -480,6 +480,7 @@ pub(crate) fn execute_turn(
         }),
         masker: Some(bundle.masker.as_ref()),
     };
+    let context_with_rules = crate::rules::wrap(&memory_context, config);
     let on_tool_turn = |tool: &str, args: &Value, _observation: &Value, ok: bool| {
         let _ = tx.send(crate::chat_tui::WorkerMsg::ToolTurn(format!(
             "{} {}({})",
@@ -527,7 +528,7 @@ pub(crate) fn execute_turn(
     let agent = AgentStepExecutor {
         pool: &bundle.pool,
         providers: &providers,
-        context: &memory_context,
+        context: &context_with_rules,
         on_attempt: Some(&on_attempt),
         gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
@@ -682,6 +683,7 @@ fn run_repl(
         }),
         masker: Some(bundle.masker.as_ref()),
     };
+    let context_with_rules = crate::rules::wrap(&memory_context, config);
 
     // Живой вывод вызовов инструментов (§20.13): презентационный канал
     // исполнителя — аргументы и наблюдения приходят замаскированными.
@@ -707,7 +709,7 @@ fn run_repl(
     let agent = AgentStepExecutor {
         pool: &bundle.pool,
         providers: &providers,
-        context: &memory_context,
+        context: &context_with_rules,
         on_attempt: Some(&on_attempt),
         gate: bundle.gate.as_ref(),
         mode: config.confirmation_mode,
@@ -978,7 +980,7 @@ fn run_repl(
                 let turn_agent = AgentStepExecutor {
                     pool: &bundle.pool,
                     providers: &providers,
-                    context: &memory_context,
+                    context: &context_with_rules,
                     on_attempt: Some(&on_attempt),
                     gate: bundle.gate.as_ref(),
                     mode: config.confirmation_mode,
@@ -1058,7 +1060,7 @@ fn run_repl(
                     let llm = StructuredLlm {
                         pool: &bundle.pool,
                         providers: &providers,
-                        context: &memory_context,
+                        context: &context_with_rules,
                         on_attempt: Some(&on_attempt),
                         secrets: bundle.masker.as_ref(),
                     };
