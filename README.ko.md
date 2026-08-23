@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-983%20green-brightgreen)](#프로젝트-인프라)
+[![Tests](https://img.shields.io/badge/tests-985%20green-brightgreen)](#프로젝트-인프라)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -131,6 +131,8 @@ berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 
 **구성에서의 계약**(0.28.0): 포크와 재빌드 없이 자체 계약 — 구성의 `[[contracts]]` 섹션에 JSON Schema(인라인 `schema` 또는 `schema_path`)로 정의하고, 이후 `llm_structured`/`codeact`/`agent_step`가 내장 계약과 동등하게 이름으로 참조합니다. 모델 출력은 스키마로 검증되고(crate `jsonschema`), 검증 오류는 재시도 프롬프트로 전달됩니다 — 동일한 미디에이션 루프입니다. 제약: 구성 계약에는 policy 규칙(상태 참조)과 스키마 버전이 없고, `publishable`은 객체 전체이며, 레지스트리는 시작 시 읽힙니다(구성 변경은 새로 시작해야 함). 예제 — [`fixtures/golden/processes/config-contracts/`](fixtures/golden/processes/config-contracts/).
 
 **SGR: 스키마가 추론을 이끈다** (0.30.0): 계약은 대상 필드보다 근거 필드를 먼저 선언할 수 있습니다 — `ClassificationOut`에서 `risk_factors`(비어 있지 않은 목록)가 `risk`보다 앞에 옵니다. 요인을 나열한 뒤 점수를 매기므로 모델의 평가는 임의적이 아니라 근거에 기반합니다. JSON Schema의 필드 순서는 선언 순서와 일치합니다(schemars `preserve_order`). constrained decoding을 지원하는 프로바이더(`[[providers]]`의 `response_format = "json_schema"`: OpenAI 호환, Ollama는 `format` 경유, llama.cpp)에서는 생성 순서가 스키마에 의해 물리적으로 강제되어 요인을 채우지 않고는 숫자를 출력할 수 없습니다. 미지원 프로바이더(DeepSeek, Kimi — `json_object`만 해당)에서는 소프트 레벨이 적용됩니다: 프롬프트의 필드 순서 + 스키마 필수 + 미디에이션 검증. 설정 계약 규칙: 근거 필드를 대상 필드보다 먼저 선언하십시오. 자립형 in-process llama.cpp는 계약 스키마로부터 생성된 GBNF 문법으로 순서를 강제합니다(0.31.0).
+
+**웨이브 B: 관측가능성** (0.39.0): `berimor otlp <run> --endpoint <url>` — 프로세스 실행을 OTLP/HTTP JSON 트레이스로 낸다: 실행 루트 스팬, 그래프 노드별 스팬, LLM 호출 스팬(지연 + 토큰을 속성으로), human_gate(응답/타임아웃까지 구간), 자유 루프의 도구 호출. traceId/spanId는 결정적(재납출 멱등). Jaeger·Grafana Tempo 컬렉터(포트 4318)와 Langfuse가 수용 — 단일 OTLP, 전용 익스포터 불필요; 인증 헤더는 `--header 'Name: value'`.
 
 **웨이브 A: 복원력과 비용** (0.38.0): Model Pool 서킷 브레이커 — 연속 N회 전송 장애 시 브레이커가 열리고, 쿨다운 후 하프오픈 프로브까지 프로바이더를 건걸이뛰며, 「<이름> → circuit-open」 가시 알림 발생 (`[agent] breaker_failures`, `breaker_cooldown_secs`; 0 = 비활성). 비용 귀속: 모든 모델 호출이 사용량을 저널에 기록 (토큰, 지연, 단계 — `model_usage` 이벤트); 로컬 llama.cpp는 토크나이저로 토큰 계산; `berimor cost <run>` — 단계별 보고서와 합계 (가격은 프로바이더의 `cost_per_1k_tokens`; 가격 미설정 시 정직하게 토큰만 표시, 금액은 지어내지 않음).
 

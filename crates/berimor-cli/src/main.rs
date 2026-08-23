@@ -40,6 +40,7 @@ mod memory;
 mod metering;
 mod oauth;
 mod observe;
+mod otlp;
 mod plugin_install;
 mod plugin_runtime;
 mod presets;
@@ -205,6 +206,17 @@ enum Command {
     Cost {
         /// Идентификатор инстанса.
         instance: String,
+    },
+    /// Экспорт прогона в OTLP/HTTP (Jaeger/Tempo/Langfuse) — волна B.
+    Otlp {
+        /// Идентификатор инстанса.
+        instance: String,
+        /// Базовый URL коллектора (например http://localhost:4318).
+        #[arg(long)]
+        endpoint: String,
+        /// Заголовок авторизации (повторяемый): 'Name: value'.
+        #[arg(long = "header")]
+        headers: Vec<String>,
     },
     /// Офлайн-прогон золотого набора: доля веток, доля отказов Mediation (O2).
     Eval {
@@ -615,6 +627,23 @@ fn main() -> ExitCode {
         }
         Command::Cost { instance } => {
             if let Err(err) = observe::cost(&resolved_config, &instance) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Command::Otlp {
+            instance,
+            endpoint,
+            headers,
+        } => {
+            let parsed: Vec<(String, String)> = headers
+                .iter()
+                .filter_map(|h| {
+                    h.split_once(':')
+                        .map(|(n, v)| (n.trim().to_string(), v.trim().to_string()))
+                })
+                .collect();
+            if let Err(err) = otlp::export(&resolved_config, &instance, &endpoint, &parsed) {
                 eprintln!("[berimor] {err}");
                 return ExitCode::FAILURE;
             }
