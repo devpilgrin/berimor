@@ -463,6 +463,7 @@ pub(crate) fn execute_turn(
         );
     };
     let facts_embed = crate::run::facts_embed_fn(config.memory.embeddings);
+    let qdrant = crate::run::qdrant_store(config);
     let memory_context = MemoryContextBuilder {
         episodic: &storage,
         skills: &bundle.skills,
@@ -479,7 +480,10 @@ pub(crate) fn execute_turn(
         // тому самому сообщению пользователя, ради которого писалась
         // задача (`execute_turn` собирает state с "goal": message ниже).
         facts: facts_embed.as_deref().map(|embed| FactsSource {
-            store: &storage,
+            store: qdrant
+                .as_ref()
+                .map(|q| q as &dyn berimor_storage::SemanticStore)
+                .unwrap_or(&storage),
             embed,
             limit: config.memory.facts_search_limit,
         }),
@@ -673,6 +677,7 @@ fn run_repl(
     };
 
     let facts_embed = crate::run::facts_embed_fn(config.memory.embeddings);
+    let qdrant = crate::run::qdrant_store(config);
     let memory_context = MemoryContextBuilder {
         episodic: &storage,
         skills: &bundle.skills,
@@ -686,7 +691,10 @@ fn run_repl(
             .entity_graph
             .then_some(&storage as &dyn berimor_storage::EntityGraphStore),
         facts: facts_embed.as_deref().map(|embed| FactsSource {
-            store: &storage,
+            store: qdrant
+                .as_ref()
+                .map(|q| q as &dyn berimor_storage::SemanticStore)
+                .unwrap_or(&storage),
             embed,
             limit: config.memory.facts_search_limit,
         }),

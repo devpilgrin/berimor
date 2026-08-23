@@ -186,6 +186,7 @@ pub fn run(
     // memory_context, поэтому строится ДО и в том же стековом кадре, не
     // внутри выражения ниже.
     let facts_embed = facts_embed_fn(config.memory.embeddings);
+    let qdrant = crate::run::qdrant_store(config);
     let memory_context = MemoryContextBuilder {
         episodic: &storage,
         skills: &bundle.skills,
@@ -199,7 +200,10 @@ pub fn run(
             .entity_graph
             .then_some(&storage as &dyn berimor_storage::EntityGraphStore),
         facts: facts_embed.as_deref().map(|embed| FactsSource {
-            store: &storage,
+            store: qdrant
+                .as_ref()
+                .map(|q| q as &dyn berimor_storage::SemanticStore)
+                .unwrap_or(&storage),
             embed,
             limit: config.memory.facts_search_limit,
         }),
@@ -630,6 +634,27 @@ pub(crate) fn build_executor_bundle_with_session(
     }
 
     let skills = load_skills(config.memory.skills_dir.as_deref());
+    // Кэш ответов по точному хэшу (волна E): СНАРУЖИ метра — попадание
+    // не вызывает провайдер и не пишет usage (вызова не было).
+    if config.agent.response_cache {
+        match crate::llm_cache::CacheStore::open(&crate::llm_cache::cache_path(
+            &config.storage_path,
+        )) {
+            Ok(store) => {
+                let store = std::sync::Arc::new(store);
+                provider_clients = provider_clients
+                    .into_iter()
+                    .map(|(name, client)| {
+                        (
+                            name.clone(),
+                            crate::llm_cache::CachingProvider::wrap(client, store.clone(), name),
+                        )
+                    })
+                    .collect();
+            }
+            Err(err) => eprintln!("[berimor] кэш ответов отключён: {err}"),
+        }
+    }
     let masker = std::sync::Arc::new(masker);
     // gate уже Arc (статический или RegoGate-обёртка — собрано выше).
     let confirmer = std::sync::Arc::new(TerminalConfirmer {
@@ -723,6 +748,22 @@ pub(crate) fn audit_append(log: &dyn EventLog, event: Event) {
     if let Err(err) = log.append(event) {
         eprintln!("[berimor] ВНИМАНИЕ: событие аудит-журнала потеряно: {err}");
     }
+}
+
+/// Сборка Qdrant-хранилища из конфига (волна E): Some — слой Facts
+/// идёт в Qdrant, None — прежний SQLite. Ключ — из переменной окружения.
+pub(crate) fn qdrant_store(config: &Config) -> Option<berimor_storage::qdrant::QdrantStore> {
+    let url = config.memory.qdrant_url.as_deref()?;
+    let api_key = config
+        .memory
+        .qdrant_api_key_env
+        .as_ref()
+        .and_then(|env| std::env::var(env).ok());
+    Some(berimor_storage::qdrant::QdrantStore::new(
+        url,
+        &config.memory.qdrant_collection,
+        api_key,
+    ))
 }
 
 /// Реальный `StepExecutor` (CLI1): маршрутизация по типу шага.

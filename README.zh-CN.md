@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-989%20green-brightgreen)](#项目基础设施)
+[![Tests](https://img.shields.io/badge/tests-992%20green-brightgreen)](#项目基础设施)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -132,6 +132,8 @@ berimor 的主要“实战”模式是**流程**：一个以图形式执行的�
 
 **SGR：模式引导推理**（0.30.0）：契约可以在目标字段之前声明论证字段 — `ClassificationOut` 中 `risk_factors`（非空列表）位于 `risk` 之前；模型先列举因素，再有依据地给出评分，而不是随意赋值。JSON Schema 中的字段顺序与声明顺序一致（schemars `preserve_order`）。在支持受限解码的提供商上（`[[providers]]` 中 `response_format = "json_schema"`：OpenAI 兼容、Ollama 通过 `format`、llama.cpp），生成顺序由模式物理强制 — 模型不填因素就无法输出数字。在不支持受限解码的提供商上（DeepSeek、Kimi — 仅 `json_object`），采用软层级：提示中的字段顺序 + 模式必填 + 调解验证。配置契约规则：论证字段声明在目标字段之前。 自治的进程内 llama.cpp 通过由契约模式构建的 GBNF 语法强制顺序（0.31.0）。
 
+**E 波：记忆** (0.42.0)：Facts 层的 Qdrant 适配器——`[memory] qdrant_url = "http://127.0.0.1:6333"`（+ `qdrant_collection`、`qdrant_api_key_env`）：基于 HNSW 索引的语义搜索，替代 SQLite 全量扫描（纯 HTTP/JSON，未引入 gRPC 客户端）；upsert/scroll/cosine/hybrid/delete 已对真实 Qdrant 实测通过。模型响应精确哈希缓存——`[agent] response_cache = true`：相同输入的重复调用不再请求提供方（命中不写 usage——因为根本没有调用）；存储为独立的 `<storage>.cache.db`（删除即失效）；刻意不构建基于嵌入相似度的缓存（会导致回答不确定性）。
+
 **D 波：Rego 门控规则** (0.41.0)：在 capability 门控静态规则之上叠加外部 OPA/Rego 策略——经由 regorus（进程内，无 sidecar）。`[gate] rego_policy = "policy.rego"` + `environment = "prod"`：策略（`package berimor`，`deny contains msg if { ... }`）可见 `input.tool`、`input.args`、`input.mutates`、`input.environment`，且只能比静态规则更严格地拒绝——绝不能更宽松地放行，内核保持确定性。解析错误 = 启动失败，求值错误 = fail-closed。需求中的示例可用：「prod 环境禁止 terminal.exec」。
 
 **C 波：LLM-as-a-Judge** (0.40.0)：`berimor eval <dir> --judge`——黄金集运行后，由强提供方（failover 顺序中的第一个）为每个已完成场景的最终状态打分：1-5 分及理由以 `judge_score` 事件写入场景日志并输出。评分标准来自输入旁的 `<场景>.judge.md`（否则使用默认准则：完整性、准确性、无虚构事实、契约形式）。`--judge-threshold <N>`——CI 门限：平均分低于阈值即命令失败。评审的回答经由同样的调解 EOF 修复解析；未完成的场景（门控、错误）会被诚实地跳过。
@@ -193,7 +195,7 @@ flowchart LR
 
 **Rust workspace，每个组件一个 crate**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。Guest WASM 模块（`codeact-guest/`）作为独立的 crate 存在，并以预构建产物提交——常规构建不会变慢。
 
-**检查纪律。** 每次发布：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（989 个测试：单元、集成、通过真实二进制的 e2e、流程和恶意输入的黄金夹具）。关键组件必须通过强制性的独立评审。完整的独立审计（`docs/audit-2026-07-31.md`）——**所有发现均已关闭或有意识地记录在案**。
+**检查纪律。** 每次发布：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（992 个测试：单元、集成、通过真实二进制的 e2e、流程和恶意输入的黄金夹具）。关键组件必须通过强制性的独立评审。完整的独立审计（`docs/audit-2026-07-31.md`）——**所有发现均已关闭或有意识地记录在案**。
 
 **成人级的供应链。** 跨平台发布（Linux x64/arm64、macOS arm64、Windows x64），使用 cosign/sigstore 无钥匙签名——私钥在任何地方都不存在。验证：`berimor verify <归档文件>`。npm 发布带 provenance，流水线中包含 SBOM（CycloneDX），自更新（`berimor self-update`）基于 Process Engine 原语实现——与普通流程共享同一套日志与故障恢复，而非临时脚本。
 

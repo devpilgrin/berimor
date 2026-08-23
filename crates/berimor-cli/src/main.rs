@@ -34,6 +34,7 @@ mod daemon;
 mod ext_cmd;
 mod i18n;
 mod landlock;
+mod llm_cache;
 mod mcp_dispatch;
 mod mcp_serve;
 mod memory;

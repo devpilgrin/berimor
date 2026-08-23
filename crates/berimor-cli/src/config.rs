@@ -169,6 +169,11 @@ pub struct AgentConfig {
     /// Секунды до полуоткрытой пробы открытого автомата.
     #[serde(default = "default_breaker_cooldown_secs")]
     pub breaker_cooldown_secs: u64,
+    /// Кэш ответов модели по ТОЧНОМУ хэшу запроса (волна E, 0.42.0):
+    /// повторный вызов с тем же входом не идёт к провайдеру. Кэш —
+    /// отдельный <storage>.cache.db (удаление файла = инвалидация).
+    #[serde(default)]
+    pub response_cache: bool,
 }
 
 fn default_breaker_failures() -> u32 {
@@ -195,6 +200,7 @@ impl Default for AgentConfig {
             compact_threshold_chars: default_compact_threshold(),
             breaker_failures: default_breaker_failures(),
             breaker_cooldown_secs: default_breaker_cooldown_secs(),
+            response_cache: false,
         }
     }
 }
@@ -317,6 +323,22 @@ pub struct MemoryConfig {
     /// Верхняя граница числа фактов в слое `Facts` за один запрос
     /// (аналог `session_search_limit`).
     pub facts_search_limit: usize,
+    /// Qdrant для слоя Facts (волна E, 0.42.0): URL HTTP-API
+    /// (http://127.0.0.1:6333). Задан — SemanticStore идёт в Qdrant
+    /// (HNSW), иначе — SQLite журнала (прежнее поведение).
+    #[serde(default)]
+    pub qdrant_url: Option<String>,
+    /// Коллекция фактов в Qdrant.
+    #[serde(default = "default_qdrant_collection")]
+    pub qdrant_collection: String,
+    /// ИМЯ переменной окружения с api-key Qdrant (не значение —
+    /// секреты не в файле конфигурации).
+    #[serde(default)]
+    pub qdrant_api_key_env: Option<String>,
+}
+
+fn default_qdrant_collection() -> String {
+    "berimor_facts".to_string()
 }
 
 /// `berimor serve` (prompt-next-wave.md задача 2): HTTP-сервис поверх
@@ -352,6 +374,9 @@ impl Default for MemoryConfig {
             embeddings: false,
             tool_writes: false,
             facts_search_limit: 5,
+            qdrant_url: None,
+            qdrant_collection: default_qdrant_collection(),
+            qdrant_api_key_env: None,
         }
     }
 }

@@ -458,6 +458,8 @@ pub struct HybridHit {
 /// усиливающий буст поверх него. Стартовые константы кода до
 /// офлайн-калибровки (Фаза 9), как `DEFAULT_SIMILARITY_THRESHOLD` (MEM3)
 /// и `context_engine::budget_chars` (C3).
+pub mod qdrant;
+
 pub const VECTOR_WEIGHT: f32 = 0.7;
 pub const TEXT_WEIGHT: f32 = 0.3;
 

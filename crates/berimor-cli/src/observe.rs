@@ -171,9 +171,11 @@ pub fn eval(
     // prompt-next-wave.md задача 1: та же поправка находки 4.5, что уже
     // применена к episodic выше — факты пишутся в РЕАЛЬНЫЙ журнал
     // (fact_extraction), эфемерный журнал сценария их никогда не увидит.
-    let semantic_store: &dyn berimor_storage::SemanticStore = match &real_journal {
-        Some(journal) => journal,
-        None => &storage,
+    let qdrant = crate::run::qdrant_store(config);
+    let semantic_store: &dyn berimor_storage::SemanticStore = match (&qdrant, &real_journal) {
+        (Some(q), _) => q,
+        (None, Some(journal)) => journal,
+        (None, None) => &storage,
     };
     let facts_embed = crate::run::facts_embed_fn(config.memory.embeddings);
     let memory_context = MemoryContextBuilder {
