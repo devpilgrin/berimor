@@ -21,6 +21,7 @@ pub mod deny;
 pub mod jail;
 pub mod net_gate;
 pub mod plugin;
+pub mod rego;
 pub mod trust_list;
 
 /// Единая точка проверки перед любым мутирующим вызовом инструмента

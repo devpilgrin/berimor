@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-985%20green-brightgreen)](#프로젝트-인프라)
+[![Tests](https://img.shields.io/badge/tests-989%20green-brightgreen)](#프로젝트-인프라)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -131,6 +131,8 @@ berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 
 **구성에서의 계약**(0.28.0): 포크와 재빌드 없이 자체 계약 — 구성의 `[[contracts]]` 섹션에 JSON Schema(인라인 `schema` 또는 `schema_path`)로 정의하고, 이후 `llm_structured`/`codeact`/`agent_step`가 내장 계약과 동등하게 이름으로 참조합니다. 모델 출력은 스키마로 검증되고(crate `jsonschema`), 검증 오류는 재시도 프롬프트로 전달됩니다 — 동일한 미디에이션 루프입니다. 제약: 구성 계약에는 policy 규칙(상태 참조)과 스키마 버전이 없고, `publishable`은 객체 전체이며, 레지스트리는 시작 시 읽힙니다(구성 변경은 새로 시작해야 함). 예제 — [`fixtures/golden/processes/config-contracts/`](fixtures/golden/processes/config-contracts/).
 
 **SGR: 스키마가 추론을 이끈다** (0.30.0): 계약은 대상 필드보다 근거 필드를 먼저 선언할 수 있습니다 — `ClassificationOut`에서 `risk_factors`(비어 있지 않은 목록)가 `risk`보다 앞에 옵니다. 요인을 나열한 뒤 점수를 매기므로 모델의 평가는 임의적이 아니라 근거에 기반합니다. JSON Schema의 필드 순서는 선언 순서와 일치합니다(schemars `preserve_order`). constrained decoding을 지원하는 프로바이더(`[[providers]]`의 `response_format = "json_schema"`: OpenAI 호환, Ollama는 `format` 경유, llama.cpp)에서는 생성 순서가 스키마에 의해 물리적으로 강제되어 요인을 채우지 않고는 숫자를 출력할 수 없습니다. 미지원 프로바이더(DeepSeek, Kimi — `json_object`만 해당)에서는 소프트 레벨이 적용됩니다: 프롬프트의 필드 순서 + 스키마 필수 + 미디에이션 검증. 설정 계약 규칙: 근거 필드를 대상 필드보다 먼저 선언하십시오. 자립형 in-process llama.cpp는 계약 스키마로부터 생성된 GBNF 문법으로 순서를 강제합니다(0.31.0).
+
+**웨이브 D: Rego 게이트 규칙** (0.41.0): capability 게이트의 정적 규칙 위에 외부 OPA/Rego 정책 — regorus 경유(인프로세스, 사이드카 불필요). `[gate] rego_policy = "policy.rego"` + `environment = "prod"`: 정책(`package berimor`, `deny contains msg if { ... }`)은 `input.tool`, `input.args`, `input.mutates`, `input.environment`를 보고 정적 규칙보다 엄격하게 거부할 수만 있다 — 더 느슨하게 허용은 불가, 코어는 결정적 유지. 파싱 오류 = 시작 실패, 평가 오류 = fail-closed. 요청 예시 동작: 「prod 환경에서 terminal.exec 금지」.
 
 **웨이브 C: LLM-as-a-Judge** (0.40.0): `berimor eval <dir> --judge` — 골든 세트 실행 후 강한 프로바이더(failover 순서의 첫 번째)가 완료된 각 시나리오의 최종 상태를 채점: 1-5점과 근거가 `judge_score` 이벤트로 시나리오 저널에 기록되고 출력된다. 기준은 입력 옆의 `<시나리오>.judge.md`(없으면 기본 루브릭: 완전성, 정확성, 날조 없음, 형식). `--judge-threshold <N>` — CI 게이트: 평균이 임계값 미만이면 명령 실패. 심사 응답은 동일한 미디에이션 EOF 복구로 읽는다. 미완료 시나리오는 정직하게 건너뛴다.
 

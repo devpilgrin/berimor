@@ -76,7 +76,7 @@ impl ToolDispatch for DeadlineDispatch<'_> {
 pub(crate) struct AgentRunContext {
     pub pool: ModelPool,
     pub providers: Vec<(String, Arc<dyn ModelProvider + Send + Sync>)>,
-    pub gate: Arc<berimor_capability::confirm::StandardCapability>,
+    pub gate: Arc<dyn berimor_capability::CapabilityGate + Send + Sync>,
     pub confirmer: Arc<dyn berimor_executors::tool_only::ConfirmationHandler + Send + Sync>,
     pub masker: Arc<berimor_secrets::Masker>,
     pub mode: berimor_types::capability::ConfirmationMode,

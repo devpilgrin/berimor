@@ -57,6 +57,8 @@ pub enum RunError {
     MissingApiKey(String),
     #[error("не удалось подключить провайдера: {0}")]
     Provider(String),
+    #[error("capability-гейт: {0}")]
+    Gate(String),
     #[error("не удалось создать jail рабочей области: {0}")]
     Jail(String),
     #[error("лиз инстанса: {0}")]
@@ -338,7 +340,7 @@ pub fn run(
 /// `AgentStepExecutor`/`CliExecutor`, которым достаточно `&dyn Trait`)
 /// берут его через `Arc::as_ref`/автодеref — поведение не меняется.
 pub(crate) struct ExecutorBundle {
-    pub(crate) gate: std::sync::Arc<StandardCapability>,
+    pub(crate) gate: std::sync::Arc<dyn berimor_capability::CapabilityGate + Send + Sync>,
     pub(crate) dispatch:
         std::sync::Arc<dyn berimor_executors::tool_only::ToolDispatch + Send + Sync>,
     pub(crate) pool: ModelPool,
@@ -441,6 +443,19 @@ pub(crate) fn build_executor_bundle_with_session(
         tool_policies.insert(name, policy);
     }
     let gate = StandardCapability::with_jail(jail, tool_policies).with_auto_confirm(auto_confirm);
+    // Волна D: внешняя Rego-политика поверх статики — только строже.
+    let gate: std::sync::Arc<dyn berimor_capability::CapabilityGate + Send + Sync> =
+        match &config.gate.rego_policy {
+            Some(path) => std::sync::Arc::new(
+                berimor_capability::rego::RegoGate::from_file(
+                    std::sync::Arc::new(gate),
+                    path,
+                    config.gate.environment.clone(),
+                )
+                .map_err(|err| RunError::Gate(format!("rego-политика: {err}")))?,
+            ),
+            None => std::sync::Arc::new(gate),
+        };
     let static_stubs = StaticToolDispatch::new(
         config
             .tool_stubs
@@ -616,7 +631,7 @@ pub(crate) fn build_executor_bundle_with_session(
 
     let skills = load_skills(config.memory.skills_dir.as_deref());
     let masker = std::sync::Arc::new(masker);
-    let gate = std::sync::Arc::new(gate);
+    // gate уже Arc (статический или RegoGate-обёртка — собрано выше).
     let confirmer = std::sync::Arc::new(TerminalConfirmer {
         masker: std::sync::Arc::clone(&masker),
         non_interactive,
@@ -712,7 +727,7 @@ pub(crate) fn audit_append(log: &dyn EventLog, event: Event) {
 
 /// Реальный `StepExecutor` (CLI1): маршрутизация по типу шага.
 pub(crate) struct CliExecutor<'a> {
-    pub(crate) gate: &'a StandardCapability,
+    pub(crate) gate: &'a dyn berimor_capability::CapabilityGate,
     pub(crate) mode: ConfirmationMode,
     pub(crate) confirmer: &'a TerminalConfirmer,
     pub(crate) dispatch: &'a dyn ToolDispatch,

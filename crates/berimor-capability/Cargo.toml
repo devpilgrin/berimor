@@ -7,6 +7,7 @@ description = "Deny-статика, jail, сетевой гейт, режимы 
 
 [dependencies]
 berimor-types = { path = "../berimor-types" }
+regorus = "0.11"
 serde = { workspace = true }
 serde_json.workspace = true
 serde_norway = "0.9.42"

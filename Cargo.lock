@@ -275,7 +275,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "berimor-actors"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-capability",
  "berimor-storage",
@@ -290,9 +290,10 @@ dependencies = [
 
 [[package]]
 name = "berimor-capability"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-types",
+ "regorus",
  "serde",
  "serde_json",
  "serde_norway",
@@ -301,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-cli"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "base64 0.22.1",
  "berimor-capability",
@@ -341,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-context-engine"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-memory",
  "berimor-secrets",
@@ -353,7 +354,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-eval"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-mediation",
  "berimor-memory",
@@ -365,7 +366,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-executors"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-capability",
  "berimor-context-engine",
@@ -374,7 +375,7 @@ dependencies = [
  "berimor-process-engine",
  "berimor-secrets",
  "berimor-types",
- "jsonschema",
+ "jsonschema 0.49.9",
  "oxc_allocator",
  "oxc_ast",
  "oxc_ast_visit",
@@ -389,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-mediation"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-types",
  "schemars 1.2.2",
@@ -401,7 +402,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-memory"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-mediation",
  "berimor-secrets",
@@ -418,7 +419,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-model-pool"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-capability",
  "berimor-secrets",
@@ -432,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-process-engine"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-storage",
  "berimor-types",
@@ -445,7 +446,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-secrets"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-mediation",
  "serde",
@@ -454,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-storage"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-types",
  "rusqlite",
@@ -465,7 +466,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-tool-runtime"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "berimor-capability",
  "berimor-types",
@@ -477,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-types"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "schemars 1.2.2",
  "serde",
@@ -755,6 +756,16 @@ dependencies = [
  "serde",
  "wasm-bindgen",
  "windows-link",
+]
+
+[[package]]
+name = "chrono-tz"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a6139a8597ed92cf816dfb33f5dd6cf0bb93a6adc938f11039f371bc5bcd26c3"
+dependencies = [
+ "chrono",
+ "phf 0.12.1",
 ]
 
 [[package]]
@@ -1810,6 +1821,17 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
+version = "0.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1e1dacd0d2082dfcf1351c4bdd566bbe89a2b263235a2b50058f1e130a47277"
+dependencies = [
+ "bit-set 0.8.0",
+ "regex-automata",
+ "regex-syntax",
+]
+
+[[package]]
+name = "fancy-regex"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "476de73bddf2ef8490aa4ee8f1cf40b430bf1d56c48c22080e5186952cd580e6"
@@ -2831,6 +2853,33 @@ dependencies = [
 
 [[package]]
 name = "jsonschema"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "281c43ff06dcb331e9356d30e38853d559ce3d0a3f693e0b0e102667dec14fb1"
+dependencies = [
+ "ahash",
+ "bytecount",
+ "data-encoding",
+ "email_address",
+ "fancy-regex 0.18.0",
+ "fraction",
+ "getrandom 0.3.4",
+ "idna",
+ "itoa",
+ "jsonschema-regex 0.47.0",
+ "num-cmp",
+ "num-traits",
+ "percent-encoding",
+ "referencing 0.47.0",
+ "regex",
+ "serde",
+ "serde_json",
+ "unicode-general-category",
+ "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema"
 version = "0.49.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "59ec8a241beed129f06114aa68007e905ca350e7baeb6e17a7631bb7978d91b2"
@@ -2844,12 +2893,12 @@ dependencies = [
  "getrandom 0.3.4",
  "idna",
  "itoa",
- "jsonschema-regex",
+ "jsonschema-regex 0.49.9",
  "jsonschema-value",
  "num-cmp",
  "num-traits",
  "percent-encoding",
- "referencing",
+ "referencing 0.49.9",
  "regex",
  "reqwest 0.13.4",
  "rustls",
@@ -2858,6 +2907,15 @@ dependencies = [
  "strum 0.28.0",
  "unicode-general-category",
  "uuid-simd",
+]
+
+[[package]]
+name = "jsonschema-regex"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee0b351864e7ffbc5db9273daf7fa1b4d5177b0946713d667ca571b83c0b4045"
+dependencies = [
+ "regex-syntax",
 ]
 
 [[package]]
@@ -2937,7 +2995,7 @@ version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 dependencies = [
- "spin",
+ "spin 0.9.9",
 ]
 
 [[package]]
@@ -3233,6 +3291,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "msvc_spectre_libs"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29e871a9861f3664f18b7e04e9301d4edd55090c2dadb4b1c602e26ab32b1f5b"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -4153,6 +4220,15 @@ dependencies = [
 
 [[package]]
 name = "phf"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "913273894cec178f401a31ec4b656318d95473527be05c0752cc41cdc32be8b7"
+dependencies = [
+ "phf_shared 0.12.1",
+]
+
+[[package]]
+name = "phf"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "010378780309880b08997fae13be7834dba947d36393bd372f2b1556deb2a2f6"
@@ -4223,6 +4299,15 @@ name = "phf_shared"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
+dependencies = [
+ "siphasher",
+]
+
+[[package]]
+name = "phf_shared"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06005508882fb681fd97892ecff4b7fd0fee13ef1aa569f8695dae7ab9099981"
 dependencies = [
  "siphasher",
 ]
@@ -4895,6 +4980,23 @@ dependencies = [
 
 [[package]]
 name = "referencing"
+version = "0.47.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "348e860aeb0b7bd035778fd11dd9cd5290d32e4aed3b8f2274a00287a9fd362b"
+dependencies = [
+ "ahash",
+ "fluent-uri",
+ "getrandom 0.3.4",
+ "hashbrown 0.17.1",
+ "itoa",
+ "micromap",
+ "parking_lot",
+ "percent-encoding",
+ "serde_json",
+]
+
+[[package]]
+name = "referencing"
 version = "0.49.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6efa2154ea6f5ce0fdecdd2a8d18f2fa1a39a8fbba91564f555a592e4dce8278"
@@ -4953,6 +5055,39 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "regorus"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cc4dc91481b1d4001ba7f2e81f7faf674142e0ac36d37d79e5f02764d06571e"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "chrono-tz",
+ "data-encoding",
+ "globset",
+ "indexmap 2.14.0",
+ "ipnet",
+ "jsonschema 0.47.0",
+ "lazy_static",
+ "lru",
+ "msvc_spectre_libs",
+ "num-bigint 0.5.1",
+ "num-traits",
+ "parking_lot",
+ "postcard",
+ "rand 0.10.2",
+ "regex",
+ "semver",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "spin 0.12.3",
+ "thiserror 2.0.19",
+ "url",
+ "uuid",
+]
 
 [[package]]
 name = "reqwest"
@@ -5631,6 +5766,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_yaml"
+version = "0.9.34+deprecated"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
+dependencies = [
+ "indexmap 2.14.0",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5896,6 +6044,12 @@ name = "spin"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
+
+[[package]]
+name = "spin"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0134f9043ed38b087ac4f7d4af44c79e2c9e5094421fe3164f435ce585953b10"
 
 [[package]]
 name = "spki"
@@ -6683,6 +6837,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "unsafe-libyaml"
+version = "0.2.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
 name = "unsafe-libyaml-norway"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6773,6 +6933,7 @@ dependencies = [
  "atomic",
  "getrandom 0.4.3",
  "js-sys",
+ "rand 0.10.2",
  "wasm-bindgen",
 ]
 

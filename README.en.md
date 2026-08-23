@@ -14,7 +14,7 @@ A universal LLM agent with a deterministic core: task routing, process branching
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-985%20green-brightgreen)](#project-infrastructure)
+[![Tests](https://img.shields.io/badge/tests-989%20green-brightgreen)](#project-infrastructure)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -132,6 +132,8 @@ The event journal covers checkpointing with a margin: any run can be resumed exa
 
 **SGR: the schema leads the reasoning** (0.30.0): a contract may declare reasoning fields BEFORE target ones — `risk_factors` (non-empty list) ahead of `risk` in `ClassificationOut`; having listed the factors, the model assigns the score with grounding instead of arbitrarily. Field order in the JSON Schema matches the declaration order (schemars `preserve_order`). On providers with constrained decoding (`response_format = "json_schema"` in `[[providers]]`: OpenAI-compatible, Ollama via `format`, llama.cpp) the generation order is physically enforced by the schema — the model cannot emit the number without filling the factors first. On providers without constrained decoding (DeepSeek, Kimi — `json_object` only) the soft level applies: field order in the prompt + schema requiredness + mediation validation. Rule for config contracts: declare reasoning fields before target ones. The autonomous in-process llama.cpp enforces the order via a GBNF grammar built from the contract schema (0.31.0).
 
+**Wave D: Rego gate rules** (0.41.0): an external OPA/Rego policy on top of the capability gate's static rules — via regorus (in-process, no sidecar). `[gate] rego_policy = "policy.rego"` + `environment = "prod"`: the policy (`package berimor`, `deny contains msg if { ... }`) sees `input.tool`, `input.args`, `input.mutates`, `input.environment` and can only deny stricter than statics — it can never allow weaker, the core stays deterministic. Parse error = startup failure, evaluation error = fail-closed. The requested example works: "terminal.exec is forbidden in the prod environment".
+
 **Wave C: LLM-as-a-Judge** (0.40.0): `berimor eval <dir> --judge` — after the golden-set run, a strong provider (first in failover order) scores the final state of every finished scenario: a 1-5 score and rationale are written as a `judge_score` event into the scenario's journal and printed. Criteria come from a `<scenario>.judge.md` file next to the input (otherwise the default rubric: completeness, accuracy, no invented facts, contract form). `--judge-threshold <N>` — a CI gate: average score below the threshold = command failure. The judge's answer is parsed through the same mediation EOF repair; unfinished scenarios (gate, error) are honestly skipped.
 
 **Wave B: observability** (0.39.0): `berimor otlp <run> --endpoint <url>` — a process run as a trace in OTLP/HTTP JSON: a root run span, a span per graph node, an LLM call span (latency + tokens as attributes), human_gate (interval until answer/timeout), tool turns of the free loop. traceId/spanId are deterministic (re-export is idempotent). Accepted by Jaeger and Grafana Tempo collectors (port 4318) and Langfuse — one OTLP, no per-backend exporters; auth headers via `--header 'Name: value'`.
@@ -191,7 +193,7 @@ The model proposes the `verdict` — but only a value that passed the contract m
 
 **Rust workspace with one crate per component** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. The guest WASM module (`codeact-guest/`) lives as a separate crate and is committed as a ready-made artifact — normal builds are not slowed down.
 
-**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (985 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
+**Verification discipline.** Every release: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (989 tests: unit, integration, e2e through the real binary, golden fixtures of processes and malicious inputs). Critical components undergo mandatory independent review. A full standalone audit (`docs/audit-2026-07-31.md`) — **all findings are closed or consciously documented**.
 
 **Grown-up supply chain.** Cross-platform releases (Linux x64/arm64, macOS arm64, Windows x64) with keyless cosign/sigstore signing — the private key exists nowhere. Verification: `berimor verify <archive>`. npm publication with provenance, SBOM (CycloneDX) in the pipeline, self-update (`berimor self-update`) implemented on Process Engine primitives — the same journal and failure recovery as ordinary processes, not an ad-hoc script.
 

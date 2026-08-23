@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-985%20green-brightgreen)](#プロジェクトのインフラ)
+[![Tests](https://img.shields.io/badge/tests-989%20green-brightgreen)](#プロジェクトのインフラ)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -132,6 +132,8 @@ berimor の主な「実戦」モードは**プロセス**——グラフとし�
 
 **SGR：スキーマが推論を導く**（0.30.0）：コントラクトは対象フィールドの前に根拠フィールドを宣言できます — `ClassificationOut` では `risk_factors`（非空リスト）が `risk` の前。要因を列挙してからスコアを付けるため、モデルの評価は恣意的ではなく根拠に基づきます。JSON Schema のフィールド順は宣言順に一致します（schemars `preserve_order`）。constrained decoding 対応プロバイダ（`[[providers]]` の `response_format = "json_schema"`：OpenAI 互換、Ollama は `format` 経由、llama.cpp）では生成順がスキーマによって物理的に強制され、要因を埋めずに数値を出力できません。非対応プロバイダ（DeepSeek、Kimi — `json_object` のみ）ではソフトレベルが働きます：プロンプト内のフィールド順 + スキーマ必須 + メディエーション検証。設定コントラクトの規則：根拠フィールドは対象フィールドより先に宣言してください。 自律的な in-process llama.cpp は、コントラクトスキーマから構築された GBNF 文法で順序を強制します（0.31.0）。
 
+**ウェーブD：Rego ゲートルール** (0.41.0)：capability ゲートの静的ルールの上に外部 OPA/Rego ポリシー — regorus 経由（プロセス内、サイドカー不要）。`[gate] rego_policy = "policy.rego"` + `environment = "prod"`：ポリシー（`package berimor`、`deny contains msg if { ... }`）は `input.tool`、`input.args`、`input.mutates`、`input.environment` を参照し、静的ルールより厳しく拒否できるだけ——緩く許可はできず、コアは決定的のまま。パースエラー = 起動失敗、評価エラー = fail-closed。要望の例が動作：「prod 環境では terminal.exec 禁止」。
+
 **ウェーブC：LLM-as-a-Judge** (0.40.0)：`berimor eval <dir> --judge` — ゴールデンセット実行後、強いプロバイダ（フェイルオーバー順の先頭）が完了した各シナリオの最終状態を採点：1-5 のスコアと根拠が `judge_score` イベントとしてシナリオのジャーナルに書かれ出力される。基準は入力の隣の `<シナリオ>.judge.md`（なければ既定ルーブリック：完全性・正確性・捏造なし・形式）。`--judge-threshold <N>` — CI ゲート：平均が閾値未満ならコマンド失敗。審査の回答は同じメディエーション EOF 修復で読む。未完了シナリオは正直にスキップ。
 
 **ウェーブB：オブザーバビリティ** (0.39.0)：`berimor otlp <run> --endpoint <url>` — プロセス実行を OTLP/HTTP JSON のトレースとしてエクスポート：実行ルートスパン、グラフノードごとのスパン、LLM呼び出しスパン（レイテンシ＋トークンを属性に）、human_gate（回答/タイムアウトまでの区間）、自由ループのツール呼び出し。traceId/spanIdは決定論的（再エクスポートは冪等）。Jaeger・Grafana Tempo コレクタ（ポート4318）と Langfuse が受け付ける——OTLP 一本、専用エクスポーター不要。認証ヘッダは `--header 'Name: value'`。
@@ -191,7 +193,7 @@ flowchart LR
 
 **コンポーネントごとに 1 クレートの Rust workspace**——Process Engine、Mediation、Executors、Memory、Capability、Model Pool、Actors、Tool Runtime、Context Engine、Eval、Storage。ゲスト WASM モジュール（`codeact-guest/`）は独立した crate として存在し、ビルド済みアーティファクトとしてコミットされています——通常のビルドは遅くなりません。
 
-**チェックの規律。** すべてのリリースで：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（985 テスト：ユニット、統合、実バイナリ経由の e2e、プロセスと悪意ある入力のゴールデンフィクスチャ）。重要コンポーネントは必須の独立レビューを通ります。完全な独立監査（`docs/audit-2026-07-31.md`）——**すべての指摘は解決済みか、意図的に文書化済み**。
+**チェックの規律。** すべてのリリースで：`cargo fmt` + `clippy -D warnings` + `cargo test --workspace`（989 テスト：ユニット、統合、実バイナリ経由の e2e、プロセスと悪意ある入力のゴールデンフィクスチャ）。重要コンポーネントは必須の独立レビューを通ります。完全な独立監査（`docs/audit-2026-07-31.md`）——**すべての指摘は解決済みか、意図的に文書化済み**。
 
 **大人のサプライチェーン。** クロスプラットフォームリリース（Linux x64/arm64、macOS arm64、Windows x64）に cosign/sigstore キーレス署名——秘密鍵はどこにも存在しません。検証：`berimor verify <アーカイブ>`。npm 公開は provenance 付き、パイプラインに SBOM（CycloneDX）、セルフアップデート（`berimor self-update`）は Process Engine のプリミティブ上に実装——通常のプロセスと同じジャーナルと障害復旧で、アドホックなスクリプトではありません。
 

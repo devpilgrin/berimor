@@ -102,6 +102,24 @@ pub struct ProviderConfig {
     pub local_ctx_tokens: Option<u32>,
 }
 
+/// Rego-правила capability-гейта (волна D, 0.41.0).
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct GateConfig {
+    /// Окружение, видимое политике как input.environment: "dev" (дефолт),
+    /// "prod", ... Политика может строить правила вида «в prod строже».
+    #[serde(default = "default_gate_environment")]
+    pub environment: String,
+    /// Путь к .rego-файлу (package berimor, правило deny contains msg).
+    /// Политика может только ЗАПРЕЩАТЬ строже статики; отсутствие —
+    /// прежнее поведение.
+    #[serde(default)]
+    pub rego_policy: Option<std::path::PathBuf>,
+}
+
+fn default_gate_environment() -> String {
+    "dev".to_string()
+}
+
 /// Песочница подпроцессов (0.36.0).
 #[derive(Debug, Clone, Deserialize)]
 pub struct SandboxConfig {
@@ -394,6 +412,9 @@ pub struct Config {
     /// landlock-run): "off" | "auto" (дефолт) | "require" (fail-closed).
     #[serde(default)]
     pub sandbox: SandboxConfig,
+    /// Rego-правила capability-гейта (волна D, 0.41.0).
+    #[serde(default)]
+    pub gate: GateConfig,
     #[serde(default)]
     pub serve: ServeConfig,
     /// Интерфейс (2026-08-09): `[ui] locale = "en"` — локаль TUI из 8
@@ -424,6 +445,7 @@ impl Default for Config {
             auto_confirm: Vec::new(),
             agent: AgentConfig::default(),
             sandbox: SandboxConfig::default(),
+            gate: GateConfig::default(),
             serve: ServeConfig::default(),
             ui: UiConfig::default(),
         }
@@ -528,6 +550,7 @@ pub struct PartialConfig {
     pub auto_confirm: Vec<String>,
     pub agent: Option<AgentConfig>,
     pub sandbox: Option<SandboxConfig>,
+    pub gate: Option<GateConfig>,
     pub serve: Option<ServeConfig>,
     pub ui: Option<UiConfig>,
 }
@@ -743,6 +766,7 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
         // `[agent]` — секция целиком, локальный слой сильнее (как [ui]).
         agent: local.agent.or(global.agent).unwrap_or_default(),
         sandbox: local.sandbox.or(global.sandbox).unwrap_or_default(),
+        gate: local.gate.or(global.gate).unwrap_or_default(),
         // `[ui]` — как `[memory]`: секция заменяется целиком, локальный
         // слой сильнее (осознанное упрощение, задокументировано здесь).
         ui: local.ui.or(global.ui).unwrap_or(defaults.ui),
