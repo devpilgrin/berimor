@@ -132,6 +132,8 @@ berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 
 
 **SGR: 스키마가 추론을 이끈다** (0.30.0): 계약은 대상 필드보다 근거 필드를 먼저 선언할 수 있습니다 — `ClassificationOut`에서 `risk_factors`(비어 있지 않은 목록)가 `risk`보다 앞에 옵니다. 요인을 나열한 뒤 점수를 매기므로 모델의 평가는 임의적이 아니라 근거에 기반합니다. JSON Schema의 필드 순서는 선언 순서와 일치합니다(schemars `preserve_order`). constrained decoding을 지원하는 프로바이더(`[[providers]]`의 `response_format = "json_schema"`: OpenAI 호환, Ollama는 `format` 경유, llama.cpp)에서는 생성 순서가 스키마에 의해 물리적으로 강제되어 요인을 채우지 않고는 숫자를 출력할 수 없습니다. 미지원 프로바이더(DeepSeek, Kimi — `json_object`만 해당)에서는 소프트 레벨이 적용됩니다: 프롬프트의 필드 순서 + 스키마 필수 + 미디에이션 검증. 설정 계약 규칙: 근거 필드를 대상 필드보다 먼저 선언하십시오. 자립형 in-process llama.cpp는 계약 스키마로부터 생성된 GBNF 문법으로 순서를 강제합니다(0.31.0).
 
+**웨이브 C: LLM-as-a-Judge** (0.40.0): `berimor eval <dir> --judge` — 골든 세트 실행 후 강한 프로바이더(failover 순서의 첫 번째)가 완료된 각 시나리오의 최종 상태를 채점: 1-5점과 근거가 `judge_score` 이벤트로 시나리오 저널에 기록되고 출력된다. 기준은 입력 옆의 `<시나리오>.judge.md`(없으면 기본 루브릭: 완전성, 정확성, 날조 없음, 형식). `--judge-threshold <N>` — CI 게이트: 평균이 임계값 미만이면 명령 실패. 심사 응답은 동일한 미디에이션 EOF 복구로 읽는다. 미완료 시나리오는 정직하게 건너뛴다.
+
 **웨이브 B: 관측가능성** (0.39.0): `berimor otlp <run> --endpoint <url>` — 프로세스 실행을 OTLP/HTTP JSON 트레이스로 낸다: 실행 루트 스팬, 그래프 노드별 스팬, LLM 호출 스팬(지연 + 토큰을 속성으로), human_gate(응답/타임아웃까지 구간), 자유 루프의 도구 호출. traceId/spanId는 결정적(재납출 멱등). Jaeger·Grafana Tempo 컬렉터(포트 4318)와 Langfuse가 수용 — 단일 OTLP, 전용 익스포터 불필요; 인증 헤더는 `--header 'Name: value'`.
 
 **웨이브 A: 복원력과 비용** (0.38.0): Model Pool 서킷 브레이커 — 연속 N회 전송 장애 시 브레이커가 열리고, 쿨다운 후 하프오픈 프로브까지 프로바이더를 건걸이뛰며, 「<이름> → circuit-open」 가시 알림 발생 (`[agent] breaker_failures`, `breaker_cooldown_secs`; 0 = 비활성). 비용 귀속: 모든 모델 호출이 사용량을 저널에 기록 (토큰, 지연, 단계 — `model_usage` 이벤트); 로컬 llama.cpp는 토크나이저로 토큰 계산; `berimor cost <run>` — 단계별 보고서와 합계 (가격은 프로바이더의 `cost_per_1k_tokens`; 가격 미설정 시 정직하게 토큰만 표시, 금액은 지어내지 않음).

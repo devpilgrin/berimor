@@ -18,7 +18,7 @@ use berimor_executors::{
 };
 use berimor_process_engine::{engine, parser};
 use berimor_storage::{EventLog, SqliteEventLog, StorageError};
-use berimor_types::event::ProcessInstanceId;
+use berimor_types::event::{Event, ProcessInstanceId};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -119,7 +119,20 @@ pub fn cost(config: &Config, instance: &str) -> Result<(), ObserveError> {
 /// `golden_dir` содержит ровно один `process.yaml` и произвольное число
 /// `<сценарий>.json` (вход процесса), имя файла без расширения — имя
 /// сценария в отчёте.
-pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
+///
+/// Волна C (0.40.0): `judge` — LLM-as-a-Judge: после прогона сильный
+/// провайдер (первый в порядке failover) оценивает финальное состояние
+/// каждого завершённого сценария по рубрике (файл `<сценарий>.judge.md`
+/// рядом — свои критерии; иначе рубрика по умолчанию). Скор 1..5 +
+/// обоснование — событием JudgeScore в журнал прогона сценария и в
+/// вывод; `judge_threshold` — CI-гейт: средний балл ниже порога =
+/// ошибка команды.
+pub fn eval(
+    config: &Config,
+    golden_dir: &Path,
+    judge: bool,
+    judge_threshold: Option<f64>,
+) -> Result<(), ObserveError> {
     let process_path = golden_dir.join("process.yaml");
     let process_text =
         std::fs::read_to_string(&process_path).map_err(|err| ObserveError::ReadGoldenSet {
@@ -262,10 +275,10 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
     scenario_inputs.sort_by(|a, b| a.0.cmp(&b.0));
 
     let scenarios: Vec<berimor_eval::golden::GoldenScenario> = scenario_inputs
-        .into_iter()
+        .iter()
         .map(|(name, input)| berimor_eval::golden::GoldenScenario {
-            name,
-            input,
+            name: name.clone(),
+            input: input.clone(),
             executor: &executor,
         })
         .collect();
@@ -294,6 +307,105 @@ pub fn eval(config: &Config, golden_dir: &Path) -> Result<(), ObserveError> {
         "[berimor] доля веток: {:.2}, доля отказов Mediation: {:.2}",
         report.branch_coverage, report.failure_rate
     );
+
+    // Волна C: судья оценивает завершённые сценарии.
+    if judge {
+        let (name, provider) = bundle
+            .provider_clients()
+            .first()
+            .ok_or_else(|| ObserveError::ParseProcess("нет провайдеров для судьи".into()))?;
+        let mut scores: Vec<f64> = Vec::new();
+        for (scenario_name, input) in &scenario_inputs {
+            let outcome = report.scenarios.iter().find(|o| &o.name == scenario_name);
+            if !matches!(
+                outcome.map(|o| &o.result),
+                Some(Ok(engine::RunOutcome::Finished))
+            ) {
+                continue;
+            }
+            let instance_id = berimor_types::event::ProcessInstanceId(format!(
+                "{}::{scenario_name}",
+                process.name
+            ));
+            let state = engine::recover(&storage, process.clone(), instance_id.clone())
+                .map(|i| serde_json::to_value(i.state()).unwrap_or(Value::Null))
+                .unwrap_or(Value::Null);
+            let criteria_path = golden_dir.join(format!("{scenario_name}.judge.md"));
+            let criteria = std::fs::read_to_string(&criteria_path).unwrap_or_else(|_| {
+                "Соответствует ли результат цели процесса; полнота и точность; \
+                 отсутствие выдуманных фактов; соблюдение формы контрактов."
+                    .to_string()
+            });
+            let request = berimor_types::model::CompletionRequest {
+                system_context: "Ты — строгий судья качества результата агентного процесса. \
+                    Оцени финальное состояние по критериям: целое число score от 1 (плохо) \
+                    до 5 (отлично) и краткое обоснование rationale (1-2 предложения, по-русски). \
+                    Ответь ТОЛЬКО JSON вида {\"score\": 4, \"rationale\": \"...\"}."
+                    .to_string(),
+                prompt: format!(
+                    "Процесс: {}\nВход сценария:\n{}\nФинальное состояние:\n{}\nКритерии:\n{}",
+                    process.name,
+                    serde_json::to_string_pretty(input).unwrap_or_default(),
+                    serde_json::to_string_pretty(&state).unwrap_or_default(),
+                    criteria
+                ),
+                contract_name: None,
+                expects_structured_output: false,
+                json_schema: None,
+                step_id: None,
+            };
+            match provider.complete(request) {
+                Ok(response) => {
+                    match berimor_mediation::parse::parse_with_repair(&response.raw_text) {
+                        Ok((value, _)) => {
+                            let score = value["score"].as_f64().unwrap_or(0.0).clamp(1.0, 5.0);
+                            let rationale = value["rationale"]
+                                .as_str()
+                                .unwrap_or("без обоснования")
+                                .chars()
+                                .take(200)
+                                .collect::<String>();
+                            println!(
+                                "  судья ({name}): {scenario_name} — {score:.1}/5 ({rationale})"
+                            );
+                            crate::run::audit_append(
+                                &storage,
+                                Event::new(
+                                    instance_id,
+                                    process.version,
+                                    berimor_types::event::EventKind::JudgeScore {
+                                        scenario: scenario_name.clone(),
+                                        score,
+                                        rationale,
+                                    },
+                                    Value::Null,
+                                ),
+                            );
+                            scores.push(score);
+                        }
+                        Err(err) => eprintln!(
+                            "[berimor] судья: ответ по '{scenario_name}' не разобран: {err}"
+                        ),
+                    }
+                }
+                Err(err) => eprintln!("[berimor] судья недоступен: {err}"),
+            }
+        }
+        if !scores.is_empty() {
+            let average = scores.iter().sum::<f64>() / scores.len() as f64;
+            println!(
+                "[berimor] судья: средний балл {average:.2}/5 по {} сценариям",
+                scores.len()
+            );
+            if let Some(threshold) = judge_threshold {
+                if average < threshold {
+                    return Err(ObserveError::ParseProcess(format!(
+                        "судья: средний балл {average:.2} ниже порога {threshold:.2} (CI-гейт)"
+                    )));
+                }
+            }
+        }
+    }
 
     Ok(())
 }

@@ -222,6 +222,12 @@ enum Command {
     Eval {
         /// Директория с `process.yaml` и `<сценарий>.json` файлами входа.
         golden_dir: PathBuf,
+        /// LLM-as-a-Judge: сильный провайдер оценивает результаты (волна C).
+        #[arg(long)]
+        judge: bool,
+        /// CI-гейт судьи: средний балл ниже порога = ошибка команды.
+        #[arg(long)]
+        judge_threshold: Option<f64>,
     },
 }
 
@@ -648,8 +654,12 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         }
-        Command::Eval { golden_dir } => {
-            if let Err(err) = observe::eval(&resolved_config, &golden_dir) {
+        Command::Eval {
+            golden_dir,
+            judge,
+            judge_threshold,
+        } => {
+            if let Err(err) = observe::eval(&resolved_config, &golden_dir, judge, judge_threshold) {
                 eprintln!("[berimor] {err}");
                 return ExitCode::FAILURE;
             }

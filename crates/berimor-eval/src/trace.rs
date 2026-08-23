@@ -54,6 +54,14 @@ fn describe(event: &Event) -> TraceEntry {
             format!("ветвь '{branch_step_id}' форка '{fork_step_id}' применена"),
         ),
         EventKind::MediationParsed => ("mediation_parsed", "вывод модели разобран".to_string()),
+        EventKind::JudgeScore {
+            scenario,
+            score,
+            rationale,
+        } => (
+            "judge_score",
+            format!("судья: сценарий '{scenario}' — {score:.1}/5 ({rationale})"),
+        ),
         EventKind::ModelUsage {
             step_id,
             provider,
