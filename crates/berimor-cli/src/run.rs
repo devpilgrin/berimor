@@ -169,6 +169,10 @@ pub fn run(
     // игнорирует, аудит-след их видит (security-model.md §5).
     let instance_id = instance.id().clone();
     let process_version = instance.process().version;
+    // Метер провайдеров (волна A): usage в журнал ЭТОГО прогона.
+    if let Ok(journal) = SqliteEventLog::open(&config.storage_path) {
+        bundle.set_meter(std::sync::Arc::new(journal), instance_id.0.clone());
+    }
     let on_attempt = |kind: EventKind| {
         audit_append(
             &storage,
@@ -339,6 +343,9 @@ pub(crate) struct ExecutorBundle {
         std::sync::Arc<dyn berimor_executors::tool_only::ToolDispatch + Send + Sync>,
     pub(crate) pool: ModelPool,
     provider_clients: Vec<(String, std::sync::Arc<dyn ModelProvider + Send + Sync>)>,
+    /// Общая цель метра (волна A, 0.38.0): назначается при старте
+    /// прогона; до назначения метры молчат.
+    meter_target: crate::metering::MeterTarget,
     pub(crate) skills: Vec<berimor_memory::procedural::SkillSummary>,
     pub(crate) confirmer: std::sync::Arc<TerminalConfirmer>,
     /// Реестр секретов запуска (S5): ключи API провайдеров +
@@ -355,6 +362,12 @@ impl ExecutorBundle {
         &self,
     ) -> &[(String, std::sync::Arc<dyn ModelProvider + Send + Sync>)] {
         &self.provider_clients
+    }
+
+    /// Назначить метрам журнал прогона (волна A): дальше каждый вызов
+    /// модели пишет ModelUsage с атрибуцией шага.
+    pub(crate) fn set_meter(&self, journal: std::sync::Arc<SqliteEventLog>, instance_id: String) {
+        *self.meter_target.lock().expect("meter lock") = Some((journal, instance_id));
     }
 }
 
@@ -496,8 +509,19 @@ pub(crate) fn build_executor_bundle_with_session(
     masker.register_from_env(&config.secret_envs);
 
     let mut pool = ModelPool::new();
+    // Circuit breaker (волна A): политика из [agent] конфига; 0 сбоев =
+    // автомат выключен (порог 0 трактуем как «очень большой»).
+    if config.agent.breaker_failures > 0 {
+        pool.set_breaker_policy(
+            config.agent.breaker_failures,
+            std::time::Duration::from_secs(config.agent.breaker_cooldown_secs),
+        );
+    } else {
+        pool.set_breaker_policy(u32::MAX, std::time::Duration::from_secs(0));
+    }
     let mut provider_clients: Vec<(String, std::sync::Arc<dyn ModelProvider + Send + Sync>)> =
         Vec::new();
+    let meter_target = crate::metering::new_target();
     // llama.cpp-бэкенд инициализируется один раз на процесс и только если
     // в конфигурации есть локальные провайдеры (E4, ADR-0024).
     #[cfg(feature = "local-inference")]
@@ -534,21 +558,24 @@ pub(crate) fn build_executor_bundle_with_session(
             });
             provider_clients.push((
                 p.name.clone(),
-                std::sync::Arc::from(build_local_provider(
-                    &identity,
-                    model_path,
-                    llama_backend.as_ref(),
-                    // GBNF-принуждение (issue #3): json_schema/grammar у
-                    // локального провайдера = схема контракта на
-                    // семплировании; none/json_object — без грамматики.
-                    matches!(
-                        p.effective_response_format()
-                            .map_err(|err| RunError::Provider(err.to_string()))?,
-                        berimor_types::model::ResponseFormat::JsonSchema
-                            | berimor_types::model::ResponseFormat::Grammar
-                    ),
-                    p.local_ctx_tokens,
-                )?),
+                crate::metering::MeteredProvider::wrap(
+                    std::sync::Arc::from(build_local_provider(
+                        &identity,
+                        model_path,
+                        llama_backend.as_ref(),
+                        // GBNF-принуждение (issue #3): json_schema/grammar у
+                        // локального провайдера = схема контракта на
+                        // семплировании; none/json_object — без грамматики.
+                        matches!(
+                            p.effective_response_format()
+                                .map_err(|err| RunError::Provider(err.to_string()))?,
+                            berimor_types::model::ResponseFormat::JsonSchema
+                                | berimor_types::model::ResponseFormat::Grammar
+                        ),
+                        p.local_ctx_tokens,
+                    )?),
+                    meter_target.clone(),
+                ),
             ));
             continue;
         }
@@ -561,25 +588,28 @@ pub(crate) fn build_executor_bundle_with_session(
         let api_key = resolve_provider_key(p, &mut masker)?;
         provider_clients.push((
             p.name.clone(),
-            std::sync::Arc::new(
-                OpenAiCompatibleProvider::new(
-                    identity,
-                    p.base_url.clone(),
-                    api_key,
-                    p.allow_private_endpoint,
-                    p.temperature,
-                    berimor_model_pool::http_provider::FormatPolicy {
-                        response_format: p
-                            .effective_response_format()
-                            .map_err(|err| RunError::Provider(err.to_string()))?,
-                        dialect: berimor_model_pool::http_provider::ProviderDialect::detect(
-                            &p.name,
-                            &p.base_url,
-                        ),
-                    },
-                    p.request_timeout_secs,
-                )
-                .map_err(|err| RunError::Provider(err.to_string()))?,
+            crate::metering::MeteredProvider::wrap(
+                std::sync::Arc::new(
+                    OpenAiCompatibleProvider::new(
+                        identity,
+                        p.base_url.clone(),
+                        api_key,
+                        p.allow_private_endpoint,
+                        p.temperature,
+                        berimor_model_pool::http_provider::FormatPolicy {
+                            response_format: p
+                                .effective_response_format()
+                                .map_err(|err| RunError::Provider(err.to_string()))?,
+                            dialect: berimor_model_pool::http_provider::ProviderDialect::detect(
+                                &p.name,
+                                &p.base_url,
+                            ),
+                        },
+                        p.request_timeout_secs,
+                    )
+                    .map_err(|err| RunError::Provider(err.to_string()))?,
+                ),
+                meter_target.clone(),
             ),
         ));
     }
@@ -618,6 +648,7 @@ pub(crate) fn build_executor_bundle_with_session(
         dispatch,
         pool,
         provider_clients,
+        meter_target,
         skills,
         confirmer,
         masker,

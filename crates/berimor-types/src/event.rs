@@ -76,6 +76,16 @@ pub enum EventKind {
         fork_step_id: String,
         branch_step_id: String,
     },
+    /// Потребление токенов вызова модели (волна A, 0.38.0): атрибуция
+    /// стоимости по run/шагу — пишет метер провайдеров (CLI).
+    ModelUsage {
+        step_id: Option<String>,
+        provider: String,
+        model_id: String,
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        latency_ms: u64,
+    },
     MediationParsed,
     /// Сырой вывод модели был оборван генерацией (EOF) и достроен
     /// структурно (закрывающие кавычки/скобки) до разбора — 0.35.2,

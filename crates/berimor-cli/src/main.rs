@@ -37,6 +37,7 @@ mod landlock;
 mod mcp_dispatch;
 mod mcp_serve;
 mod memory;
+mod metering;
 mod oauth;
 mod observe;
 mod plugin_install;
@@ -198,6 +199,11 @@ enum Command {
     /// Человекочитаемая трассировка журнала одного инстанса (O1).
     Trace {
         /// Идентификатор инстанса (тот же, что печатает `run`/`--resume`).
+        instance: String,
+    },
+    /// Стоимость прогона: токены и деньги по шагам (волна A, 0.38.0).
+    Cost {
+        /// Идентификатор инстанса.
         instance: String,
     },
     /// Офлайн-прогон золотого набора: доля веток, доля отказов Mediation (O2).
@@ -603,6 +609,12 @@ fn main() -> ExitCode {
         }
         Command::Trace { instance } => {
             if let Err(err) = observe::trace(&resolved_config, &instance) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Command::Cost { instance } => {
+            if let Err(err) = observe::cost(&resolved_config, &instance) {
                 eprintln!("[berimor] {err}");
                 return ExitCode::FAILURE;
             }

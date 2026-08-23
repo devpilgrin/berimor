@@ -119,6 +119,7 @@ pub fn review(kind: &ExtKind, path: &Path, out: Option<PathBuf>) -> Result<i32, 
             prompt: prompt.clone(),
             contract_name: None,
             expects_structured_output: true,
+            step_id: None,
             json_schema: None,
         });
         match result {

@@ -114,6 +114,7 @@ pub(crate) fn compact_conversation(
         contract_name: None,
         expects_structured_output: false,
         json_schema: None,
+        step_id: None,
     };
     let note = provider.complete(request).ok()?.raw_text;
     let compacted = split;
@@ -451,6 +452,10 @@ pub(crate) fn execute_turn(
             .unwrap_or(0)
     ));
     let telemetry_id = instance_id.clone();
+    // Метер провайдеров (волна A): usage в журнал этого хода.
+    if let Ok(journal) = SqliteEventLog::open(&config.storage_path) {
+        bundle.set_meter(std::sync::Arc::new(journal), instance_id.0.clone());
+    }
     let on_attempt = |kind: EventKind| {
         crate::run::audit_append(
             &storage,
@@ -656,6 +661,10 @@ fn run_repl(
             .unwrap_or(0)
     ));
     let telemetry_id = instance_id.clone();
+    // Метер провайдеров (волна A): usage в журнал этого хода.
+    if let Ok(journal) = SqliteEventLog::open(&config.storage_path) {
+        bundle.set_meter(std::sync::Arc::new(journal), instance_id.0.clone());
+    }
     let on_attempt = |kind: EventKind| {
         crate::run::audit_append(
             &storage,
@@ -1132,6 +1141,7 @@ mod swarm_note_tests {
                         model_id: "stub-1".into(),
                         tier: berimor_types::model::ModelTier::Strong,
                     },
+                    usage: None,
                 })
             }
         }

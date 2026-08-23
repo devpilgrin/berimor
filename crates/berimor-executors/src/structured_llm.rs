@@ -467,6 +467,7 @@ impl StructuredLlm<'_> {
                 expects_structured_output: true,
                 // SGR (issue #3): constrained decoding — схема в поле
                 // запроса при response_format=json_schema провайдера.
+                step_id: Some(step_id.to_string()),
                 json_schema: Some((adapter.json_schema)()),
             })?;
 
@@ -548,8 +549,14 @@ impl StructuredLlm<'_> {
             candidates.push((entry.identity.provider.as_str(), *provider));
         }
         let model_tier = ranked[0].identity.tier;
+        // Circuit breaker (волна A): реестр/политика из пула (общие на прогон).
+        let (threshold, cooldown) = self.pool.breaker_policy();
         Ok((
-            crate::failover::FailoverProvider::new(candidates, None),
+            crate::failover::FailoverProvider::new(candidates, None).with_breaker(
+                self.pool.breaker(),
+                threshold,
+                cooldown,
+            ),
             model_tier,
         ))
     }
@@ -606,6 +613,7 @@ impl StructuredLlm<'_> {
                 contract_name: Some(contract.name.clone()),
                 expects_structured_output: true,
                 // Конфиг-контракт: та же проводка схемы (issue #3).
+                step_id: Some(step_id.to_string()),
                 json_schema: Some(contract.schema.clone()),
             })?;
 
@@ -751,6 +759,7 @@ mod tests {
                     model_id: "scripted-model".into(),
                     tier: ModelTier::Weak,
                 },
+                usage: None,
             })
         }
     }

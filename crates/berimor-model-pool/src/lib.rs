@@ -50,14 +50,47 @@ pub struct ModelEntry {
 /// Реестр моделей + селектор. Порядок регистрации значим: это и есть
 /// «явный фиксированный порядок предпочтения в конфигурации» (ADR-0011) —
 /// финальный критерий, когда предыдущие равны.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct ModelPool {
     entries: Vec<ModelEntry>,
+    /// Circuit breaker провайдеров (волна A, 0.38.0): общий на прогон —
+    /// клоны пула разделяют состояние (Arc).
+    breaker: std::sync::Arc<berimor_types::model::BreakerRegistry>,
+    /// (порог сбоев подряд, cooldown).
+    breaker_policy: (u32, std::time::Duration),
+}
+
+impl Default for ModelPool {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            breaker: berimor_types::model::BreakerRegistry::new(),
+            breaker_policy: (
+                berimor_types::model::DEFAULT_BREAKER_FAILURES,
+                std::time::Duration::from_secs(berimor_types::model::DEFAULT_BREAKER_COOLDOWN_SECS),
+            ),
+        }
+    }
 }
 
 impl ModelPool {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Автомат провайдеров (волна A) — для FailoverProvider::with_breaker.
+    pub fn breaker(&self) -> std::sync::Arc<berimor_types::model::BreakerRegistry> {
+        self.breaker.clone()
+    }
+
+    /// Политика автомата: (порог, cooldown). Дефолт — константы
+    /// DEFAULT_BREAKER_*; переопределяется конфигом [agent] при сборке.
+    pub fn breaker_policy(&self) -> (u32, std::time::Duration) {
+        self.breaker_policy
+    }
+
+    pub fn set_breaker_policy(&mut self, threshold: u32, cooldown: std::time::Duration) {
+        self.breaker_policy = (threshold, cooldown);
     }
 
     /// Регистрация — код, вызываемый из конфигурации; класс берётся из

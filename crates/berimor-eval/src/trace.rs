@@ -54,6 +54,20 @@ fn describe(event: &Event) -> TraceEntry {
             format!("ветвь '{branch_step_id}' форка '{fork_step_id}' применена"),
         ),
         EventKind::MediationParsed => ("mediation_parsed", "вывод модели разобран".to_string()),
+        EventKind::ModelUsage {
+            step_id,
+            provider,
+            model_id,
+            prompt_tokens,
+            completion_tokens,
+            latency_ms,
+        } => (
+            "model_usage",
+            format!(
+                "модель {provider}/{model_id}{}: токены {prompt_tokens}+{completion_tokens}, {latency_ms} мс",
+                step_id.as_deref().map(|s| format!(" (шаг {s})")).unwrap_or_default()
+            ),
+        ),
         EventKind::MediationParseRepaired => (
             "mediation_parse_repaired",
             "оборванный вывод достроен структурно (EOF-ремонт)".to_string(),

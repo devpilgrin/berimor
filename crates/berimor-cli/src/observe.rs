@@ -17,7 +17,7 @@ use berimor_executors::{
     structured_llm::StructuredLlm,
 };
 use berimor_process_engine::{engine, parser};
-use berimor_storage::{SqliteEventLog, StorageError};
+use berimor_storage::{EventLog, SqliteEventLog, StorageError};
 use berimor_types::event::ProcessInstanceId;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -53,6 +53,65 @@ pub fn trace(config: &Config, instance: &str) -> Result<(), ObserveError> {
     for entry in entries {
         println!("[{:>6}] {:<24} {}", entry.seq.0, entry.kind, entry.summary);
     }
+    Ok(())
+}
+
+/// `berimor cost <instance>` — стоимость прогона (волна A, 0.38.0):
+/// события ModelUsage из журнала × `cost_per_1k_tokens` провайдера из
+/// конфига. Без цены — токены без денег (честно: цены не выдумываем).
+pub fn cost(config: &Config, instance: &str) -> Result<(), ObserveError> {
+    use berimor_types::event::EventKind;
+    let storage = open_storage(config)?;
+    let id = ProcessInstanceId(instance.to_string());
+    let events = storage.replay(&id).map_err(ObserveError::Storage)?;
+    let prices: std::collections::HashMap<&str, f64> = config
+        .providers
+        .iter()
+        .filter_map(|p| p.cost_per_1k_tokens.map(|c| (p.name.as_str(), c)))
+        .collect();
+    let mut total_in = 0u64;
+    let mut total_out = 0u64;
+    let mut total_cost = 0f64;
+    let mut rows = 0;
+    for event in &events {
+        if let EventKind::ModelUsage {
+            step_id,
+            provider,
+            model_id,
+            prompt_tokens,
+            completion_tokens,
+            latency_ms,
+        } = &event.kind
+        {
+            rows += 1;
+            total_in += prompt_tokens;
+            total_out += completion_tokens;
+            let price = prices.get(provider.as_str());
+            let cost = price
+                .map(|p| (prompt_tokens + completion_tokens) as f64 / 1000.0 * p)
+                .unwrap_or(0.0);
+            total_cost += cost;
+            let money = price
+                .map(|_| format!("${cost:.6}"))
+                .unwrap_or_else(|| "(цена не задана)".to_string());
+            println!(
+                "  {:<20} {:<24} in={} out={} {:>6} мс  {}",
+                step_id.as_deref().unwrap_or("-"),
+                format!("{provider}/{model_id}"),
+                prompt_tokens,
+                completion_tokens,
+                latency_ms,
+                money
+            );
+        }
+    }
+    if rows == 0 {
+        println!("[berimor] у инстанса '{instance}' нет событий model_usage");
+        return Ok(());
+    }
+    println!(
+        "[berimor] итого '{instance}': {rows} вызовов, токены {total_in}+{total_out}, стоимость ${total_cost:.6}"
+    );
     Ok(())
 }
 

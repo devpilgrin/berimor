@@ -52,7 +52,18 @@ pub trait GgufEngine: Send + Sync {
     /// `crate::gbnf`) для принуждения структуры и порядка полей на
     /// семплировании (issue #3), None — свободная генерация (валидация
     /// всё равно на Mediation).
-    fn generate(&self, prompt: &LocalPrompt, grammar: Option<&str>) -> Result<String, ModelError>;
+    fn generate(
+        &self,
+        prompt: &LocalPrompt,
+        grammar: Option<&str>,
+    ) -> Result<LocalGeneration, ModelError>;
+}
+
+/// Результат локальной генерации: текст + потребление токенов
+/// (волна A, 0.38.0 — атрибуция стоимости и для локальных моделей).
+pub struct LocalGeneration {
+    pub text: String,
+    pub usage: berimor_types::model::TokenUsage,
 }
 
 /// Провайдер Model Pool поверх локального движка. `identity.tier` — класс
@@ -123,7 +134,7 @@ impl<E: GgufEngine> ModelProvider for LlamaLocalProvider<E> {
             ),
             None => request.prompt.clone(),
         };
-        let raw_text = self.engine.generate(
+        let generation = self.engine.generate(
             &LocalPrompt {
                 system_context: &request.system_context,
                 user: &user,
@@ -132,8 +143,9 @@ impl<E: GgufEngine> ModelProvider for LlamaLocalProvider<E> {
             self.grammar_for(&request).as_deref(),
         )?;
         Ok(CompletionResponse {
-            raw_text,
+            raw_text: generation.text,
             model: self.identity.clone(),
+            usage: Some(generation.usage),
         })
     }
 }
@@ -372,6 +384,7 @@ mod llama_backend {
             let mut out = String::new();
             let start_pos = tokens.len();
             let budget = MAX_NEW_TOKENS.min((self.n_ctx as usize).saturating_sub(start_pos));
+            let mut generated: u64 = 0;
             for offset in 0..budget {
                 let token = sampler.sample(&ctx, batch.n_tokens() - 1);
                 if self.model.is_eog_token(token) {
@@ -382,6 +395,7 @@ mod llama_backend {
                     .token_to_piece(token, &mut decoder, false, None)
                     .map_err(|err| ModelError::Unavailable(format!("детокенизация: {err}")))?;
                 out.push_str(&piece);
+                generated += 1;
 
                 // Ожидается JSON: локальная модель после закрывающей `}`
                 // продолжает болтать, а parse-стадия (M2) справедливо
@@ -406,7 +420,13 @@ mod llama_backend {
             if prompt.expects_json {
                 out.insert(0, '{');
             }
-            Ok(out)
+            Ok(LocalGeneration {
+                text: out,
+                usage: berimor_types::model::TokenUsage {
+                    prompt_tokens: start_pos as u64,
+                    completion_tokens: generated,
+                },
+            })
         }
     }
 }
@@ -435,7 +455,7 @@ mod tests {
             &self,
             prompt: &LocalPrompt,
             grammar: Option<&str>,
-        ) -> Result<String, ModelError> {
+        ) -> Result<LocalGeneration, ModelError> {
             self.seen_prompts.lock().unwrap().push((
                 prompt.system_context.to_string(),
                 prompt.user.to_string(),
@@ -446,7 +466,13 @@ mod tests {
                 .unwrap()
                 .push(grammar.map(str::to_string));
             match &self.answer {
-                Ok(text) => Ok(text.clone()),
+                Ok(text) => Ok(LocalGeneration {
+                    text: text.clone(),
+                    usage: berimor_types::model::TokenUsage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                    },
+                }),
                 Err(reason) => Err(ModelError::Unavailable(reason.clone())),
             }
         }
@@ -490,6 +516,7 @@ mod tests {
                 prompt: "x".into(),
                 contract_name: Some("C".into()),
                 expects_structured_output: true,
+                step_id: None,
                 json_schema: Some(schema),
             })
             .unwrap();
@@ -514,6 +541,7 @@ mod tests {
                 prompt: "x".into(),
                 contract_name: Some("C".into()),
                 expects_structured_output: true,
+                step_id: None,
                 json_schema: Some(serde_json::json!({
                     "type": "object",
                     "properties": {"category": {"type": "string"}},
@@ -540,6 +568,7 @@ mod tests {
                 prompt: "x".into(),
                 contract_name: Some("C".into()),
                 expects_structured_output: true,
+                step_id: None,
                 json_schema: Some(serde_json::json!({"anyOf": [{"type": "string"}]})),
             })
             .unwrap();
@@ -560,6 +589,7 @@ mod tests {
                 prompt: "классифицируй".to_string(),
                 contract_name: Some("ClassificationOut".to_string()),
                 expects_structured_output: true,
+                step_id: None,
                 json_schema: None,
             })
             .unwrap();
@@ -581,6 +611,7 @@ mod tests {
             prompt: "ЗАДАЧА-МАРКЕР".to_string(),
             contract_name: Some("ClassificationOut".to_string()),
             expects_structured_output: true,
+            step_id: None,
             json_schema: None,
         });
 
@@ -609,6 +640,7 @@ mod tests {
                 prompt: "x".to_string(),
                 contract_name: None,
                 expects_structured_output: false,
+                step_id: None,
                 json_schema: None,
             })
             .expect_err("ошибка движка обязана доходить до вызывающего");
@@ -629,6 +661,7 @@ mod tests {
             prompt: "вопрос".to_string(),
             contract_name: None,
             expects_structured_output: false,
+            step_id: None,
             json_schema: None,
         });
         let seen = provider.engine.seen_prompts.lock().unwrap();

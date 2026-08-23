@@ -228,7 +228,12 @@ impl AgentStepExecutor<'_> {
             candidates.push((entry.identity.provider.as_str(), provider));
         }
         let model_tier = ranked[0].identity.tier;
-        let provider = crate::failover::FailoverProvider::new(candidates, self.on_provider_switch);
+        // Circuit breaker (волна A): реестр и политика — из пула (общие
+        // на прогон); алерт об открытии — через on_provider_switch
+        // (пользователь ВИДИТ деградацию, не молчаливые ретраи).
+        let (threshold, cooldown) = self.pool.breaker_policy();
+        let provider = crate::failover::FailoverProvider::new(candidates, self.on_provider_switch)
+            .with_breaker(self.pool.breaker(), threshold, cooldown);
 
         let layers = self.context.build("agent_step", model_tier, state, step_id);
         let system_context = layers
@@ -455,6 +460,7 @@ impl AgentStepExecutor<'_> {
                 // SGR (issue #3): схема хода — в constrained decoding
                 // при поддержке провайдером; порядок полей = порядок
                 // генерации (thought раньше action).
+                step_id: Some(step_id.to_string()),
                 json_schema: Some(
                     serde_json::to_value(schemars::schema_for!(AgentTurnDecision))
                         .expect("схема derive-типа всегда сериализуема"),
@@ -592,6 +598,7 @@ impl AgentStepExecutor<'_> {
             prompt,
             contract_name: Some(AgentVerdict::NAME.into()),
             expects_structured_output: true,
+            step_id: Some(step_id.to_string()),
             json_schema: Some(
                 serde_json::to_value(schemars::schema_for!(AgentVerdict))
                     .expect("схема derive-типа всегда сериализуема"),
@@ -1204,6 +1211,7 @@ mod tests {
                     model_id: "scripted-model".into(),
                     tier: ModelTier::Weak,
                 },
+                usage: None,
             })
         }
     }

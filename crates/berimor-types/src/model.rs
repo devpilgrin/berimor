@@ -4,6 +4,9 @@
 //! ROADMAP: E3–E5.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Режим подсказки формата ответа провайдеру (SGR-волна 0.30.0, issue #3,
 /// спека `docs/rnd/sgr-wave-spec.md`). Значения — дословно строки конфигурации
@@ -113,12 +116,27 @@ pub struct CompletionRequest {
     /// провайдера её не использует.
     #[serde(default)]
     pub json_schema: Option<serde_json::Value>,
+    /// Шаг процесса для атрибуции стоимости (волна A, 0.38.0): метер
+    /// журналирует usage с этой привязкой (Process Run ID — у метра).
+    #[serde(default)]
+    pub step_id: Option<String>,
+}
+
+/// Потребление токенов одного вызова (волна A, 0.38.0). HTTP-
+/// провайдеры отдают в `usage` ответа; локальный llama.cpp считает
+/// по токенизатору. `None` у ответа — провайдер не сообщил.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct TokenUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompletionResponse {
     pub raw_text: String,
     pub model: ModelIdentity,
+    #[serde(default)]
+    pub usage: Option<TokenUsage>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -127,4 +145,68 @@ pub enum ModelError {
     Unavailable(String),
     #[error("бюджет исчерпан: {0}")]
     BudgetExceeded(String),
+}
+
+/// Пороги circuit breaker по умолчанию (волна A, 0.38.0); конфиг
+/// `[agent] breaker_failures` / `breaker_cooldown_secs` переопределяет.
+pub const DEFAULT_BREAKER_FAILURES: u32 = 3;
+pub const DEFAULT_BREAKER_COOLDOWN_SECS: u64 = 120;
+
+/// Состояние одного провайдера.
+#[derive(Debug, Clone)]
+struct BreakerState {
+    consecutive_failures: u32,
+    opened_at: Option<Instant>,
+}
+
+/// Реестр автоматических выключателей провайдеров (волна A): N
+/// ПОСЛЕДОВАТЕЛЬНЫХ транспортных сбоев → провайдер «открыт» на cooldown
+/// и пропускается (ваш случай kimi: тишина + 429 — ретраить до
+/// эскалации больше не нужно). По истечении cooldown — полуоткрытая
+/// проба: один запрос пропускается, успех закрывает автомат, сбой
+/// открывает заново. Успех любого вызова сбрасывает счётчик.
+#[derive(Debug, Default)]
+pub struct BreakerRegistry {
+    states: Mutex<HashMap<String, BreakerState>>,
+}
+
+impl BreakerRegistry {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// Доступен ли провайдер прямо сейчас (closed или cooldown истёк —
+    /// полуоткрытая проба).
+    pub fn is_available(&self, name: &str, cooldown: Duration) -> bool {
+        let states = self.states.lock().expect("breaker lock");
+        match states.get(name) {
+            Some(BreakerState {
+                opened_at: Some(opened),
+                ..
+            }) => opened.elapsed() >= cooldown,
+            _ => true,
+        }
+    }
+
+    /// Успешный вызов: счётчик и автомат сброшены.
+    pub fn record_success(&self, name: &str) {
+        self.states.lock().expect("breaker lock").remove(name);
+    }
+
+    /// Транспортный сбой: счётчик++, при достижении порога автомат
+    /// открывается. Возвращает true, если автомат открылся ЭТИМ вызовом
+    /// (для одноразового алерта).
+    pub fn record_failure(&self, name: &str, threshold: u32) -> bool {
+        let mut states = self.states.lock().expect("breaker lock");
+        let state = states.entry(name.to_string()).or_insert(BreakerState {
+            consecutive_failures: 0,
+            opened_at: None,
+        });
+        state.consecutive_failures += 1;
+        if state.consecutive_failures >= threshold && state.opened_at.is_none() {
+            state.opened_at = Some(Instant::now());
+            return true;
+        }
+        false
+    }
 }

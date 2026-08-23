@@ -143,6 +143,22 @@ pub struct AgentConfig {
     /// дословно. 0 = выключено.
     #[serde(default = "default_compact_threshold")]
     pub compact_threshold_chars: usize,
+    /// Порог circuit breaker (волна A, 0.38.0): столько ПОСЛЕДОВАТЕЛЬНЫХ
+    /// транспортных сбоев провайдера открывают автомат — провайдер
+    /// пропускается до полуоткрытой пробы. 0 = автомат выключен.
+    #[serde(default = "default_breaker_failures")]
+    pub breaker_failures: u32,
+    /// Секунды до полуоткрытой пробы открытого автомата.
+    #[serde(default = "default_breaker_cooldown_secs")]
+    pub breaker_cooldown_secs: u64,
+}
+
+fn default_breaker_failures() -> u32 {
+    berimor_types::model::DEFAULT_BREAKER_FAILURES
+}
+
+fn default_breaker_cooldown_secs() -> u64 {
+    berimor_types::model::DEFAULT_BREAKER_COOLDOWN_SECS
 }
 
 fn default_compact_threshold() -> usize {
@@ -159,6 +175,8 @@ impl Default for AgentConfig {
             max_turns: default_agent_max_turns(),
             tool_result_max_chars: default_tool_result_max_chars(),
             compact_threshold_chars: default_compact_threshold(),
+            breaker_failures: default_breaker_failures(),
+            breaker_cooldown_secs: default_breaker_cooldown_secs(),
         }
     }
 }

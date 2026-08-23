@@ -397,9 +397,19 @@ impl ModelProvider for OpenAiCompatibleProvider {
             })?
             .to_string();
 
+        // Usage (волна A, 0.38.0): OpenAI-форма {prompt_tokens,
+        // completion_tokens}; отсутствие — None, не ошибка.
+        let usage = body.get("usage").and_then(|u| {
+            Some(berimor_types::model::TokenUsage {
+                prompt_tokens: u.get("prompt_tokens")?.as_u64()?,
+                completion_tokens: u.get("completion_tokens")?.as_u64()?,
+            })
+        });
+
         Ok(CompletionResponse {
             raw_text,
             model: self.identity.clone(),
+            usage,
         })
     }
 }
@@ -529,6 +539,7 @@ mod tests {
             prompt: "Классифицируй обращение.".into(),
             contract_name: Some("ClassificationOut".into()),
             expects_structured_output: true,
+            step_id: None,
             json_schema: None,
         }
     }

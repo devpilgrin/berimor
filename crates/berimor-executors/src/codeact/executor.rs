@@ -208,6 +208,7 @@ impl CodeActExecutor<'_> {
                 // контракту (контракт применяется позже, к результату
                 // исполнения программы, не к самому ответу).
                 expects_structured_output: false,
+                step_id: Some(step_id.to_string()),
                 json_schema: None,
             })?;
 
@@ -510,6 +511,7 @@ mod tests {
                     model_id: "scripted-model".into(),
                     tier: ModelTier::Weak,
                 },
+                usage: None,
             })
         }
     }
