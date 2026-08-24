@@ -45,6 +45,8 @@ impl LandlockMode {
 /// Обвязка команды песочницей (общая точка для terminal.exec и
 /// terminal.start): auto — при поддержке ядра (иначе одно
 /// предупреждение и прежнее поведение); require — fail-closed.
+/// На не-Linux тело no-op, параметры намеренно не используются.
+#[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
 pub fn apply(
     command: &mut std::process::Command,
     workspace: &Path,
@@ -254,6 +256,7 @@ pub fn confine_current_process(rules: &[(std::ffi::CString, u64)]) -> io::Result
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)] // заглушка для симметрии API; вызывается только на Linux
 pub fn confine_current_process(_rules: &[(std::ffi::CString, u64)]) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
