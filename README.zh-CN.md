@@ -142,7 +142,7 @@ berimor 的主要“实战”模式是**流程**：一个以图形式执行的�
 
 **A 波：韧性与成本** (0.38.0)：Model Pool 熔断器——连续 N 次传输故障将断开熔断器，在冷却期后半开探测之前跳过该提供方，并发出可见告警「<名称> → circuit-open」（`[agent] breaker_failures`、`breaker_cooldown_secs`；0 = 关闭）。成本归因：每次模型调用记录用量（token、延迟、步骤——`model_usage` 事件）；本地 llama.cpp 通过分词器统计 token；`berimor cost <run>`——按步骤报告与汇总（价格取提供方的 `cost_per_1k_tokens`；无价格时——只给诚实的 token 数，不编造金额）。
 
-**规则层与 berimor 作为 MCP 服务器**（0.37.0，借鉴 Harness AI 3.0）：(1) **规则**——来自 `~/.config/berimor/rules/` 与 `.berimor/rules/` 的 Markdown 标准在生成之前注入所有模型步骤的上下文（软层；硬层仍是调解）；项目规则优先于全局规则；(2) **`berimor mcp-serve`**——基于 stdio 的 MCP 服务器：外部智能体（Claude Code、Cursor）通过 `process.list`/`process.run`/`trace.read` 驱动 berimor 流程——模型在外思考，代码在内决策；(3) **GitHub Action** `devpilgrin/berimor-action@v1`——流程作为 CI 步骤。
+**规则层与 berimor 作为 MCP 服务器**（0.37.0，借鉴 Harness AI 3.0）：(1) **规则**——来自 `~/.config/berimor/rules/` 与 `.berimor/rules/` 的 Markdown 标准在生成之前注入所有模型步骤的上下文（软层；硬层仍是调解）；项目规则优先于全局规则；(2) **`berimor mcp-serve`**——基于 stdio 的 MCP 服务器：外部智能体和编辑器通过 `process.list`/`process.run`/`trace.read` 驱动 berimor 流程——模型在外思考，代码在内决策；(3) **GitHub Action** `devpilgrin/berimor-action@v1`——流程作为 CI 步骤。
 
 **借鉴自 DeepSeek Harness**（0.36.0）：(1) **观察剪枝**——超长工具结果在提示中被裁剪（头部+标记+尾部，原件保留在日志中；`[agent] tool_result_max_chars`，0 = 关闭）；(2) **Landlock 沙箱**用于 `terminal.exec`/`terminal.start`——基于 libc 的自有实现（无外部二进制）：子进程在物理上无法离开工作区，系统目录为只读；`[sandbox] landlock = off|auto|require`，require 为 fail-closed；(3) **聊天压缩**——超过阈值的历史由首选提供方压缩为摘要，尾部逐字保留，摘要失败不会中断回合（`[agent] compact_threshold_chars`，0 = 关闭）。
 
@@ -302,9 +302,8 @@ berimor plugin install-local ./my-plugin --allow-unsigned               # 本地
 | 开发计划 | `docs/ROADMAP.md` | 按阶段划分的任务队列、子任务分解、复杂度、执行者模型等级 |
 | 审计 | `docs/audit-2026-07-31.md` | 独立安全审计——所有发现均已关闭或有意识地记录在案 |
 | 测试数据 | `fixtures/golden/` | 黄金数据集：流程、契约、恶意输入的示例 |
-| 研究 | `docs/rnd/` | 辅助层：现有智能体框架的资料来源与分析。见 `docs/rnd/README.md` |
 
-`crates/` 和 `bootstrap/` 是智能体本身，是按照 `docs/ROADMAP.md` 中的队列编写的代码。`docs/arch/` 是其背后的纯决策层：不提及具体项目和产品（`docs/arch/deployment.md` 与 `docs/arch/stack.md` 除外，那是有意识的例外），以可在任何技术栈上实现的方式阐述架构。`docs/ADR/` 记录每项决策的理由，包括被否决的备选方案。`docs/rnd/` 是设计所依据的辅助资料层，不属于智能体本身。
+`crates/` 和 `bootstrap/` 是智能体本身，是按照 `docs/ROADMAP.md` 中的队列编写的代码。`docs/arch/` 是其背后的纯决策层：不提及具体项目和产品（`docs/arch/deployment.md` 与 `docs/arch/stack.md` 除外，那是有意识的例外），以可在任何技术栈上实现的方式阐述架构。`docs/ADR/` 记录每项决策的理由，包括被否决的备选方案。
 
 ## 许可证
 

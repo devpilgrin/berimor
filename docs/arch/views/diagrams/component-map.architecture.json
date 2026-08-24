@@ -4,29 +4,62 @@
   "meta": {
     "title": "Berimor — компонентная карта системы",
     "quality_profile": "showcase",
-    "viewBox": [1740, 810],
+    "viewBox": [
+      1740,
+      880
+    ],
     "repository": {
       "url": "https://github.com/devpilgrin/berimor",
-      "revision": "661e3ba0b5d13a92ec5d5e956d3241c91690dc0a"
+      "revision": "e067f42ca2734b01e08c69254f54a086c511a4fe"
     },
     "views": [
       {
         "id": "deterministic-core",
         "label": "Детерминированное ядро",
-        "focus": ["process-engine", "actors", "context-engine", "executors", "mediation", "capability"],
+        "focus": [
+          "process-engine",
+          "actors",
+          "context-engine",
+          "executors",
+          "mediation",
+          "capability"
+        ],
         "note": "Маршрутизация, ветвление и отбор контекста — только код (I1); модель — исполнитель внутри шага."
       },
       {
         "id": "model-path",
         "label": "Путь выхода модели",
-        "focus": ["executors", "mediation", "model-pool", "remote-models", "storage"],
+        "focus": [
+          "executors",
+          "mediation",
+          "model-pool",
+          "remote-models",
+          "storage"
+        ],
         "note": "Выход модели становится состоянием только через контракт Mediation (I3) и журнал событий (I7)."
       },
       {
         "id": "trust-boundary",
         "label": "Граница доверия",
-        "focus": ["capability", "tool-runtime", "plugins", "remote-models"],
+        "focus": [
+          "capability",
+          "tool-runtime",
+          "plugins",
+          "remote-models"
+        ],
         "note": "Deny-статика и ACL-гейты до выполнения (I6); плагины и провайдеры — за границей самодостаточного ядра (I5)."
+      },
+      {
+        "id": "observability-wave",
+        "label": "Эксплуатация и наблюдаемость",
+        "focus": [
+          "observability",
+          "sandbox",
+          "qdrant",
+          "integrations",
+          "storage"
+        ],
+        "note": "usage/cost, circuit breaker, OTLP-трейс, LLM-судья, Rego и Landlock, Qdrant-факты."
       }
     ]
   },
@@ -37,9 +70,20 @@
       "label": "Поверхности",
       "sublabel": "CLI · MCP-сервер наружу",
       "tag": "berimor-cli",
-      "sources": [{ "path": "crates/berimor-cli/Cargo.toml", "label": "berimor-cli" }],
-      "pos": [40, 80],
-      "size": [180, 72]
+      "sources": [
+        {
+          "path": "crates/berimor-cli/Cargo.toml",
+          "label": "berimor-cli"
+        }
+      ],
+      "pos": [
+        40,
+        80
+      ],
+      "size": [
+        180,
+        72
+      ]
     },
     {
       "id": "process-engine",
@@ -47,9 +91,20 @@
       "label": "Process Engine",
       "sublabel": "конечный автомат · журнал · снапшоты",
       "tag": "berimor-process-engine",
-      "sources": [{ "path": "crates/berimor-process-engine/Cargo.toml", "label": "process-engine" }],
-      "pos": [400, 80],
-      "size": [200, 72]
+      "sources": [
+        {
+          "path": "crates/berimor-process-engine/Cargo.toml",
+          "label": "process-engine"
+        }
+      ],
+      "pos": [
+        400,
+        80
+      ],
+      "size": [
+        200,
+        72
+      ]
     },
     {
       "id": "actors",
@@ -57,9 +112,20 @@
       "label": "Actors & Scheduler",
       "sublabel": "доска задач · конверты · расписания",
       "tag": "berimor-actors",
-      "sources": [{ "path": "crates/berimor-actors/Cargo.toml", "label": "actors" }],
-      "pos": [760, 80],
-      "size": [200, 72]
+      "sources": [
+        {
+          "path": "crates/berimor-actors/Cargo.toml",
+          "label": "actors"
+        }
+      ],
+      "pos": [
+        760,
+        80
+      ],
+      "size": [
+        200,
+        72
+      ]
     },
     {
       "id": "context-engine",
@@ -67,9 +133,20 @@
       "label": "Context Engine",
       "sublabel": "маршрутизатор · сборщик · оценщик",
       "tag": "berimor-context-engine",
-      "sources": [{ "path": "crates/berimor-context-engine/Cargo.toml", "label": "context-engine" }],
-      "pos": [400, 260],
-      "size": [200, 72]
+      "sources": [
+        {
+          "path": "crates/berimor-context-engine/Cargo.toml",
+          "label": "context-engine"
+        }
+      ],
+      "pos": [
+        400,
+        260
+      ],
+      "size": [
+        200,
+        72
+      ]
     },
     {
       "id": "executors",
@@ -77,9 +154,20 @@
       "label": "Executors",
       "sublabel": "StructuredLLM · CodeAct (Wasmtime) · ToolOnly",
       "tag": "berimor-executors",
-      "sources": [{ "path": "crates/berimor-executors/Cargo.toml", "label": "executors" }],
-      "pos": [760, 260],
-      "size": [200, 72]
+      "sources": [
+        {
+          "path": "crates/berimor-executors/Cargo.toml",
+          "label": "executors"
+        }
+      ],
+      "pos": [
+        760,
+        260
+      ],
+      "size": [
+        200,
+        72
+      ]
     },
     {
       "id": "mediation",
@@ -87,9 +175,20 @@
       "label": "Mediation",
       "sublabel": "parse → schema → policy → commit",
       "tag": "berimor-mediation",
-      "sources": [{ "path": "crates/berimor-mediation/Cargo.toml", "label": "mediation" }],
-      "pos": [400, 440],
-      "size": [200, 72]
+      "sources": [
+        {
+          "path": "crates/berimor-mediation/Cargo.toml",
+          "label": "mediation"
+        }
+      ],
+      "pos": [
+        400,
+        440
+      ],
+      "size": [
+        200,
+        72
+      ]
     },
     {
       "id": "capability",
@@ -97,9 +196,20 @@
       "label": "Capability & Safety",
       "sublabel": "deny-статика · гейты · маскировщик секретов",
       "tag": "berimor-capability",
-      "sources": [{ "path": "crates/berimor-capability/Cargo.toml", "label": "capability" }],
-      "pos": [760, 440],
-      "size": [200, 72]
+      "sources": [
+        {
+          "path": "crates/berimor-capability/Cargo.toml",
+          "label": "capability"
+        }
+      ],
+      "pos": [
+        760,
+        440
+      ],
+      "size": [
+        200,
+        72
+      ]
     },
     {
       "id": "tool-runtime",
@@ -107,9 +217,20 @@
       "label": "Tool Runtime",
       "sublabel": "встроенные инструменты · MCP клиент/сервер",
       "tag": "berimor-tool-runtime",
-      "sources": [{ "path": "crates/berimor-tool-runtime/Cargo.toml", "label": "tool-runtime" }],
-      "pos": [1120, 440],
-      "size": [200, 72]
+      "sources": [
+        {
+          "path": "crates/berimor-tool-runtime/Cargo.toml",
+          "label": "tool-runtime"
+        }
+      ],
+      "pos": [
+        1120,
+        440
+      ],
+      "size": [
+        200,
+        72
+      ]
     },
     {
       "id": "model-pool",
@@ -117,9 +238,20 @@
       "label": "Model Pool",
       "sublabel": "классы способностей · llama.cpp · HTTP-клиенты",
       "tag": "berimor-model-pool",
-      "sources": [{ "path": "crates/berimor-model-pool/Cargo.toml", "label": "model-pool" }],
-      "pos": [1120, 80],
-      "size": [200, 72]
+      "sources": [
+        {
+          "path": "crates/berimor-model-pool/Cargo.toml",
+          "label": "model-pool"
+        }
+      ],
+      "pos": [
+        1120,
+        80
+      ],
+      "size": [
+        200,
+        72
+      ]
     },
     {
       "id": "storage",
@@ -128,39 +260,136 @@
       "sublabel": "события · FTS5 · sqlite-vec · 4 слоя памяти",
       "tag": "berimor-storage + berimor-memory",
       "sources": [
-        { "path": "crates/berimor-storage/Cargo.toml", "label": "storage" },
-        { "path": "crates/berimor-memory/Cargo.toml", "label": "memory" }
+        {
+          "path": "crates/berimor-storage/Cargo.toml",
+          "label": "storage"
+        },
+        {
+          "path": "crates/berimor-memory/Cargo.toml",
+          "label": "memory"
+        }
       ],
-      "pos": [340, 620],
-      "size": [400, 72]
+      "pos": [
+        340,
+        620
+      ],
+      "size": [
+        400,
+        72
+      ]
     },
     {
       "id": "plugins",
       "type": "external",
       "label": "Плагины-коннекторы",
       "sublabel": "изолированные процессы · манифест + ACL",
-      "pos": [1480, 440],
-      "size": [190, 72]
+      "pos": [
+        1480,
+        440
+      ],
+      "size": [
+        190,
+        72
+      ]
     },
     {
       "id": "remote-models",
       "type": "external",
       "label": "Удалённые провайдеры моделей",
       "sublabel": "цепочка отказоустойчивости · cost_budget",
-      "pos": [1480, 8],
-      "size": [190, 72]
+      "pos": [
+        1480,
+        8
+      ],
+      "size": [
+        190,
+        72
+      ]
+    },
+    {
+      "id": "observability",
+      "label": "Наблюдаемость",
+      "type": "backend",
+      "pos": [
+        40,
+        620
+      ],
+      "size": [
+        240,
+        72
+      ]
+    },
+    {
+      "id": "sandbox",
+      "label": "Landlock-песочница + Rego-гейт",
+      "type": "security",
+      "pos": [
+        1120,
+        620
+      ],
+      "size": [
+        200,
+        72
+      ]
+    },
+    {
+      "id": "qdrant",
+      "label": "Qdrant (векторный стор фактов, opt)",
+      "type": "database",
+      "pos": [
+        40,
+        800
+      ],
+      "size": [
+        240,
+        72
+      ]
+    },
+    {
+      "id": "integrations",
+      "label": "MCP-клиенты и CI (berimor-action)",
+      "type": "external",
+      "pos": [
+        40,
+        260
+      ],
+      "size": [
+        240,
+        72
+      ]
     }
   ],
   "boundaries": [
     {
       "kind": "region",
       "label": "Машина пользователя — один самодостаточный артефакт (I5)",
-      "wraps": ["surfaces", "process-engine", "actors", "context-engine", "executors", "mediation", "capability", "tool-runtime", "model-pool", "storage", "plugins"]
+      "wraps": [
+        "surfaces",
+        "process-engine",
+        "actors",
+        "context-engine",
+        "executors",
+        "mediation",
+        "capability",
+        "tool-runtime",
+        "model-pool",
+        "storage",
+        "plugins",
+        "observability",
+        "sandbox"
+      ]
     },
     {
       "kind": "security-group",
       "label": "Детерминированное ядро (Rust): решения принимает только код (I1)",
-      "wraps": ["process-engine", "actors", "context-engine", "executors", "mediation", "capability"]
+      "wraps": [
+        "process-engine",
+        "actors",
+        "context-engine",
+        "executors",
+        "mediation",
+        "capability"
+      ]
     }
   ],
   "connections": [
@@ -255,6 +484,37 @@
       "fromSide": "left",
       "toSide": "top",
       "labelDx": -40
+    },
+    {
+      "from": "capability",
+      "to": "sandbox",
+      "label": "статика + Rego"
+    },
+    {
+      "from": "sandbox",
+      "to": "tool-runtime",
+      "label": "pre_exec Landlock (Linux)"
+    },
+    {
+      "from": "integrations",
+      "to": "process-engine",
+      "label": "process.run по MCP / в CI"
+    },
+    {
+      "from": "storage",
+      "to": "observability",
+      "label": "журнал: cost · trace · OTLP",
+      "labelAt": [
+        310,
+        616
+      ]
+    },
+    {
+      "from": "storage",
+      "to": "qdrant",
+      "label": "факты (HNSW, opt)",
+      "fromSide": "bottom",
+      "toSide": "top"
     }
   ],
   "cards": [

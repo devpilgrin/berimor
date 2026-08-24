@@ -142,7 +142,7 @@ berimor の主な「実戦」モードは**プロセス**——グラフとし�
 
 **ウェーブA：耐障害性とコスト** (0.38.0)：Model Pool のサーキットブレーカー——連続 N 回のトランスポート障害でブレーカーが開き、クールダウン後の半開プローブまでプロバイダーをスキップ、「<名前> → circuit-open」の可視アラート付き（`[agent] breaker_failures`、`breaker_cooldown_secs`；0 = 無効）。コスト帰属：すべてのモデル呼び出しが使用量をジャーナルに記録（トークン・レイテンシ・ステップ——`model_usage` イベント）。ローカル llama.cpp はトークナイザでトークンを計測。`berimor cost <run>`——ステップ別レポートと合計（価格はプロバイダの `cost_per_1k_tokens`；価格未設定時は誠実にトークン数のみ、金額は捏造しない）。
 
-**ルール層と MCP サーバーとしての berimor**（0.37.0、Harness AI 3.0 に倣う）：(1) **ルール** — `~/.config/berimor/rules/` と `.berimor/rules/` の Markdown 標準が、生成前にモデル使用ステップのコンテキストへ注入されます（ソフト層。ハード層は引き続きメディエーション）。プロジェクトのルールがグローバルに優先；(2) **`berimor mcp-serve`** — stdio 上の MCP サーバー：外部エージェント（Claude Code、Cursor）が `process.list`/`process.run`/`trace.read` で berimor のプロセスを駆動 — モデルは外で考え、コードが内で決める；(3) **GitHub Action** `devpilgrin/berimor-action@v1` — プロセスを CI ステップとして実行。
+**ルール層と MCP サーバーとしての berimor**（0.37.0、Harness AI 3.0 に倣う）：(1) **ルール** — `~/.config/berimor/rules/` と `.berimor/rules/` の Markdown 標準が、生成前にモデル使用ステップのコンテキストへ注入されます（ソフト層。ハード層は引き続きメディエーション）。プロジェクトのルールがグローバルに優先；(2) **`berimor mcp-serve`** — stdio 上の MCP サーバー：外部エージェントやエディタが `process.list`/`process.run`/`trace.read` で berimor のプロセスを駆動 — モデルは外で考え、コードが内で決める；(3) **GitHub Action** `devpilgrin/berimor-action@v1` — プロセスを CI ステップとして実行。
 
 **DeepSeek Harness からの借用**（0.36.0）：(1) **観測プルーナー** — 長いツール結果はプロンプト内でトリム（先頭+マーカー+末尾、原本はジャーナルに保持；`[agent] tool_result_max_chars`、0 = オフ）；(2) **Landlock サンドボックス** — `terminal.exec`/`terminal.start` 向け。libc による自前実装（外部バイナリなし）：子プロセスはワークスペースから物理的に出られず、システムディレクトリは読み取り専用；`[sandbox] landlock = off|auto|require`、require は fail-closed；(3) **チャット圧縮** — 閾値超の履歴は上位プロバイダが要約ノートに圧縮、末尾は逐語保持、要約失敗でもターンは落ちない（`[agent] compact_threshold_chars`、0 = オフ）。
 
@@ -302,9 +302,8 @@ berimor plugin install-local ./my-plugin --allow-unsigned               # ロー
 | 開発計画 | `docs/ROADMAP.md` | フェーズ別タスクキュー、サブタスクへの分解、複雑度、実行モデルのクラス |
 | 監査 | `docs/audit-2026-07-31.md` | 独立セキュリティ監査——すべての指摘は解決済みか、意図的に文書化済み |
 | テストデータ | `fixtures/golden/` | ゴールデンセット：プロセス、コントラクト、悪意ある入力の例 |
-| リサーチ | `docs/rnd/` | 補助レイヤー：既存エージェントフレームワークのソースと分析。`docs/rnd/README.md` 参照 |
 
-`crates/` と `bootstrap/` がエージェント本体で、`docs/ROADMAP.md` のキューに従って書かれたコードです。`docs/arch/` はその背後にある純粋な決定のレイヤー：具体的なプロジェクトや製品には言及せず（`docs/arch/deployment.md` と `docs/arch/stack.md` は意図的な例外）、任意のスタックで実装できる形でアーキテクチャを記述しています。`docs/ADR/` は却下された代替案を含め、各決定の理由を記録しています。`docs/rnd/` は設計の拠り所となった補助的なソースのレイヤーであり、エージェントの一部ではありません。
+`crates/` と `bootstrap/` がエージェント本体で、`docs/ROADMAP.md` のキューに従って書かれたコードです。`docs/arch/` はその背後にある純粋な決定のレイヤー：具体的なプロジェクトや製品には言及せず（`docs/arch/deployment.md` と `docs/arch/stack.md` は意図的な例外）、任意のスタックで実装できる形でアーキテクチャを記述しています。`docs/ADR/` は却下された代替案を含め、各決定の理由を記録しています。
 
 ## ライセンス
 

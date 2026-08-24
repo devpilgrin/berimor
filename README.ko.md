@@ -142,7 +142,7 @@ berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 
 
 **웨이브 A: 복원력과 비용** (0.38.0): Model Pool 서킷 브레이커 — 연속 N회 전송 장애 시 브레이커가 열리고, 쿨다운 후 하프오픈 프로브까지 프로바이더를 건걸이뛰며, 「<이름> → circuit-open」 가시 알림 발생 (`[agent] breaker_failures`, `breaker_cooldown_secs`; 0 = 비활성). 비용 귀속: 모든 모델 호출이 사용량을 저널에 기록 (토큰, 지연, 단계 — `model_usage` 이벤트); 로컬 llama.cpp는 토크나이저로 토큰 계산; `berimor cost <run>` — 단계별 보고서와 합계 (가격은 프로바이더의 `cost_per_1k_tokens`; 가격 미설정 시 정직하게 토큰만 표시, 금액은 지어내지 않음).
 
-**규칙 계층과 MCP 서버로서의 berimor** (0.37.0, Harness AI 3.0 참고): (1) **규칙** — `~/.config/berimor/rules/`와 `.berimor/rules/`의 Markdown 표준이 생성 전 모든 모델 스텝의 컨텍스트에 주입됩니다(소프트 계층; 하드 계층은 여전히 미디에이션). 프로젝트 규칙이 글로벌보다 우선; (2) **`berimor mcp-serve`** — stdio 기반 MCP 서버: 외부 에이전트(Claude Code, Cursor)가 `process.list`/`process.run`/`trace.read`로 berimor 프로세스를 구동 — 모델은 밖에서 생각하고 코드는 안에서 결정; (3) **GitHub Action** `devpilgrin/berimor-action@v1` — 프로세스를 CI 스텝으로.
+**규칙 계층과 MCP 서버로서의 berimor** (0.37.0, Harness AI 3.0 참고): (1) **규칙** — `~/.config/berimor/rules/`와 `.berimor/rules/`의 Markdown 표준이 생성 전 모든 모델 스텝의 컨텍스트에 주입됩니다(소프트 계층; 하드 계층은 여전히 미디에이션). 프로젝트 규칙이 글로벌보다 우선; (2) **`berimor mcp-serve`** — stdio 기반 MCP 서버: 외부 에이전트 및 에디터가 `process.list`/`process.run`/`trace.read`로 berimor 프로세스를 구동 — 모델은 밖에서 생각하고 코드는 안에서 결정; (3) **GitHub Action** `devpilgrin/berimor-action@v1` — 프로세스를 CI 스텝으로.
 
 **DeepSeek Harness에서 차용** (0.36.0): (1) **관찰 프루너** — 긴 도구 결과는 프롬프트에서 잘림(머리+마커+꼬리, 원본은 저널에 보존; `[agent] tool_result_max_chars`, 0 = 끔); (2) **Landlock 샌드박스** — `terminal.exec`/`terminal.start`용, libc 자체 구현(외부 바이너리 없음): 하위 프로세스는 물리적으로 작업 영역을 벗어날 수 없고 시스템 디렉터리는 읽기 전용; `[sandbox] landlock = off|auto|require`, require는 fail-closed; (3) **채팅 컴팩션** — 임계값을 넘는 기록은 상위 프로바이더가 요약 노트로 압축, 꼬리는 그대로 유지, 요약 실패가 턴을 중단시키지 않음(`[agent] compact_threshold_chars`, 0 = 끔).
 
@@ -302,9 +302,8 @@ berimor plugin install-local ./my-plugin --allow-unsigned               # 로컬
 | 개발 계획 | `docs/ROADMAP.md` | 페이즈별 작업 큐, 하위 작업으로의 분해, 복잡도, 실행 모델 클래스 |
 | 감사 | `docs/audit-2026-07-31.md` | 독립 보안 감사 — 모든 지적 사항이 해결되었거나 의식적으로 문서화됨 |
 | 테스트 데이터 | `fixtures/golden/` | 골든 세트: 프로세스, 계약, 악의적 입력 예제 |
-| 리서치 | `docs/rnd/` | 보조 레이어: 기존 에이전트 프레임워크의 소스와 분석. `docs/rnd/README.md` 참조 |
 
-`crates/`와 `bootstrap/`이 에이전트 자체이며, `docs/ROADMAP.md`의 큐에 따라 작성된 코드입니다. `docs/arch/`는 그 뒤에 있는 순수한 결정의 레이어입니다: 구체적인 프로젝트와 제품을 언급하지 않으며(`docs/arch/deployment.md`와 `docs/arch/stack.md`는 의식적인 예외), 어떤 스택에서도 구현할 수 있도록 아키텍처를 서술합니다. `docs/ADR/`는 기각된 대안을 포함해 각 결정이 납득된 이유를 기록합니다. `docs/rnd/`는 설계의 근거가 된 보조 소스 레이어로, 에이전트의 일부가 아닙니다.
+`crates/`와 `bootstrap/`이 에이전트 자체이며, `docs/ROADMAP.md`의 큐에 따라 작성된 코드입니다. `docs/arch/`는 그 뒤에 있는 순수한 결정의 레이어입니다: 구체적인 프로젝트와 제품을 언급하지 않으며(`docs/arch/deployment.md`와 `docs/arch/stack.md`는 의식적인 예외), 어떤 스택에서도 구현할 수 있도록 아키텍처를 서술합니다. `docs/ADR/`는 기각된 대안을 포함해 각 결정이 납득된 이유를 기록합니다.
 
 ## 라이선스
 
