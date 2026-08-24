@@ -136,6 +136,8 @@ berimor 的主要“实战”模式是**流程**：一个以图形式执行的�
 
 **D 波：Rego 门控规则** (0.41.0)：在 capability 门控静态规则之上叠加外部 OPA/Rego 策略——经由 regorus（进程内，无 sidecar）。`[gate] rego_policy = "policy.rego"` + `environment = "prod"`：策略（`package berimor`，`deny contains msg if { ... }`）可见 `input.tool`、`input.args`、`input.mutates`、`input.environment`，且只能比静态规则更严格地拒绝——绝不能更宽松地放行，内核保持确定性。解析错误 = 启动失败，求值错误 = fail-closed。需求中的示例可用：「prod 环境禁止 terminal.exec」。
 
+**F 波：berimor 作为 GitHub App**（0.43.0）：`berimor serve` 在 `POST /webhooks/github` 接收 GitHub  webhook——HMAC-SHA256 验证（webhook 密钥）、RS256 JWT → 安装令牌；评论中的触发标记（默认 `/berimor`）以非交互方式运行流程，并将结果作为 issue/PR 评论返回。立即返回 202，流程后台运行。`[github_app]` 配置：app_id、private_key_path、process、trigger。
+
 **C 波：LLM-as-a-Judge** (0.40.0)：`berimor eval <dir> --judge`——黄金集运行后，由强提供方（failover 顺序中的第一个）为每个已完成场景的最终状态打分：1-5 分及理由以 `judge_score` 事件写入场景日志并输出。评分标准来自输入旁的 `<场景>.judge.md`（否则使用默认准则：完整性、准确性、无虚构事实、契约形式）。`--judge-threshold <N>`——CI 门限：平均分低于阈值即命令失败。评审的回答经由同样的调解 EOF 修复解析；未完成的场景（门控、错误）会被诚实地跳过。
 
 **B 波：可观测性** (0.39.0)：`berimor otlp <run> --endpoint <url>`——以 OTLP/HTTP JSON 将一次流程运行导出为链路追踪：运行根 span、每个图节点一个 span、LLM 调用 span（延迟 + token 作为属性）、human_gate（到答复/超时的区间）、自由循环的工具调用。traceId/spanId 确定性生成（重复导出幂等）。Jaeger 与 Grafana Tempo 收集器（4318 端口）及 Langfuse 均可接收——统一 OTLP，无需专用导出器；认证头用 `--header 'Name: value'`。

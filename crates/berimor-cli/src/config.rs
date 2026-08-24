@@ -102,6 +102,28 @@ pub struct ProviderConfig {
     pub local_ctx_tokens: Option<u32>,
 }
 
+/// berimor как GitHub App (волна F, 0.43.0): вебхуки в serve.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GithubAppConfig {
+    /// Числовой App ID из настроек GitHub App.
+    pub app_id: u64,
+    /// Путь к PEM с закрытым RSA-ключом приложения.
+    pub private_key_path: std::path::PathBuf,
+    /// ИМЯ переменной окружения с webhook secret (значение не храним).
+    #[serde(default = "default_ghapp_secret_env")]
+    pub webhook_secret_env: String,
+    /// Путь к YAML процесса-обработчика вызовов.
+    pub process: String,
+    /// Метка-триггер в комментарии (дефолт "/berimor").
+    pub trigger: Option<String>,
+    /// База API (дефолт https://api.github.com; в тестах — стаб).
+    pub api_base: Option<String>,
+}
+
+fn default_ghapp_secret_env() -> String {
+    "BERIMOR_GHAPP_SECRET".to_string()
+}
+
 /// Rego-правила capability-гейта (волна D, 0.41.0).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct GateConfig {
@@ -437,9 +459,12 @@ pub struct Config {
     /// landlock-run): "off" | "auto" (дефолт) | "require" (fail-closed).
     #[serde(default)]
     pub sandbox: SandboxConfig,
-    /// Rego-правила capability-гейта (волна D, 0.41.0).
+    /// Rego-политика capability-гейта (волна D, 0.41.0).
     #[serde(default)]
     pub gate: GateConfig,
+    /// GitHub App: вебхуки в serve (волна F, 0.43.0). None — выключено.
+    #[serde(default)]
+    pub github_app: Option<GithubAppConfig>,
     #[serde(default)]
     pub serve: ServeConfig,
     /// Интерфейс (2026-08-09): `[ui] locale = "en"` — локаль TUI из 8
@@ -471,6 +496,7 @@ impl Default for Config {
             agent: AgentConfig::default(),
             sandbox: SandboxConfig::default(),
             gate: GateConfig::default(),
+            github_app: None,
             serve: ServeConfig::default(),
             ui: UiConfig::default(),
         }
@@ -576,6 +602,7 @@ pub struct PartialConfig {
     pub agent: Option<AgentConfig>,
     pub sandbox: Option<SandboxConfig>,
     pub gate: Option<GateConfig>,
+    pub github_app: Option<GithubAppConfig>,
     pub serve: Option<ServeConfig>,
     pub ui: Option<UiConfig>,
 }
@@ -792,6 +819,7 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
         agent: local.agent.or(global.agent).unwrap_or_default(),
         sandbox: local.sandbox.or(global.sandbox).unwrap_or_default(),
         gate: local.gate.or(global.gate).unwrap_or_default(),
+        github_app: local.github_app.or(global.github_app),
         // `[ui]` — как `[memory]`: секция заменяется целиком, локальный
         // слой сильнее (осознанное упрощение, задокументировано здесь).
         ui: local.ui.or(global.ui).unwrap_or(defaults.ui),

@@ -136,6 +136,8 @@ berimor の主な「実戦」モードは**プロセス**——グラフとし�
 
 **ウェーブD：Rego ゲートルール** (0.41.0)：capability ゲートの静的ルールの上に外部 OPA/Rego ポリシー — regorus 経由（プロセス内、サイドカー不要）。`[gate] rego_policy = "policy.rego"` + `environment = "prod"`：ポリシー（`package berimor`、`deny contains msg if { ... }`）は `input.tool`、`input.args`、`input.mutates`、`input.environment` を参照し、静的ルールより厳しく拒否できるだけ——緩く許可はできず、コアは決定的のまま。パースエラー = 起動失敗、評価エラー = fail-closed。要望の例が動作：「prod 環境では terminal.exec 禁止」。
 
+**ウェーブF: GitHub Appとしてのberimor**（0.43.0）：`berimor serve` が `POST /webhooks/github` でGitHub webhookを受付——HMAC-SHA256検証（webhookシークレット）、RS256 JWT → インストールトークン。コメント内のトリガーマーカー（デフォルト `/berimor`）でプロセスを非対話実行し、結果をissue/PRコメントとして返信。即座に202、プロセスはバックグラウンド。`[github_app]`設定: app_id, private_key_path, process, trigger。
+
 **ウェーブC：LLM-as-a-Judge** (0.40.0)：`berimor eval <dir> --judge` — ゴールデンセット実行後、強いプロバイダ（フェイルオーバー順の先頭）が完了した各シナリオの最終状態を採点：1-5 のスコアと根拠が `judge_score` イベントとしてシナリオのジャーナルに書かれ出力される。基準は入力の隣の `<シナリオ>.judge.md`（なければ既定ルーブリック：完全性・正確性・捏造なし・形式）。`--judge-threshold <N>` — CI ゲート：平均が閾値未満ならコマンド失敗。審査の回答は同じメディエーション EOF 修復で読む。未完了シナリオは正直にスキップ。
 
 **ウェーブB：オブザーバビリティ** (0.39.0)：`berimor otlp <run> --endpoint <url>` — プロセス実行を OTLP/HTTP JSON のトレースとしてエクスポート：実行ルートスパン、グラフノードごとのスパン、LLM呼び出しスパン（レイテンシ＋トークンを属性に）、human_gate（回答/タイムアウトまでの区間）、自由ループのツール呼び出し。traceId/spanIdは決定論的（再エクスポートは冪等）。Jaeger・Grafana Tempo コレクタ（ポート4318）と Langfuse が受け付ける——OTLP 一本、専用エクスポーター不要。認証ヘッダは `--header 'Name: value'`。

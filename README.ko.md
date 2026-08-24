@@ -136,6 +136,8 @@ berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 
 
 **웨이브 D: Rego 게이트 규칙** (0.41.0): capability 게이트의 정적 규칙 위에 외부 OPA/Rego 정책 — regorus 경유(인프로세스, 사이드카 불필요). `[gate] rego_policy = "policy.rego"` + `environment = "prod"`: 정책(`package berimor`, `deny contains msg if { ... }`)은 `input.tool`, `input.args`, `input.mutates`, `input.environment`를 보고 정적 규칙보다 엄격하게 거부할 수만 있다 — 더 느슨하게 허용은 불가, 코어는 결정적 유지. 파싱 오류 = 시작 실패, 평가 오류 = fail-closed. 요청 예시 동작: 「prod 환경에서 terminal.exec 금지」.
 
+**웨이브 F: GitHub App으로서의 berimor** (0.43.0): `berimor serve`가 `POST /webhooks/github`에서 GitHub 웹훅 수신 — HMAC-SHA256 검증(웹훅 시크릿), RS256 JWT → 설치 토큰; 코멘트의 트리거 마커(기본 `/berimor`)로 프로세스를 비대화형 실행하고 결과를 issue/PR 코멘트로 회신. 즉시 202, 프로세스는 백그라운드. `[github_app]` 설정: app_id, private_key_path, process, trigger.
+
 **웨이브 C: LLM-as-a-Judge** (0.40.0): `berimor eval <dir> --judge` — 골든 세트 실행 후 강한 프로바이더(failover 순서의 첫 번째)가 완료된 각 시나리오의 최종 상태를 채점: 1-5점과 근거가 `judge_score` 이벤트로 시나리오 저널에 기록되고 출력된다. 기준은 입력 옆의 `<시나리오>.judge.md`(없으면 기본 루브릭: 완전성, 정확성, 날조 없음, 형식). `--judge-threshold <N>` — CI 게이트: 평균이 임계값 미만이면 명령 실패. 심사 응답은 동일한 미디에이션 EOF 복구로 읽는다. 미완료 시나리오는 정직하게 건너뛴다.
 
 **웨이브 B: 관측가능성** (0.39.0): `berimor otlp <run> --endpoint <url>` — 프로세스 실행을 OTLP/HTTP JSON 트레이스로 낸다: 실행 루트 스팬, 그래프 노드별 스팬, LLM 호출 스팬(지연 + 토큰을 속성으로), human_gate(응답/타임아웃까지 구간), 자유 루프의 도구 호출. traceId/spanId는 결정적(재납출 멱등). Jaeger·Grafana Tempo 컬렉터(포트 4318)와 Langfuse가 수용 — 단일 OTLP, 전용 익스포터 불필요; 인증 헤더는 `--header 'Name: value'`.

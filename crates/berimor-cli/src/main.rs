@@ -32,6 +32,8 @@ mod chat_ui;
 mod config;
 mod daemon;
 mod ext_cmd;
+mod ghapp;
+mod ghapp_serve;
 mod i18n;
 mod landlock;
 mod llm_cache;

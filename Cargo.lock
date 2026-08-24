@@ -275,7 +275,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "berimor-actors"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-capability",
  "berimor-storage",
@@ -290,7 +290,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-capability"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-types",
  "regorus",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-cli"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "base64 0.22.1",
  "berimor-capability",
@@ -323,6 +323,9 @@ dependencies = [
  "dirs",
  "getrandom 0.3.4",
  "globset",
+ "hex",
+ "hmac 0.12.1",
+ "jsonwebtoken",
  "libc",
  "ratatui",
  "regex",
@@ -337,13 +340,14 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "toml 1.1.4+spec-1.1.0",
+ "ureq",
  "walkdir",
  "x509-cert",
 ]
 
 [[package]]
 name = "berimor-context-engine"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-memory",
  "berimor-secrets",
@@ -355,7 +359,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-eval"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-mediation",
  "berimor-memory",
@@ -367,7 +371,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-executors"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-capability",
  "berimor-context-engine",
@@ -391,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-mediation"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-types",
  "schemars 1.2.2",
@@ -403,7 +407,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-memory"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-mediation",
  "berimor-secrets",
@@ -420,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-model-pool"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-capability",
  "berimor-secrets",
@@ -434,7 +438,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-process-engine"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-storage",
  "berimor-types",
@@ -447,7 +451,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-secrets"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-mediation",
  "serde",
@@ -456,7 +460,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-storage"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-types",
  "reqwest 0.12.28",
@@ -468,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-tool-runtime"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "berimor-capability",
  "berimor-types",
@@ -480,7 +484,7 @@ dependencies = [
 
 [[package]]
 name = "berimor-types"
-version = "0.42.0"
+version = "0.43.0"
 dependencies = [
  "schemars 1.2.2",
  "serde",
@@ -2951,11 +2955,20 @@ checksum = "eba32bfb4ffdeaca3e34431072faf01745c9b26d25504aa7a6cf5684334fc4fc"
 dependencies = [
  "aws-lc-rs",
  "base64 0.22.1",
+ "ed25519-dalek",
  "getrandom 0.2.17",
+ "hmac 0.12.1",
  "js-sys",
+ "p256",
+ "p384",
+ "pem",
+ "rand 0.8.7",
+ "rsa",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "signature 2.2.0",
+ "simple_asn1",
  "zeroize",
 ]
 
@@ -5969,6 +5982,18 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "simple_asn1"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
+dependencies = [
+ "num-bigint 0.4.8",
+ "num-traits",
+ "thiserror 2.0.19",
+ "time",
+]
 
 [[package]]
 name = "siphasher"

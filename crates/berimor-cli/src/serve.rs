@@ -97,11 +97,13 @@ fn serve_loop(listener: TcpListener, config: &Config, token: &str) {
     }
 }
 
-struct Request {
-    method: String,
-    path: String,
-    authorization: Option<String>,
-    body: Vec<u8>,
+pub(crate) struct Request {
+    pub(crate) method: String,
+    pub(crate) path: String,
+    pub(crate) authorization: Option<String>,
+    pub(crate) x_github_event: Option<String>,
+    pub(crate) x_hub_signature: Option<String>,
+    pub(crate) body: Vec<u8>,
 }
 
 /// Разбор запроса. `Err` — соединение нечитаемо (клиент оборвал связь и
@@ -118,6 +120,8 @@ fn read_request(stream: &TcpStream) -> Result<Request, String> {
 
     let mut content_length = 0usize;
     let mut authorization: Option<String> = None;
+    let mut x_github_event: Option<String> = None;
+    let mut x_hub_signature: Option<String> = None;
     loop {
         let mut line = String::new();
         reader.read_line(&mut line).map_err(|e| e.to_string())?;
@@ -131,6 +135,10 @@ fn read_request(stream: &TcpStream) -> Result<Request, String> {
                 content_length = value.parse().unwrap_or(0);
             } else if key.eq_ignore_ascii_case("authorization") {
                 authorization = Some(value);
+            } else if key.eq_ignore_ascii_case("x-github-event") {
+                x_github_event = Some(value);
+            } else if key.eq_ignore_ascii_case("x-hub-signature-256") {
+                x_hub_signature = Some(value);
             }
         }
     }
@@ -141,11 +149,13 @@ fn read_request(stream: &TcpStream) -> Result<Request, String> {
         method,
         path,
         authorization,
+        x_github_event,
+        x_hub_signature,
         body,
     })
 }
 
-fn write_json(stream: &mut TcpStream, status: u16, body: &Value) {
+pub(crate) fn write_json(stream: &mut TcpStream, status: u16, body: &Value) {
     let text = body.to_string();
     let status_line = match status {
         200 => "200 OK",
@@ -166,6 +176,11 @@ fn handle_connection(mut stream: TcpStream, config: &Config, token: &str) {
         Ok(r) => r,
         Err(_) => return,
     };
+    // Вебхуки GitHub — ДО bearer: у GitHub нет нашего токена, его
+    // аутентификация — HMAC-подпись тела (волна F, ghapp.rs).
+    if request.method == "POST" && request.path == "/webhooks/github" {
+        return crate::ghapp_serve::handle_github_webhook(&mut stream, config, &request);
+    }
     // Аутентификация — ДО любой другой обработки, одинаково для всех
     // маршрутов (I2: нет исключения вроде «/health без токена» — меньше
     // мест, которые можно забыть защитить). Сравнение заголовка целиком

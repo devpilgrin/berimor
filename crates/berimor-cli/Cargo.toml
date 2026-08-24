@@ -42,6 +42,10 @@ thiserror.workspace = true
 # OAuth subscription login (ADR-0027, ROADMAP §20.25): PKCE S256 + state.
 # Все три уже в Cargo.lock транзитивно — новых внешних зависимостей нет.
 sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto", "use_pem"] }
+ureq = { version = "3", default-features = false, features = ["json", "rustls-webpki-roots"] }
 base64 = "0.22"
 getrandom = "0.3"
 # Волны встроенных инструментов A/B/C (docs/rnd/builtin-tools-waves-spec.md):
