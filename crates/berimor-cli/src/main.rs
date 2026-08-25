@@ -10,6 +10,7 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+mod acp;
 mod agent_dispatch;
 mod agents;
 mod builtin_dispatch;
@@ -210,6 +211,9 @@ enum Command {
         /// Идентификатор инстанса.
         instance: String,
     },
+    /// ACP-сервер по stdio: berimor как исполнительный контур для
+    /// редакторов (Zed и совместимые) (волна G, 0.44.0).
+    Acp,
     /// Экспорт прогона в OTLP/HTTP (Jaeger/Tempo/Langfuse) — волна B.
     Otlp {
         /// Идентификатор инстанса.
@@ -636,6 +640,12 @@ fn main() -> ExitCode {
         }
         Command::Cost { instance } => {
             if let Err(err) = observe::cost(&resolved_config, &instance) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Command::Acp => {
+            if let Err(err) = acp::serve(&resolved_config) {
                 eprintln!("[berimor] {err}");
                 return ExitCode::FAILURE;
             }

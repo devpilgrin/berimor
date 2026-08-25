@@ -181,6 +181,26 @@ impl SqliteEventLog {
 
     /// In-memory журнал — для тестов и для Milestone 0 (`docs/ROADMAP.md` §3).
     /// WAL для `:memory:` не имеет смысла (нет файла) — не включается.
+    /// Все известные идентификаторы инстансов (DISTINCT по журналу) —
+    /// ACP-адаптер (волна G) находит новый прогон по дельте списка.
+    pub fn list_instance_ids(&self) -> Result<Vec<String>, StorageError> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| StorageError::Unavailable("journal lock".to_string()))?;
+        let mut stmt = conn
+            .prepare("SELECT process_instance_id, MIN(seq) FROM events GROUP BY process_instance_id ORDER BY MIN(seq)")
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(row.map_err(|err| StorageError::Unavailable(err.to_string()))?);
+        }
+        Ok(ids)
+    }
+
     pub fn open_in_memory() -> Result<Self, StorageError> {
         register_vec_extension();
         let conn = Connection::open_in_memory()?;

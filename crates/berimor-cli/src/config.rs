@@ -124,6 +124,13 @@ fn default_ghapp_secret_env() -> String {
     "BERIMOR_GHAPP_SECRET".to_string()
 }
 
+/// ACP-адаптер (волна G, 0.44.0): `berimor acp` для редакторов.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AcpConfig {
+    /// Путь к YAML процесса-обработчика prompt'ов из редактора.
+    pub process: Option<String>,
+}
+
 /// Rego-правила capability-гейта (волна D, 0.41.0).
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct GateConfig {
@@ -465,6 +472,9 @@ pub struct Config {
     /// GitHub App: вебхуки в serve (волна F, 0.43.0). None — выключено.
     #[serde(default)]
     pub github_app: Option<GithubAppConfig>,
+    /// ACP-адаптер для редакторов (волна G, 0.44.0).
+    #[serde(default)]
+    pub acp: AcpConfig,
     #[serde(default)]
     pub serve: ServeConfig,
     /// Интерфейс (2026-08-09): `[ui] locale = "en"` — локаль TUI из 8
@@ -497,6 +507,7 @@ impl Default for Config {
             sandbox: SandboxConfig::default(),
             gate: GateConfig::default(),
             github_app: None,
+            acp: AcpConfig::default(),
             serve: ServeConfig::default(),
             ui: UiConfig::default(),
         }
@@ -603,6 +614,7 @@ pub struct PartialConfig {
     pub sandbox: Option<SandboxConfig>,
     pub gate: Option<GateConfig>,
     pub github_app: Option<GithubAppConfig>,
+    pub acp: Option<AcpConfig>,
     pub serve: Option<ServeConfig>,
     pub ui: Option<UiConfig>,
 }
@@ -820,6 +832,7 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
         sandbox: local.sandbox.or(global.sandbox).unwrap_or_default(),
         gate: local.gate.or(global.gate).unwrap_or_default(),
         github_app: local.github_app.or(global.github_app),
+        acp: local.acp.or(global.acp).unwrap_or_default(),
         // `[ui]` — как `[memory]`: секция заменяется целиком, локальный
         // слой сильнее (осознанное упрощение, задокументировано здесь).
         ui: local.ui.or(global.ui).unwrap_or(defaults.ui),

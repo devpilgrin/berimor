@@ -39,6 +39,22 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
 
+/// Печать хода прогона: в ACP-режиме stdout — канал протокола, поэтому
+/// весь человекочитаемый вывод уходит в stderr (волна G).
+macro_rules! outln {
+    ($($arg:tt)*) => {
+        if ACP_QUIET.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!($($arg)*);
+        } else {
+            println!($($arg)*);
+        }
+    };
+}
+
+/// ACP-режим (волна G): stdout принадлежит NDJSON JSON-RPC.
+pub(crate) static ACP_QUIET: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
     #[error("не удалось прочитать процесс {path}: {reason}")]
@@ -130,7 +146,7 @@ pub fn run(
         Some(id) => {
             let id = ProcessInstanceId(id.clone());
             let recovered = engine::recover(&storage, process, id)?;
-            println!(
+            outln!(
                 "[berimor] восстановлен инстанс {} (шаг: {:?})",
                 recovered.id().0,
                 recovered.current_step()
@@ -153,7 +169,7 @@ pub fn run(
             let input_json = bundle.masker.mask_value(&input_json);
             let id = ProcessInstanceId(new_instance_id(&process_text));
             let instance = engine::instantiate(&storage, id, process, input_json)?;
-            println!("[berimor] создан инстанс {}", instance.id().0);
+            outln!("[berimor] создан инстанс {}", instance.id().0);
             instance
         }
     };
@@ -287,8 +303,8 @@ pub fn run(
     loop {
         match engine::run(&storage, &executor, &mut instance)? {
             engine::RunOutcome::Finished => {
-                println!("[berimor] процесс завершён");
-                println!(
+                outln!("[berimor] процесс завершён");
+                outln!(
                     "{}",
                     serde_json::to_string_pretty(instance.state()).expect("состояние сериализуемо")
                 );
@@ -314,7 +330,7 @@ pub fn run(
                 // событии движка — шаблон (интерполяция — слой контекста);
                 // человеку показываем интерполированную, как и раньше.
                 if !ask_human(&step_id, &resolved_reason) {
-                    println!(
+                    outln!(
                         "[berimor] остановлено на human_gate '{step_id}'; возобновить: berimor run {process_path} --resume {}",
                         instance.id().0
                     );
