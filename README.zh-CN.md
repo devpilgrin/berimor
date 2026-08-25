@@ -142,6 +142,8 @@ berimor 的主要“实战”模式是**流程**：一个以图形式执行的�
 
 **H 波：沙箱中的网络**（0.45.0）：`[sandbox] network = "restrict"` + `allow_connect_ports`/`allow_bind_ports`——terminal.exec/terminal.start 子进程获得 Landlock 网络规则（ABI 4，内核 6.7+）：TCP connect/bind 仅允许列表中的端口，其余由内核拒绝（EACCES）。旧内核：auto——警告并跳过网络规则，require——fail-closed。默认 `off`——行为不变。
 
+**I 波：联邦日志**（0.46.0）：`berimor journal export <instance> --out <file>` / `import <file>`——以带 sha256 指纹的可移植 JSON 在机器间迁移运行记录。导入校验哈希（损坏文件被拒绝），id 冲突时重命名（`-imported-N`）——无法向已有实例追加写入；事件时间戳保留原值而非导入时刻。
+
 **C 波：LLM-as-a-Judge** (0.40.0)：`berimor eval <dir> --judge`——黄金集运行后，由强提供方（failover 顺序中的第一个）为每个已完成场景的最终状态打分：1-5 分及理由以 `judge_score` 事件写入场景日志并输出。评分标准来自输入旁的 `<场景>.judge.md`（否则使用默认准则：完整性、准确性、无虚构事实、契约形式）。`--judge-threshold <N>`——CI 门限：平均分低于阈值即命令失败。评审的回答经由同样的调解 EOF 修复解析；未完成的场景（门控、错误）会被诚实地跳过。
 
 **B 波：可观测性** (0.39.0)：`berimor otlp <run> --endpoint <url>`——以 OTLP/HTTP JSON 将一次流程运行导出为链路追踪：运行根 span、每个图节点一个 span、LLM 调用 span（延迟 + token 作为属性）、human_gate（到答复/超时的区间）、自由循环的工具调用。traceId/spanId 确定性生成（重复导出幂等）。Jaeger 与 Grafana Tempo 收集器（4318 端口）及 Langfuse 均可接收——统一 OTLP，无需专用导出器；认证头用 `--header 'Name: value'`。

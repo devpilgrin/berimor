@@ -201,6 +201,43 @@ impl SqliteEventLog {
         Ok(ids)
     }
 
+    /// Импорт перенесённого журнала (волна I, 0.46.0): как append, но
+    /// сохраняет исходный ts_ms — аудит-след чужой машины носит её время.
+    pub fn append_preserved(&self, event: Event) -> Result<EventSeq, StorageError> {
+        let conn = self.lock()?;
+        let kind_json = serde_json::to_string(&event.kind)?;
+        let payload_json = serde_json::to_string(&event.payload)?;
+        conn.execute(
+            "INSERT INTO events (process_instance_id, seq, process_version, kind, payload, ts_ms)
+             SELECT ?1, COALESCE(MAX(seq), 0) + 1, ?2, ?3, ?4, ?5
+             FROM events WHERE process_instance_id = ?1",
+            params![
+                event.process_instance.0,
+                event.process_version,
+                kind_json,
+                payload_json,
+                event.ts_ms
+            ],
+        )?;
+        let seq: i64 = conn.query_row(
+            "SELECT MAX(seq) FROM events WHERE process_instance_id = ?1",
+            params![event.process_instance.0],
+            |row| row.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO events_fts (process_instance_id, seq, ts_ms, kind_text, payload_text)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                event.process_instance.0,
+                seq,
+                event.ts_ms,
+                kind_json,
+                payload_json
+            ],
+        )?;
+        Ok(EventSeq(seq as u64))
+    }
+
     pub fn open_in_memory() -> Result<Self, StorageError> {
         register_vec_extension();
         let conn = Connection::open_in_memory()?;

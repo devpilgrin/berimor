@@ -36,6 +36,7 @@ mod ext_cmd;
 mod ghapp;
 mod ghapp_serve;
 mod i18n;
+mod journal_xfer;
 mod landlock;
 mod llm_cache;
 mod mcp_dispatch;
@@ -214,6 +215,11 @@ enum Command {
     /// ACP-сервер по stdio: berimor как исполнительный контур для
     /// редакторов (Zed и совместимые) (волна G, 0.44.0).
     Acp,
+    /// Перенос журнала между машинами (волна I, 0.46.0).
+    Journal {
+        #[command(subcommand)]
+        action: JournalAction,
+    },
     /// Экспорт прогона в OTLP/HTTP (Jaeger/Tempo/Langfuse) — волна B.
     Otlp {
         /// Идентификатор инстанса.
@@ -235,6 +241,24 @@ enum Command {
         /// CI-гейт судьи: средний балл ниже порога = ошибка команды.
         #[arg(long)]
         judge_threshold: Option<f64>,
+    },
+}
+
+/// Подкоманды `berimor journal` (волна I).
+#[derive(Subcommand)]
+enum JournalAction {
+    /// Экспорт прогона в переносимый JSON (со свёрткой sha256).
+    Export {
+        /// Идентификатор инстанса.
+        instance: String,
+        /// Файл назначения.
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Импорт конверта в локальный журнал (коллизия id → суффикс).
+    Import {
+        /// Файл конверта.
+        file: PathBuf,
     },
 }
 
@@ -640,6 +664,18 @@ fn main() -> ExitCode {
         }
         Command::Cost { instance } => {
             if let Err(err) = observe::cost(&resolved_config, &instance) {
+                eprintln!("[berimor] {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+        Command::Journal { action } => {
+            let result = match action {
+                JournalAction::Export { instance, out } => {
+                    journal_xfer::export(&resolved_config, &instance, &out)
+                }
+                JournalAction::Import { file } => journal_xfer::import(&resolved_config, &file),
+            };
+            if let Err(err) = result {
                 eprintln!("[berimor] {err}");
                 return ExitCode::FAILURE;
             }
