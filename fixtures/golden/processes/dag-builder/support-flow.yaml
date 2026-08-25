@@ -1,0 +1,23 @@
+process: support-flow
+version: 1
+steps:
+  - id: classify
+    type: llm_structured
+    contract: Classification
+  - id: route
+    type: branch
+    on: steps.classify.category
+    cases:
+      "legal": escalate
+      "billing": reply
+  - id: escalate
+    type: human_gate
+    reason: "юридическая тема — решение человека"
+  - id: reply
+    type: agent_step
+    contract: SupportReply
+    max_turns: 8
+limits:
+  max_steps: 20
+  timeout: 15m
+  token_budget: 100k

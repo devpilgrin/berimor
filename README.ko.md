@@ -146,6 +146,8 @@ berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 
 
 **웨이브 K: TUI 스크롤** (0.48.0): 저널 스크롤바 썸 드래그가 버튼을 놓을 때까지 포인터를 따라감 — 좁은 트랙 열을 벗어나도 (이전에는 드래그가 끊겼음). 트랙 클릭은 비례 점프, ▲/▼는 단계; 드래그 좌표는 트랙에 클램프. (웨이브 J — 0.47.0 — 카탈로그 전용: berimor-skills의 `security-pentest-ru` 스킬, 코어 릴리스 없음.)
 
+**웨이브 M: 비주얼 DAG 빌더** (프론트엔드, 코어 릴리스 없음): `tools/dag-builder.html` — 단일 파일 프로세스 에디터(모든 타입의 스텝 노드, seq/branch/parallel 엣지, StepKind 준수 필드 폼, 그래프 검증, berimor YAML 익스포트, JSON 프로젝트). 포맷 샘플 `fixtures/golden/processes/dag-builder/`는 프로덕션 바이너리로 파싱됨.
+
 **웨이브 C: LLM-as-a-Judge** (0.40.0): `berimor eval <dir> --judge` — 골든 세트 실행 후 강한 프로바이더(failover 순서의 첫 번째)가 완료된 각 시나리오의 최종 상태를 채점: 1-5점과 근거가 `judge_score` 이벤트로 시나리오 저널에 기록되고 출력된다. 기준은 입력 옆의 `<시나리오>.judge.md`(없으면 기본 루브릭: 완전성, 정확성, 날조 없음, 형식). `--judge-threshold <N>` — CI 게이트: 평균이 임계값 미만이면 명령 실패. 심사 응답은 동일한 미디에이션 EOF 복구로 읽는다. 미완료 시나리오는 정직하게 건너뛴다.
 
 **웨이브 B: 관측가능성** (0.39.0): `berimor otlp <run> --endpoint <url>` — 프로세스 실행을 OTLP/HTTP JSON 트레이스로 낸다: 실행 루트 스팬, 그래프 노드별 스팬, LLM 호출 스팬(지연 + 토큰을 속성으로), human_gate(응답/타임아웃까지 구간), 자유 루프의 도구 호출. traceId/spanId는 결정적(재납출 멱등). Jaeger·Grafana Tempo 컬렉터(포트 4318)와 Langfuse가 수용 — 단일 OTLP, 전용 익스포터 불필요; 인증 헤더는 `--header 'Name: value'`.

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>berimor DAG-builder — конструктор процессов</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#c9d1d9; --acc:#58a6ff; --warn:#f0883e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:13px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--fg); height:100vh; display:flex; flex-direction:column; }
+  header { padding:8px 14px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; gap:10px; align-items:center; }
+  header b { color:var(--acc); }
+  header .sp { flex:1; }
+  button { background:#21262d; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; }
+  button:hover { border-color:var(--acc); }
+  main { flex:1; display:flex; min-height:0; }
+  #palette { width:150px; background:var(--panel); border-right:1px solid var(--line); padding:8px; overflow:auto; }
+  #palette div { padding:6px 8px; margin-bottom:6px; border:1px solid var(--line); border-radius:6px; cursor:pointer; text-align:center; }
+  #palette div:hover { border-color:var(--acc); color:var(--acc); }
+  #canvas { flex:1; position:relative; overflow:auto; background:
+      radial-gradient(circle, #21262d 1px, transparent 1px) 0 0/24px 24px; }
+  svg#edges { position:absolute; inset:0; pointer-events:none; width:4000px; height:4000px; }
+  svg#edges path { pointer-events:stroke; cursor:pointer; }
+  .node { position:absolute; width:170px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px; cursor:grab; user-select:none; }
+  .node.sel { border-color:var(--acc); box-shadow:0 0 0 1px var(--acc); }
+  .node .t { font-size:11px; color:var(--warn); text-transform:uppercase; letter-spacing:.5px; }
+  .node .i { font-weight:600; }
+  .node .ports { display:flex; justify-content:space-between; margin-top:6px; font-size:11px; }
+  .port { padding:2px 6px; border:1px dashed var(--line); border-radius:4px; cursor:crosshair; }
+  .port.on { border-color:var(--warn); color:var(--warn); }
+  #side { width:300px; background:var(--panel); border-left:1px solid var(--line); padding:10px; overflow:auto; }
+  #side label { display:block; margin:8px 0 2px; color:#8b949e; font-size:12px; }
+  #side input, #side select, #side textarea { width:100%; background:#0d1117; color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:5px 7px; font:inherit; }
+  #side textarea { min-height:70px; resize:vertical; }
+  .case { display:flex; gap:6px; margin-top:4px; }
+  #yaml { position:fixed; right:0; bottom:0; width:520px; max-height:60vh; background:#010409; border:1px solid var(--line); border-radius:8px 0 0 0; display:none; flex-direction:column; }
+  #yaml pre { overflow:auto; margin:8px; flex:1; font:12px/1.5 ui-monospace, monospace; white-space:pre; }
+  #errors { color:#f85149; padding:0 10px; white-space:pre-wrap; }
+  .hint { color:#8b949e; font-size:12px; padding:6px 10px; }
+</style>
+</head>
+<body>
+<header>
+  <b>berimor DAG-builder</b>
+  <span class="hint">перетаскивайте узлы; «связать» — клик по порту источника, затем по узлу цели</span>
+  <span class="sp"></span>
+  <button id="bValidate">Проверить</button>
+  <button id="bExport">Экспорт YAML</button>
+  <button id="bSave">Сохранить проект</button>
+  <button id="bLoad">Загрузить проект</button>
+  <button id="bClear">Очистить</button>
+</header>
+<main>
+  <div id="palette"></div>
+  <div id="canvas"><svg id="edges"></svg></div>
+  <div id="side"><div class="hint">Выберите узел или редактируйте процесс ниже.</div>
+    <label>process</label><input id="pName" value="my-process">
+    <label>limits: max_steps</label><input id="lSteps" type="number" value="20">
+    <label>limits: timeout</label><input id="lTimeout" value="15m">
+    <label>limits: token_budget</label><input id="lTokens" value="100k">
+    <div id="nodeForm"></div>
+    <div id="errors"></div>
+  </div>
+</main>
+<div id="yaml"><pre id="yamlText"></pre><div style="padding:8px"><button id="bCopy">Скопировать</button> <button id="bClose">Закрыть</button></div></div>
+<script>
+"use strict";
+// Типы шагов berimor и их редактируемые поля (см. parser.rs процесс-движка).
+// Точно по StepKind (crates/berimor-types/src/step.rs) — иначе парсер
+// отвергнет неизвестное поле (deny-unknown).
+const STEP_TYPES = {
+  tool:           { fields: ["tool", "args"], hint: "вызов инструмента (terminal.exec, files.read…)" },
+  llm_structured: { fields: ["contract", "model_tier"], hint: "модель по контракту" },
+  agent_step:     { fields: ["contract", "max_turns", "self_critique", "verify_actions"], hint: "свободный цикл с контрактом результата" },
+  codeact:        { fields: ["contract", "tools", "model_tier"], hint: "WASM-программа модели по контракту" },
+  human_gate:     { fields: ["reason", "timeout", "on_timeout"], hint: "пауза до решения человека" },
+  branch:         { fields: ["on", "cases"], hint: "маршрут по значению из состояния (код)" },
+  parallel:       { fields: ["branches"], hint: "параллельные ветви (join по факту)" },
+  loop:           { fields: ["condition"], hint: "цикл по условию состояния" },
+  checkpoint:     { fields: [], hint: "точка фиксации состояния" },
+};
+const FIELD_META = {
+  tool: {label: "tool (имя инструмента)"},
+  args: {label: "args (YAML-фрагмент)", area: true},
+  contract: {label: "contract (имя контракта)"},
+  model_tier: {label: "model_tier (any|weak|medium|strong)"},
+  tools: {label: "tools (стабы через запятую)"},
+  max_turns: {label: "max_turns", number: true},
+  self_critique: {label: "self_critique (true|false)"},
+  verify_actions: {label: "verify_actions (true|false)"},
+  reason: {label: "reason (почему спрашиваем человека)", area: true},
+  timeout: {label: "timeout (напр. 10m; пусто — ждать всегда)"},
+  on_timeout: {label: "on_timeout (fail|default_branch|escalate)"},
+  on: {label: "on (выражение состояния, напр. steps.classify.category)"},
+  cases: {label: "cases (по строке: значение: id-цели)", area: true},
+  branches: {label: "branches (id шагов через запятую)"},
+  condition: {label: "condition (условие продолжения)"},
+};
+
+let nodes = [];   // {id, type, x, y, props:{}}
+let edges = [];   // {from, to, kind} kind: seq|branch|parallel
+let seq = 1;
+let selected = null;
+let linking = null; // {from, kind}
+
+const canvas = document.getElementById("canvas");
+const svg = document.getElementById("edges");
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(tag === "path" || tag === "svg" ? "http://www.w3.org/2000/svg" : "http://www.w3.org/1999/xhtml", tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+// Палитра
+const pal = document.getElementById("palette");
+for (const t of Object.keys(STEP_TYPES)) {
+  const d = document.createElement("div");
+  d.textContent = t;
+  d.title = STEP_TYPES[t].hint;
+  d.onclick = () => addNode(t);
+  pal.appendChild(d);
+}
+
+function addNode(type) {
+  const id = type.replace(/[^a-z]/g, "") + "_" + (seq++);
+  nodes.push({ id, type, x: 60 + nodes.length * 30, y: 60 + nodes.length * 30, props: {} });
+  render();
+}
+
+function render() {
+  svg.innerHTML = "";
+  canvas.querySelectorAll(".node").forEach(n => n.remove());
+  for (const n of nodes) {
+    const d = document.createElement("div");
+    d.className = "node" + (selected === n ? " sel" : "");
+    d.style.left = n.x + "px"; d.style.top = n.y + "px";
+    d.innerHTML = `<div class="t">${n.type}</div><div class="i">${n.id}</div>
+      <div class="ports"><span class="port out ${linking && linking.from === n ? "on" : ""}">→ связать</span><span class="port del">✕</span></div>`;
+    d.onmousedown = ev => startDrag(ev, n, d);
+    d.onclick = ev => { ev.stopPropagation(); onNodeClick(n); };
+    d.querySelector(".out").onclick = ev => { ev.stopPropagation(); linking = linking ? null : { from: n }; render(); };
+    d.querySelector(".del").onclick = ev => { ev.stopPropagation();
+      nodes = nodes.filter(x => x !== n); edges = edges.filter(e => e.from !== n && e.to !== n);
+      if (selected === n) selected = null; render(); };
+    canvas.appendChild(d);
+  }
+  for (const e of edges) drawEdge(e);
+  renderSide();
+}
+
+function drawEdge(e) {
+  const x1 = e.from.x + 170, y1 = e.from.y + 30, x2 = e.to.x, y2 = e.to.y + 30;
+  const p = el("path", {
+    d: `M${x1},${y1} C${x1 + 60},${y1} ${x2 - 60},${y2} ${x2},${y2}`,
+    stroke: e.kind === "branch" ? "#f0883e" : e.kind === "parallel" ? "#a371f7" : "#58a6ff",
+    "stroke-width": 2, fill: "none", "marker-end": "url(#arr)"
+  }, svg);
+  p.ondblclick = () => { edges = edges.filter(x => x !== e); render(); };
+  p.title = `${e.from.id} → ${e.to.id} (${e.kind}) — двойной клик удаляет`;
+}
+// маркер стрелки
+const defs = el("defs", {}, svg);
+const marker = el("marker", { id: "arr", markerWidth: 8, markerHeight: 8, refX: 7, refY: 4, orient: "auto" }, defs);
+el("path", { d: "M0,0 L8,4 L0,8 z", fill: "#8b949e" }, marker);
+
+function onNodeClick(n) {
+  if (linking) {
+    if (linking.from !== n) {
+      const kind = linking.from.type === "branch" ? "branch"
+                 : linking.from.type === "parallel" ? "parallel" : "seq";
+      if (!edges.some(e => e.from === linking.from && e.to === n && e.kind === kind))
+        edges.push({ from: linking.from, to: n, kind });
+    }
+    linking = null;
+  } else {
+    selected = selected === n ? null : n;
+  }
+  render();
+}
+
+let drag = null;
+function startDrag(ev, n, d) {
+  if (ev.target.classList.contains("port")) return;
+  drag = { n, dx: ev.clientX - n.x, dy: ev.clientY - n.y };
+  ev.preventDefault();
+}
+document.onmousemove = ev => {
+  if (!drag) return;
+  drag.n.x = Math.max(0, ev.clientX - drag.dx);
+  drag.n.y = Math.max(0, ev.clientY - drag.dy);
+  render();
+};
+document.onmouseup = () => drag = null;
+
+// Боковая форма узла
+function renderSide() {
+  const f = document.getElementById("nodeForm");
+  f.innerHTML = "";
+  if (!selected) return;
+  const h = document.createElement("h3");
+  h.textContent = `${selected.type} · ${selected.id}`;
+  f.appendChild(h);
+  addField(f, selected, "id", "id", false);
+  for (const name of STEP_TYPES[selected.type].fields) {
+    const meta = FIELD_META[name] || { label: name };
+    addField(f, selected, name, meta.label, meta.area, meta.number);
+  }
+}
+function addField(f, node, key, label, area, number) {
+  const l = document.createElement("label"); l.textContent = label; f.appendChild(l);
+  const inp = document.createElement(area ? "textarea" : "input");
+  if (number) inp.type = "number";
+  inp.value = key === "id" ? node.id : (node.props[key] || "");
+  inp.oninput = () => {
+    if (key === "id") {
+      const old = node.id, nv = inp.value.replace(/[^\w-]/g, "_") || old;
+      node.id = nv;
+      document.querySelector("#side h3").textContent = `${node.type} · ${nv}`;
+      return;
+    }
+    node.props[key] = inp.value;
+  };
+  f.appendChild(inp);
+}
+
+// Валидация: дубли id, висячие ссылки, branch/parallel без целей.
+function validate() {
+  const errs = [];
+  const ids = new Set();
+  for (const n of nodes) {
+    if (ids.has(n.id)) errs.push(`дубль id '${n.id}'`);
+    ids.add(n.id);
+  }
+  for (const e of edges) if (!ids.has(e.to.id)) errs.push(`связь '${e.from.id}' → несуществующий '${e.to.id}'`);
+  for (const n of nodes) {
+    if (n.type === "branch" && !(n.props.cases || "").trim())
+      errs.push(`branch '${n.id}': cases не заданы`);
+    if (n.type === "parallel" && !(n.props.branches || "").trim())
+      errs.push(`parallel '${n.id}': branches пусты`);
+    if (n.type === "tool" && !(n.props.tool || "").trim())
+      errs.push(`tool '${n.id}': не указано имя инструмента`);
+    if (["llm_structured", "agent_step", "codeact"].includes(n.type) && !(n.props.contract || "").trim())
+      errs.push(`${n.type} '${n.id}': не указан контракт`);
+  }
+  return errs;
+}
+
+// Экспорт в berimor YAML. Порядок шагов — по координате y (сверху вниз),
+// seq-связи не отражаем: последовательность = порядок в списке.
+function exportYaml() {
+  const errs = validate();
+  document.getElementById("errors").textContent = errs.map(e => "✗ " + e).join("\n");
+  const ordered = [...nodes].sort((a, b) => a.y - b.y || a.x - b.x);
+  const L = [];
+  L.push(`process: ${document.getElementById("pName").value || "my-process"}`);
+  L.push("version: 1");
+  L.push("steps:");
+  for (const n of ordered) {
+    L.push(`  - id: ${n.id}`);
+    L.push(`    type: ${n.type}`);
+    const P = n.props;
+    const put = (k, v) => { if ((v || "").toString().trim() !== "") L.push(`    ${k}: ${v}`); };
+    if (n.type === "tool") {
+      put("tool", P.tool);
+      if ((P.args || "").trim()) {
+        L.push("    args:");
+        for (const line of P.args.trim().split("\n")) L.push("      " + line);
+      }
+    }
+    if (["llm_structured", "agent_step", "codeact"].includes(n.type)) put("contract", P.contract);
+    if (n.type === "agent_step") {
+      put("max_turns", P.max_turns || 8);
+      if ((P.self_critique || "").trim()) put("self_critique", (P.self_critique || "").trim());
+      if ((P.verify_actions || "").trim()) put("verify_actions", (P.verify_actions || "").trim());
+    }
+    if (n.type === "codeact" && (P.tools || "").trim())
+      L.push("    tools: [" + P.tools.split(",").map(s => s.trim()).filter(Boolean).join(", ") + "]");
+    if (["llm_structured", "codeact"].includes(n.type) && (P.model_tier || "").trim())
+      put("model_tier", P.model_tier);
+    if (n.type === "human_gate") {
+      put("reason", JSON.stringify((P.reason || "").trim()) || "\"решение человека\"");
+      put("timeout", P.timeout);
+      put("on_timeout", P.on_timeout);
+    }
+    if (n.type === "loop") put("condition", P.condition);
+    if (n.type === "branch") {
+      put("on", P.on);
+      const cases = (P.cases || "").split("\n").map(s => s.trim()).filter(s => s.includes(":"));
+      if (cases.length) {
+        L.push("    cases:");
+        for (const c of cases) {
+          const [v, target] = c.split(":").map(s => s.trim());
+          L.push(`      ${JSON.stringify(v)}: ${target}`);
+        }
+      }
+    }
+    if (n.type === "parallel") {
+      const br = (P.branches || "").split(",").map(s => s.trim()).filter(Boolean);
+      if (br.length) L.push("    branches: [" + br.join(", ") + "]");
+    }
+  }
+  L.push("limits:");
+  L.push(`  max_steps: ${document.getElementById("lSteps").value || 20}`);
+  L.push(`  timeout: ${document.getElementById("lTimeout").value || "15m"}`);
+  L.push(`  token_budget: ${document.getElementById("lTokens").value || "100k"}`);
+  return L.join("\n") + "\n";
+}
+
+document.getElementById("bValidate").onclick = () => {
+  const errs = validate();
+  document.getElementById("errors").textContent =
+    errs.length ? errs.map(e => "✗ " + e).join("\n") : "✓ граф согласован";
+};
+document.getElementById("bExport").onclick = () => {
+  document.getElementById("yamlText").textContent = exportYaml();
+  document.getElementById("yaml").style.display = "flex";
+};
+document.getElementById("bCopy").onclick = () =>
+  navigator.clipboard.writeText(document.getElementById("yamlText").textContent);
+document.getElementById("bClose").onclick = () =>
+  document.getElementById("yaml").style.display = "none";
+document.getElementById("bSave").onclick = () => {
+  const blob = new Blob([JSON.stringify({ nodes, edges: edges.map(e => ({ from: e.from.id, to: e.to.id, kind: e.kind })), proc: {
+    name: document.getElementById("pName").value,
+    steps: document.getElementById("lSteps").value,
+    timeout: document.getElementById("lTimeout").value,
+    tokens: document.getElementById("lTokens").value } }, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "berimor-process.json"; a.click();
+};
+document.getElementById("bLoad").onclick = () => {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = ".json";
+  inp.onchange = () => inp.files[0].text().then(t => {
+    const d = JSON.parse(t);
+    const byId = {};
+    nodes = d.nodes.map(n => { const m = { ...n }; byId[m.id] = m; return m; });
+    edges = d.edges.map(e => ({ from: byId[e.from], to: byId[e.to], kind: e.kind })).filter(e => e.from && e.to);
+    document.getElementById("pName").value = d.proc.name;
+    document.getElementById("lSteps").value = d.proc.steps;
+    document.getElementById("lTimeout").value = d.proc.timeout;
+    document.getElementById("lTokens").value = d.proc.tokens;
+    selected = null; linking = null; render();
+  });
+  inp.click();
+};
+document.getElementById("bClear").onclick = () => {
+  if (confirm("Очистить холст?")) { nodes = []; edges = []; selected = null; render(); }
+};
+render();
+</script>
+</body>
+</html>
