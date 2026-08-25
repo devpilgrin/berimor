@@ -149,7 +149,7 @@ fn default_gate_environment() -> String {
     "dev".to_string()
 }
 
-/// Песочница подпроцессов (0.36.0).
+/// Песочница подпроцессов (0.36.0); сеть — волна H (0.45.0).
 #[derive(Debug, Clone, Deserialize)]
 pub struct SandboxConfig {
     /// Landlock для terminal.exec/terminal.start: "auto" (по умолчанию)
@@ -157,6 +157,38 @@ pub struct SandboxConfig {
     /// команда не запускается; "off" — выключено.
     #[serde(default = "default_landlock_mode")]
     pub landlock: String,
+    /// Сеть в песочнице (волна H, 0.45.0): "off" (по умолчанию — сеть не
+    /// ограничивается) | "restrict" (только перечисленные TCP-порты;
+    /// требует Landlock ABI 4, ядро 6.7+).
+    #[serde(default = "default_network_mode")]
+    pub network: String,
+    /// Разрешённые исходящие порты при network = "restrict".
+    #[serde(default)]
+    pub allow_connect_ports: Vec<u16>,
+    /// Разрешённые порты прослушивания при network = "restrict".
+    #[serde(default)]
+    pub allow_bind_ports: Vec<u16>,
+}
+
+fn default_network_mode() -> String {
+    "off".to_string()
+}
+
+impl SandboxConfig {
+    /// Разбор сетевой политики в тип landlock (ошибка значения — на
+    /// старте, как прочие поля конфига).
+    pub fn net_policy(&self) -> Result<crate::landlock::NetPolicy, String> {
+        match self.network.as_str() {
+            "off" => Ok(crate::landlock::NetPolicy::Off),
+            "restrict" => Ok(crate::landlock::NetPolicy::Restrict {
+                allow_connect: self.allow_connect_ports.clone(),
+                allow_bind: self.allow_bind_ports.clone(),
+            }),
+            other => Err(format!(
+                "sandbox.network: допустимо off|restrict, получено '{other}'"
+            )),
+        }
+    }
 }
 
 fn default_landlock_mode() -> String {
@@ -167,6 +199,9 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
             landlock: default_landlock_mode(),
+            network: default_network_mode(),
+            allow_connect_ports: Vec::new(),
+            allow_bind_ports: Vec::new(),
         }
     }
 }

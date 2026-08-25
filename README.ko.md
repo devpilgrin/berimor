@@ -140,6 +140,8 @@ berimor의 주요 '실전' 모드는 **프로세스**입니다 — 그래프로 
 
 **웨이브 G: ACP — 에디터 속 berimor** (0.44.0): `berimor acp`가 stdio로 Agent Client Protocol을 구사 — Zed 및 호환 에디터가 berimor를 외부 에이전트로 연결. 세션은 `[acp] process`의 프로세스 실행: prompt가 프로세스를 실행(입력 `{text}`), 저널 이벤트가 에디터로 스트리밍(툴 턴, 게이트, 미디에이션 거부), 완료 시 응답; cancel은 대기를 중단하고 실행은 저널에서 완주. ACP 모드에서 프로세스 출력은 stderr로 — stdout은 프로토콜의 것.
 
+**웨이브 H: 샌드박스 내 네트워크** (0.45.0): `[sandbox] network = "restrict"` + `allow_connect_ports`/`allow_bind_ports` — terminal.exec/terminal.start 서브프로세스에 Landlock 네트워크 규칙 적용(ABI 4, 커널 6.7+): TCP connect/bind는 나열된 포트만 허용, 나머지는 커널이 거부(EACCES). 구형 커널: auto는 경고 후 생략, require는 fail-closed. 기본값 `off` — 동작 변경 없음.
+
 **웨이브 C: LLM-as-a-Judge** (0.40.0): `berimor eval <dir> --judge` — 골든 세트 실행 후 강한 프로바이더(failover 순서의 첫 번째)가 완료된 각 시나리오의 최종 상태를 채점: 1-5점과 근거가 `judge_score` 이벤트로 시나리오 저널에 기록되고 출력된다. 기준은 입력 옆의 `<시나리오>.judge.md`(없으면 기본 루브릭: 완전성, 정확성, 날조 없음, 형식). `--judge-threshold <N>` — CI 게이트: 평균이 임계값 미만이면 명령 실패. 심사 응답은 동일한 미디에이션 EOF 복구로 읽는다. 미완료 시나리오는 정직하게 건너뛴다.
 
 **웨이브 B: 관측가능성** (0.39.0): `berimor otlp <run> --endpoint <url>` — 프로세스 실행을 OTLP/HTTP JSON 트레이스로 낸다: 실행 루트 스팬, 그래프 노드별 스팬, LLM 호출 스팬(지연 + 토큰을 속성으로), human_gate(응답/타임아웃까지 구간), 자유 루프의 도구 호출. traceId/spanId는 결정적(재납출 멱등). Jaeger·Grafana Tempo 컬렉터(포트 4318)와 Langfuse가 수용 — 단일 OTLP, 전용 익스포터 불필요; 인증 헤더는 `--header 'Name: value'`.

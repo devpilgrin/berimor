@@ -118,6 +118,8 @@ pub struct BuiltinToolDispatch {
     /// Landlock-песочница подпроцессов (0.36.0): режим из `[sandbox]
     /// landlock`. Устанавливается после конструкции из конфига.
     landlock: std::sync::Mutex<crate::landlock::LandlockMode>,
+    /// Сетевая политика песочницы (волна H, 0.45.0).
+    net: std::sync::Mutex<crate::landlock::NetPolicy>,
 }
 
 struct SessionCtx {
@@ -135,6 +137,7 @@ impl BuiltinToolDispatch {
             bg: crate::builtin_terminal_bg::BgRegistry::default(),
             session: std::sync::Mutex::new(None),
             landlock: std::sync::Mutex::new(crate::landlock::LandlockMode::Auto),
+            net: std::sync::Mutex::new(crate::landlock::NetPolicy::Off),
         }
     }
 
@@ -147,10 +150,17 @@ impl BuiltinToolDispatch {
         Ok(())
     }
 
+    /// Сетевая политика песочницы (волна H, 0.45.0) — из конфига.
+    pub fn set_net(&self, net: crate::landlock::NetPolicy) {
+        self.bg.set_net(net.clone());
+        *self.net.lock().expect("net lock") = net;
+    }
+
     /// Обвязка команды песочницей (0.36.0) — общая логика в landlock.rs.
     fn confine_command(&self, command: &mut std::process::Command) -> Result<(), String> {
         let mode = *self.landlock.lock().expect("landlock lock");
-        crate::landlock::apply(command, &self.workspace_root, mode)
+        let net = self.net.lock().expect("net lock").clone();
+        crate::landlock::apply(command, &self.workspace_root, mode, &net)
     }
 
     /// Прикрепить сессионный контекст (§20.22 v2) — после сборки бандла.
@@ -200,6 +210,7 @@ impl BuiltinToolDispatch {
             bg: crate::builtin_terminal_bg::BgRegistry::default(),
             session: std::sync::Mutex::new(None),
             landlock: std::sync::Mutex::new(crate::landlock::LandlockMode::Auto),
+            net: std::sync::Mutex::new(crate::landlock::NetPolicy::Off),
         }
     }
 

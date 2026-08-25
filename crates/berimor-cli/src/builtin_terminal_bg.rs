@@ -97,6 +97,8 @@ pub struct BgRegistry {
     /// Landlock-режим для порождаемых фоновых процессов (0.36.0);
     /// синхронизируется из BuiltinToolDispatch::set_landlock.
     landlock: std::sync::Mutex<crate::landlock::LandlockMode>,
+    /// Сетевая политика (волна H) — из BuiltinToolDispatch::set_net.
+    net: std::sync::Mutex<crate::landlock::NetPolicy>,
 }
 
 impl BgRegistry {
@@ -104,6 +106,11 @@ impl BgRegistry {
     /// из BuiltinToolDispatch::set_landlock.
     pub(crate) fn set_landlock(&self, mode: crate::landlock::LandlockMode) {
         *self.landlock.lock().expect("landlock lock") = mode;
+    }
+
+    /// Сетевая политика (волна H) — из BuiltinToolDispatch::set_net.
+    pub(crate) fn set_net(&self, net: crate::landlock::NetPolicy) {
+        *self.net.lock().expect("net lock") = net;
     }
 
     /// Монотонный счётчик идентификаторов от 1 (1, 2, 3, ...).
@@ -155,6 +162,7 @@ impl BgRegistry {
             &mut command_builder,
             root,
             *self.landlock.lock().expect("landlock lock"),
+            &self.net.lock().expect("net lock").clone(),
         )
         .map_err(|e| err_str(TOOL_START, e))?;
         let mut child = command_builder

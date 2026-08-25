@@ -45,12 +45,15 @@ impl LandlockMode {
 /// Обвязка команды песочницей (общая точка для terminal.exec и
 /// terminal.start): auto — при поддержке ядра (иначе одно
 /// предупреждение и прежнее поведение); require — fail-closed.
+/// Сеть (волна H): restrict требует ABI 4; на старом ядре auto —
+/// предупреждение и пропуск сетевых правил, require — отказ.
 /// На не-Linux тело no-op, параметры намеренно не используются.
 #[cfg_attr(not(target_os = "linux"), allow(unused_variables))]
 pub fn apply(
     command: &mut std::process::Command,
     workspace: &Path,
     mode: LandlockMode,
+    net: &NetPolicy,
 ) -> Result<(), String> {
     if mode == LandlockMode::Off || !cfg!(target_os = "linux") {
         return Ok(());
@@ -69,11 +72,30 @@ pub fn apply(
     }
     #[cfg(target_os = "linux")]
     {
+        // Сеть запрошена, а ABI старый: по режиму.
+        let net = if net.is_restrict() && kernel_abi() < 4 {
+            if mode == LandlockMode::Require {
+                return Err(
+                    "sandbox.network=restrict требует Landlock ABI 4+ (ядро 6.7+) — fail-closed"
+                        .into(),
+                );
+            }
+            static NET_WARNED: std::sync::Once = std::sync::Once::new();
+            NET_WARNED.call_once(|| {
+                eprintln!(
+                    "[berimor] sandbox: ядро без Landlock ABI 4 — сетевые правила пропущены (режим auto)"
+                );
+            });
+            &NetPolicy::Off
+        } else {
+            net
+        };
         let rules = workspace_rules(workspace)
             .map_err(|e| format!("landlock: не удалось собрать правила: {e}"))?;
+        let net = net.clone();
         unsafe {
             use std::os::unix::process::CommandExt;
-            command.pre_exec(move || confine_current_process(&rules));
+            command.pre_exec(move || confine_current_process_net(&rules, &net));
         }
     }
     Ok(())
@@ -103,31 +125,89 @@ pub fn kernel_supports() -> bool {
     false
 }
 
+/// Версия ABI Landlock (0 = нет поддержки). Сеть — с ABI 4 (ядро 6.7+).
+#[cfg(target_os = "linux")]
+pub fn kernel_abi() -> u32 {
+    use std::sync::OnceLock;
+    static ABI: OnceLock<u32> = OnceLock::new();
+    *ABI.get_or_init(|| {
+        let abi = unsafe {
+            libc::syscall(
+                libc::SYS_landlock_create_ruleset,
+                std::ptr::null::<libc::c_void>(),
+                0usize,
+                1u32,
+            )
+        };
+        if abi < 0 {
+            0
+        } else {
+            abi as u32
+        }
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn kernel_abi() -> u32 {
+    0
+}
+
+/// Сетевая политика песочницы (волна H, 0.45.0): только TCP, только по
+/// портам (так устроен Landlock). Off — сеть не ограничивается вовсе
+/// (прежнее поведение); Restrict — разрешены только перечисленные порты.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum NetPolicy {
+    #[default]
+    Off,
+    Restrict {
+        allow_connect: Vec<u16>,
+        allow_bind: Vec<u16>,
+    },
+}
+
+impl NetPolicy {
+    pub fn is_restrict(&self) -> bool {
+        matches!(self, NetPolicy::Restrict { .. })
+    }
+}
+
 /// Установить правила и замкнуть процесс. Вызывается ИЗ pre_exec —
 /// только async-signal-safe операции (libc-вызовы; аллокации допущены
 /// до вызова — все строки/пути готовятся снаружи и передаются как
 /// CString).
 #[cfg(target_os = "linux")]
+#[allow(dead_code)] // фасад без сети: зовут тесты; рабочий путь — _net
 pub fn confine_current_process(rules: &[(std::ffi::CString, u64)]) -> io::Result<()> {
+    confine_current_process_net(rules, &NetPolicy::Off)
+}
+
+/// То же + сетевая политика (ABI 4+, ядро 6.7+). Restrict на старом
+/// ядре — ошибка Unsupported: вызывающий решает по режиму (auto —
+/// предупреждение и пропуск сетевых правил; require — fail-closed).
+#[cfg(target_os = "linux")]
+pub fn confine_current_process_net(
+    rules: &[(std::ffi::CString, u64)],
+    net: &NetPolicy,
+) -> io::Result<()> {
     // ABI, зажатый до поддерживаемого ядром (пересечение).
-    let abi = unsafe {
-        libc::syscall(
-            libc::SYS_landlock_create_ruleset,
-            std::ptr::null::<libc::c_void>(),
-            0usize,
-            1u32,
-        )
-    };
+    let abi = kernel_abi() as i64;
     if abi < 1 {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "ядро без Landlock",
         ));
     }
-    // FS-права появились в v1; REFER — v2, TRUNCATE — v3. Пересекаем
-    // обрабатываемый набор с возможностями ядра (зажим до v3: сетевых
-    // правил здесь нет — сеть сторожит capability-гейт).
-    let abi = abi.min(3);
+    let want_net = net.is_restrict();
+    if want_net && abi < 4 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "сетевые правила требуют Landlock ABI 4+ (ядро 6.7+)",
+        ));
+    }
+    // FS-права появились в v1; REFER — v2, TRUNCATE — v3; сеть — v4.
+    // Пересекаем обрабатываемый набор с возможностями ядра (зажим до v3,
+    // если сеть не запрошена или ядро её не умеет).
+    let abi = if want_net { abi.min(4) } else { abi.min(3) };
 
     const FS_EXECUTE: u64 = 1 << 0;
     const FS_WRITE_FILE: u64 = 1 << 1;
@@ -167,18 +247,48 @@ pub fn confine_current_process(rules: &[(std::ffi::CString, u64)]) -> io::Result
     } else {
         FS_RW_V1 & !(FS_REFER | FS_TRUNCATE)
     };
+    // ABI 4: attr расширяется полем handled_access_net. Нулевое поле
+    // сети = сеть не ограничивается; ненулевое = всё вне правил запрещено.
+    const NET_BIND_TCP: u64 = 1 << 0;
+    const NET_CONNECT_TCP: u64 = 1 << 1;
+    let handled_net: u64 = if want_net {
+        let mut mask = 0u64;
+        if let NetPolicy::Restrict {
+            allow_connect,
+            allow_bind,
+        } = net
+        {
+            if !allow_bind.is_empty() {
+                mask |= NET_BIND_TCP;
+            }
+            if !allow_connect.is_empty() {
+                mask |= NET_CONNECT_TCP;
+            }
+            // restrict с пустыми списками = запретить и bind, и connect
+            if allow_bind.is_empty() && allow_connect.is_empty() {
+                mask = NET_BIND_TCP | NET_CONNECT_TCP;
+            }
+        }
+        mask
+    } else {
+        0
+    };
     #[repr(C)]
     struct RulesetAttr {
         handled_access_fs: u64,
+        handled_access_net: u64,
     }
     let attr = RulesetAttr {
         handled_access_fs: handled,
+        handled_access_net: handled_net,
     };
+    // ABI < 4 знает только первое поле: размер структуры — по возможностям.
+    let attr_size = if abi >= 4 { 16usize } else { 8usize };
     let ruleset_fd = unsafe {
         libc::syscall(
             libc::SYS_landlock_create_ruleset,
             &attr as *const RulesetAttr,
-            std::mem::size_of::<RulesetAttr>(),
+            attr_size,
             0u32,
         )
     };
@@ -235,6 +345,47 @@ pub fn confine_current_process(rules: &[(std::ffi::CString, u64)]) -> io::Result
                         io::Error::last_os_error()
                     ),
                 ));
+            }
+        }
+        // Сетевые правила (ABI 4): LANDLOCK_RULE_NET_PORT = 2,
+        // landlock_net_port_attr { allowed_access: u64, port: u64 }.
+        if let NetPolicy::Restrict {
+            allow_connect,
+            allow_bind,
+        } = net
+        {
+            #[repr(C)]
+            struct NetPortAttr {
+                allowed_access: u64,
+                port: u64,
+            }
+            let add_net = |access: u64, port: u16| -> io::Result<()> {
+                let rule = NetPortAttr {
+                    allowed_access: access,
+                    port: u64::from(port),
+                };
+                let rc = unsafe {
+                    libc::syscall(
+                        libc::SYS_landlock_add_rule,
+                        ruleset_fd,
+                        2u32,
+                        &rule as *const NetPortAttr,
+                        0u32,
+                    )
+                };
+                if rc < 0 {
+                    return Err(io::Error::new(
+                        io::Error::last_os_error().kind(),
+                        format!("add_net_rule port {port}: {}", io::Error::last_os_error()),
+                    ));
+                }
+                Ok(())
+            };
+            for port in allow_bind {
+                add_net(NET_BIND_TCP, *port)?;
+            }
+            for port in allow_connect {
+                add_net(NET_CONNECT_TCP, *port)?;
             }
         }
         if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } < 0 {
@@ -327,6 +478,34 @@ mod tests {
             LandlockMode::Require
         );
         assert!(LandlockMode::parse("sometimes").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn confined_network_restrict_blocks_unlisted_port() {
+        if kernel_abi() < 4 {
+            return; // ядро старше 6.7 — пропуск, не провал
+        }
+        use std::os::unix::process::CommandExt;
+        use std::process::Command;
+        // Разрешён только connect на 443: попытка соединения с портом 9
+        // (discard) из замкнутого процесса обязана быть отвергнута ядром
+        // (EACCES), а не отказом удалённой стороны.
+        let mut probe = Command::new("sh");
+        probe.arg("-c").arg("exec 3<>/dev/tcp/127.0.0.1/9");
+        let rules = workspace_rules(std::path::Path::new("/tmp")).expect("rules");
+        let net = NetPolicy::Restrict {
+            allow_connect: vec![443],
+            allow_bind: vec![],
+        };
+        unsafe {
+            probe.pre_exec(move || confine_current_process_net(&rules, &net));
+        }
+        let output = probe.output().expect("spawn");
+        assert!(
+            !output.status.success(),
+            "порт вне списка должен быть отвергнут песочницей"
+        );
     }
 
     #[cfg(target_os = "linux")]

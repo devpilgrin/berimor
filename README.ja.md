@@ -140,6 +140,8 @@ berimor の主な「実戦」モードは**プロセス**——グラフとし�
 
 **ウェーブG: ACP——エディタ内のberimor**（0.44.0）：`berimor acp` がstdio経由でAgent Client Protocolを話す——Zedや互換エディタがberimorを外部エージェントとして接続。セッションは `[acp] process` のプロセス実行：promptがプロセスを起動（入力 `{text}`）、ジャーナルのイベントがエディタにストリームされ（ツールターン、ゲート、メディエーション拒否）、完了時に応答。cancelは待機を止め、実行はジャーナルで完走。ACPモードではプロセス出力はstderrへ——stdoutはプロトコルのもの。
 
+**ウェーブH: サンドボックス内のネットワーク**（0.45.0）：`[sandbox] network = "restrict"` + `allow_connect_ports`/`allow_bind_ports`——terminal.exec/terminal.start のサブプロセスに Landlock ネットワーク規則（ABI 4、カーネル 6.7+）：TCP connect/bind はリストされたポートのみ許可、他はカーネルが拒否（EACCES）。旧カーネル：auto は警告してスキップ、require は fail-closed。デフォルト `off` で挙動不変。
+
 **ウェーブC：LLM-as-a-Judge** (0.40.0)：`berimor eval <dir> --judge` — ゴールデンセット実行後、強いプロバイダ（フェイルオーバー順の先頭）が完了した各シナリオの最終状態を採点：1-5 のスコアと根拠が `judge_score` イベントとしてシナリオのジャーナルに書かれ出力される。基準は入力の隣の `<シナリオ>.judge.md`（なければ既定ルーブリック：完全性・正確性・捏造なし・形式）。`--judge-threshold <N>` — CI ゲート：平均が閾値未満ならコマンド失敗。審査の回答は同じメディエーション EOF 修復で読む。未完了シナリオは正直にスキップ。
 
 **ウェーブB：オブザーバビリティ** (0.39.0)：`berimor otlp <run> --endpoint <url>` — プロセス実行を OTLP/HTTP JSON のトレースとしてエクスポート：実行ルートスパン、グラフノードごとのスパン、LLM呼び出しスパン（レイテンシ＋トークンを属性に）、human_gate（回答/タイムアウトまでの区間）、自由ループのツール呼び出し。traceId/spanIdは決定論的（再エクスポートは冪等）。Jaeger・Grafana Tempo コレクタ（ポート4318）と Langfuse が受け付ける——OTLP 一本、専用エクスポーター不要。認証ヘッダは `--header 'Name: value'`。
