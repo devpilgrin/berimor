@@ -311,6 +311,9 @@ struct App {
     /// переход к позиции, драг = протяжка). Обновляются каждым кадром.
     log_bar_area: Option<Rect>,
     log_max_scroll: usize,
+    /// Идёт перетаскивание ползунка журнала (волна K, 0.48.0): Drag
+    /// следует за указателем даже ВНЕ полосы — до отпускания кнопки.
+    dragging_log_bar: bool,
     /// Прокрутка многострочного поля ввода (первая видимая экранная
     /// строка): поле растёт до потолка, дальше крутится само.
     input_scroll: u16,
@@ -406,6 +409,7 @@ pub fn run_tui(explicit_config: Option<&Path>) -> Result<(), RunError> {
         log_area: Rect::default(),
         log_bar_area: None,
         log_max_scroll: 0,
+        dragging_log_bar: false,
         input_area: Rect::default(),
         input_scroll: 0,
         tx,
@@ -1724,8 +1728,9 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                 .log_bar_area
                 .is_some_and(|bar| point_in_rect(bar, mouse.column, mouse.row))
             {
-                // Полоса прокрутки (0.35.1): клик по дорожке — переход к
-                // позиции пропорционально высоте клика; ▲/▼ — шаг.
+                // Полоса прокрутки: клик по дорожке — переход к позиции
+                // пропорционально высоте клика; ▲/▼ — шаг. Начало драга.
+                app.dragging_log_bar = true;
                 scroll_log_to_ratio(app, mouse.row);
                 app.focus = Focus::Log;
             } else if in_log {
@@ -1734,12 +1739,14 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) {
                 app.focus = Focus::Input;
             }
         }
-        MouseEventKind::Drag(MouseButton::Left)
-            if app
-                .log_bar_area
-                .is_some_and(|bar| point_in_rect(bar, mouse.column, mouse.row)) =>
-        {
+        MouseEventKind::Drag(MouseButton::Left) if app.dragging_log_bar => {
+            // Драг живёт, пока кнопка не отпущена — указатель уже не
+            // обязан быть над полосой (волна K: раньше драг терялся при
+            // выходе курсора за узкую колонку).
             scroll_log_to_ratio(app, mouse.row);
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            app.dragging_log_bar = false;
         }
         _ => {}
     }
@@ -1752,6 +1759,8 @@ fn scroll_log_to_ratio(app: &mut App, row: u16) {
     if bar.height < 2 {
         return;
     }
+    // Драг может прийти с координатой вне полосы — зажимаем в дорожку.
+    let row = row.clamp(bar.y, bar.y + bar.height - 1);
     if row == bar.y {
         app.scroll = app.scroll.saturating_sub(1); // ▲ — шаг назад
     } else if row == bar.y + bar.height - 1 {
@@ -2576,6 +2585,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -2592,6 +2602,99 @@ mod tests {
         let names: Vec<&str> = app.slash_filtered().iter().map(|(n, _)| *n).collect();
         assert!(names.contains(&"/config locale"));
         assert!(names.contains(&"/config"));
+    }
+
+    /// Волна K (0.48.0): драг ползунка следует за указателем и ВНЕ
+    /// полосы, пока кнопка не отпущена; после Up драг мёртв.
+    #[test]
+    fn scrollbar_drag_follows_pointer_outside_bar() {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        let config = Config::default();
+        let (tx, rx) = channel();
+        let mut app = App {
+            config,
+            explicit_config: None,
+            log: vec![],
+            input: "/mod".into(),
+            cursor: 4,
+            history: vec![],
+            history_idx: None,
+            conversation: vec![],
+            scroll: 0,
+            follow_tail: true,
+            busy: false,
+            spinner_frame: 0,
+            slash_open: true,
+            slash_state: ListState::default(),
+            picker: None,
+            flow: None,
+            pending_presets: vec![],
+            staging_providers: vec![],
+            staging_keys: vec![],
+            active_provider: None,
+            confirm_prompt: None,
+            confirm_selection: 4,
+            session_grants: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashSet::new(),
+            )),
+            skills: Vec::new(),
+            agents: Vec::new(),
+            pending_plugin_install: None,
+            answer_tx: None,
+            ask_prompt: None,
+            ask_input: String::new(),
+            ask_answer_tx: None,
+            tx,
+            rx,
+            focus: Focus::Input,
+            mouse_capture: true,
+            locale: i18n::Locale::Ru,
+            log_area: Rect::default(),
+            log_bar_area: None,
+            log_max_scroll: 0,
+            dragging_log_bar: false,
+            input_area: Rect::default(),
+            input_scroll: 0,
+            done: false,
+        };
+        app.log_bar_area = Some(Rect {
+            x: 50,
+            y: 2,
+            width: 1,
+            height: 10,
+        });
+        app.log_max_scroll = 100;
+        let down = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 50,
+            row: 11,
+            modifiers: KeyModifiers::empty(),
+        };
+        handle_mouse(&mut app, down);
+        assert!(app.dragging_log_bar);
+        assert_eq!(app.scroll, 1, "клик по ▼ — шаг вперёд");
+        // Драг ВНЕ полосы (уехали влево) на середину дорожки — следует.
+        let drag = MouseEvent {
+            kind: MouseEventKind::Drag(MouseButton::Left),
+            column: 10,
+            row: 6,
+            modifiers: KeyModifiers::empty(),
+        };
+        handle_mouse(&mut app, drag);
+        assert!(app.dragging_log_bar);
+        assert_eq!(app.scroll, 44, "драг вне полосы: пропорция высоты");
+        // Отпускание — конец драга; дальнейший Drag ничего не двигает.
+        let up = MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: 10,
+            row: 4,
+            modifiers: KeyModifiers::empty(),
+        };
+        handle_mouse(&mut app, up);
+        assert!(!app.dragging_log_bar);
+        let before = app.scroll;
+        handle_mouse(&mut app, drag);
+        assert_eq!(app.scroll, before, "после Up драг мёртв");
     }
 
     /// §20.26: при ширине ≥ 110 рендерится инфо-панель, при узком —
@@ -2645,6 +2748,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -2736,6 +2840,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -2807,6 +2912,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -2887,6 +2993,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3059,6 +3166,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3303,6 +3411,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3373,6 +3482,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3443,6 +3553,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3509,6 +3620,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3560,6 +3672,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3699,6 +3812,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3796,6 +3910,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,
@@ -3869,6 +3984,7 @@ mod tests {
             log_area: Rect::default(),
             log_bar_area: None,
             log_max_scroll: 0,
+            dragging_log_bar: false,
             input_area: Rect::default(),
             input_scroll: 0,
             done: false,

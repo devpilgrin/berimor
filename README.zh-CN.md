@@ -144,6 +144,8 @@ berimor 的主要“实战”模式是**流程**：一个以图形式执行的�
 
 **I 波：联邦日志**（0.46.0）：`berimor journal export <instance> --out <file>` / `import <file>`——以带 sha256 指纹的可移植 JSON 在机器间迁移运行记录。导入校验哈希（损坏文件被拒绝），id 冲突时重命名（`-imported-N`）——无法向已有实例追加写入；事件时间戳保留原值而非导入时刻。
 
+**K 波：TUI 滚动**（0.48.0）：拖动日志滚动条滑块时跟随指针直到松开按键——即使光标移出狭窄的轨道列（此前拖动会丢失）。点击轨道按比例跳转，▲/▼ 为步进；拖动坐标被钳制在轨道内。（J 波——0.47.0——仅目录：berimor-skills 中的 `security-pentest-ru` 技能，无核心发布。）
+
 **C 波：LLM-as-a-Judge** (0.40.0)：`berimor eval <dir> --judge`——黄金集运行后，由强提供方（failover 顺序中的第一个）为每个已完成场景的最终状态打分：1-5 分及理由以 `judge_score` 事件写入场景日志并输出。评分标准来自输入旁的 `<场景>.judge.md`（否则使用默认准则：完整性、准确性、无虚构事实、契约形式）。`--judge-threshold <N>`——CI 门限：平均分低于阈值即命令失败。评审的回答经由同样的调解 EOF 修复解析；未完成的场景（门控、错误）会被诚实地跳过。
 
 **B 波：可观测性** (0.39.0)：`berimor otlp <run> --endpoint <url>`——以 OTLP/HTTP JSON 将一次流程运行导出为链路追踪：运行根 span、每个图节点一个 span、LLM 调用 span（延迟 + token 作为属性）、human_gate（到答复/超时的区间）、自由循环的工具调用。traceId/spanId 确定性生成（重复导出幂等）。Jaeger 与 Grafana Tempo 收集器（4318 端口）及 Langfuse 均可接收——统一 OTLP，无需专用导出器；认证头用 `--header 'Name: value'`。
