@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/berimor?logo=npm&label=npm)](https://www.npmjs.com/package/berimor)
 [![CI](https://img.shields.io/github/actions/workflow/status/devpilgrin/berimor/ci.yml?branch=main&label=CI)](https://github.com/devpilgrin/berimor/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-992%20green-brightgreen)](#инфраструктура-проекта)
+[![Tests](https://img.shields.io/badge/tests-1002%20green-brightgreen)](#инфраструктура-проекта)
 
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)
 ![WebAssembly](https://img.shields.io/badge/sandbox-Wasmtime-654FF0?logo=webassembly&logoColor=white)
@@ -209,7 +209,7 @@ flowchart LR
 
 **Rust-workspace по крейту на компонент** — Process Engine, Mediation, Executors, Memory, Capability, Model Pool, Actors, Tool Runtime, Context Engine, Eval, Storage. Гостевой WASM-модуль (`codeact-guest/`) живёт отдельным crate и закоммичен как готовый артефакт — обычная сборка не замедляется.
 
-**Дисциплина проверок.** Каждый релиз: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (992 тестов: юнит, интеграционные, e2e через настоящий бинарник, золотые фикстуры процессов и вредоносных вводов). Критические компоненты проходят обязательное независимое ревью. Полный самостоятельный аудит (`docs/audit-2026-07-31.md`) — **все находки закрыты или осознанно задокументированы**.
+**Дисциплина проверок.** Каждый релиз: `cargo fmt` + `clippy -D warnings` + `cargo test --workspace` (1002 теста: юнит, интеграционные, e2e через настоящий бинарник, золотые фикстуры процессов и вредоносных вводов). Критические компоненты проходят обязательное независимое ревью. Полный самостоятельный аудит (`docs/audit-2026-07-31.md`) — **все находки закрыты или осознанно задокументированы**.
 
 **Supply chain как у взрослых.** Кросс-платформенные релизы (Linux x64/arm64, macOS arm64, Windows x64) с keyless-подписью cosign/sigstore — приватного ключа не существует нигде. Проверка: `berimor verify <архив>`. npm-публикация с provenance, SBOM (CycloneDX) в пайплайне, самообновление (`berimor self-update`) реализовано на примитивах Process Engine — тот же журнал и восстановление после сбоя, что у обычных процессов, а не ad hoc скрипт.
 

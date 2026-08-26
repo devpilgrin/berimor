@@ -65,6 +65,36 @@ jobs:
         working-directory: bootstrap
         run: npm test
 
-# Этот workflow — только проверка кода на push/PR (fmt/clippy/test).
+  # Бейдж тестов (структурный фикс рассинхрона 2026-08-25): только на
+  # пуш в main, ПОСЛЕ зелёного прогона — считаем реальное число и
+  # коммитим обновлённые README, если разошлись. [skip ci] против петли.
+  test-badge:
+    name: Бейдж тестов
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: rust
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: count + sync README
+        run: |
+          COUNT=$(cargo test --workspace 2>&1 \
+            | grep -oE '[0-9]+ passed' | grep -oE '^[0-9]+' \
+            | awk '{s+=$1} END {print s}')
+          scripts/update-test-count.sh "$COUNT"
+      - name: commit if changed
+        run: |
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add README.md README.en.md README.de.md README.fr.md README.es.md README.zh-CN.md README.ja.md README.ko.md
+            git commit -m "ci: счётчик тестов в README ×8 [skip ci]"
+            git push
+          fi
+
+# Этот workflow — проверка кода на push/PR (fmt/clippy/test) + синхрон-
 # Сборка платформенных артефактов (D1) — release.yml, запускается публикацией
 # релиза. Подпись (D2, sigstore/cosign) и провенанс (D7) — туда же, позже.
