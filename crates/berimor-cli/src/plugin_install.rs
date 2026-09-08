@@ -85,6 +85,13 @@ pub enum PluginInstallRunError {
 /// постоянству между запусками — тот же выбор, что `verify.rs::
 /// trust_root_cache_dir`).
 pub(crate) fn plugins_root_dir() -> PathBuf {
+    // Явный XDG_DATA_HOME — впереди dirs::data_dir: на macOS dirs
+    // игнорирует переменную (~/Library/Application Support), а тесты и
+    // пользователи-юниксоиды ждут XDG-семантику (weekly-CI 2026-09-08:
+    // плагин e2e был невидим на macOS именно из-за этого).
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+        return PathBuf::from(xdg).join("berimor").join("plugins");
+    }
     dirs::data_dir()
         .or_else(dirs::config_dir)
         .map(|d| d.join("berimor").join("plugins"))

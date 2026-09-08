@@ -172,10 +172,13 @@ fn is_skipped_dir(entry: &walkdir::DirEntry) -> bool {
 /// Путь относительно корня рабочей области — единый вид для ответа и
 /// glob-сопоставления. Вне корня (абсолютный `path`) — полный путь.
 fn relative_display(root: &Path, file: &Path) -> String {
+    // Вывод инструмента кросс-платформенно единообразен: разделитель
+    // всегда '/' (на Windows Path даёт '\', что ломало и тесты, и
+    // потребителей вывода — weekly-CI 2026-09-08).
     file.strip_prefix(root)
         .unwrap_or(file)
         .to_string_lossy()
-        .into_owned()
+        .replace('\\', "/")
 }
 
 /// Компиляция glob-шаблона; битый шаблон — говорящая ошибка, как у regex.

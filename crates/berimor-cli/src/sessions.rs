@@ -410,6 +410,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // pid_alive на Windows — «не считаем мёртвыми» (без windows-sys): dead-pid часть юниксова
     fn live_filter_excludes_closed_and_dead_pids() {
         let (_dir, journal) = temp_journal("live");
         record_open(&journal, "sess-live", "chat").expect("open");
