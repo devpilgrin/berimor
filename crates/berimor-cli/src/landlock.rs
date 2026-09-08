@@ -148,6 +148,7 @@ pub fn kernel_abi() -> u32 {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)] // рабочие вызовы — в linux-ветках confine/apply
 pub fn kernel_abi() -> u32 {
     0
 }
@@ -166,6 +167,7 @@ pub enum NetPolicy {
 }
 
 impl NetPolicy {
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // зовут linux-ветки
     pub fn is_restrict(&self) -> bool {
         matches!(self, NetPolicy::Restrict { .. })
     }
