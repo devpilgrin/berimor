@@ -498,15 +498,40 @@ fn plugin_tool_callable_from_chat() {
     let config_path = write_config(&dir, "chatplugin", &url);
 
     let output = run_chat(&dir, &config_path, "поздоровайся плагином\n/exit\n");
+    // Диагностика при падении (weekly-CI macOS 2026-09-08: ✗ без
+    // причины в рендере — достаём из журнала).
+    let dump = || -> String {
+        let db = dir.join(".berimor/berimor.db");
+        let conn = match rusqlite::Connection::open(&db) {
+            Ok(c) => c,
+            Err(e) => return format!("journal open: {e}"),
+        };
+        let mut stmt = match conn.prepare(
+            "SELECT kind, payload FROM events WHERE kind LIKE '%Tool%' OR kind LIKE '%Agent%' ORDER BY seq",
+        ) {
+            Ok(s) => s,
+            Err(e) => return format!("journal query: {e}"),
+        };
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map(|m| m.filter_map(|r| r.ok()).collect::<Vec<_>>())
+            .unwrap_or_default();
+        rows.iter()
+            .map(|(k, p)| format!("{k}: {}", &p[..p.len().min(300)]))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     assert!(
         output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
+        "{}\nжурнал:\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        dump()
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("✓") && stderr.contains("hello.greet"),
-        "вызов инструмента плагина успешен: {stderr}"
+        "вызов инструмента плагина успешен: {stderr}\nжурнал:\n{}",
+        dump()
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
