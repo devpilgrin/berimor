@@ -126,16 +126,38 @@ impl ToolDispatch for PluginRuntimeDispatch {
                 reason: "инструмент плагина не найден (не декларирован в манифесте)".into(),
             })?;
 
-        let mut child = Command::new(&plugin.binary)
+        let mut child = match Command::new(&plugin.binary)
             .arg(tool)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| DispatchError {
-                tool: tool.into(),
-                reason: format!("запуск плагина: {e}"),
-            })?;
+        {
+            Ok(c) => c,
+            Err(e) => {
+                // Windows: shebang-скрипт не исполняем напрямую
+                // (os error 193) — честный откат на sh (Git Bash/WSL).
+                // Без отката плагины-скрипты на Windows мертвы (weekly-CI).
+                if cfg!(windows) && e.raw_os_error() == Some(193) {
+                    Command::new("sh")
+                        .arg(&plugin.binary)
+                        .arg(tool)
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::null())
+                        .spawn()
+                        .map_err(|e2| DispatchError {
+                            tool: tool.into(),
+                            reason: format!("запуск плагина (через sh): {e2}"),
+                        })?
+                } else {
+                    return Err(DispatchError {
+                        tool: tool.into(),
+                        reason: format!("запуск плагина: {e}"),
+                    });
+                }
+            }
+        };
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(args.to_string().as_bytes());
         }
