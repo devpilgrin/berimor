@@ -73,7 +73,25 @@ pub struct SessionInfo {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    std::path::Path::new(&format!("/proc/{pid}")).exists()
+    #[cfg(unix)]
+    {
+        // kill(pid, 0): 0 — жив; EPERM — жив, но не наш; ESRCH — мёртв.
+        // /proc на macOS нет — прежняя проверка считала всех мёртвыми
+        // (weekly-CI 2026-09-07: sessions-тесты упали именно на этом).
+        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if rc == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        // Windows: нет кросс-платформенной проверки pid без windows-sys;
+        // честный компромисс — не считать сессии мёртвыми (обратная
+        // крайность «все мертвы» была хуже: ломала и тесты, и фичу).
+        let _ = pid;
+        true
+    }
 }
 
 /// Свёртка реестра: последнее состояние на session_id.
