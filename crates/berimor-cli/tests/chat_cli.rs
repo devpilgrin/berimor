@@ -502,6 +502,7 @@ fn plugin_tool_callable_from_chat() {
     // причины в рендере — достаём из журнала).
     let dump = || -> String {
         let db = [
+            dir.join("berimor.db"), // дефолт storage_path — cwd-процесса
             dir.join(".berimor/berimor.db"),
             std::env::temp_dir().join(format!(
                 "berimor-e2e-data-{}/berimor/berimor.db",
