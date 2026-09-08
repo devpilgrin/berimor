@@ -1124,6 +1124,7 @@ mod tests {
     // доказуемо внутри после раскрытия; форма `~user` и `$VAR`
     // остаются консервативно вне.
     #[test]
+    #[cfg(unix)] // HOME-семантика раскрытия ~ — unix by design (Windows CI 2026-09-08: HOME нет)
     fn tilde_expands_to_home_before_within_check() {
         let home = std::env::var_os("HOME").expect("HOME в тестовом окружении");
         let root = Path::new(&home).join("lab");
