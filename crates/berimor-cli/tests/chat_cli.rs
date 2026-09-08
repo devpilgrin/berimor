@@ -501,7 +501,16 @@ fn plugin_tool_callable_from_chat() {
     // Диагностика при падении (weekly-CI macOS 2026-09-08: ✗ без
     // причины в рендере — достаём из журнала).
     let dump = || -> String {
-        let db = dir.join(".berimor/berimor.db");
+        let db = [
+            dir.join(".berimor/berimor.db"),
+            std::env::temp_dir().join(format!(
+                "berimor-e2e-data-{}/berimor/berimor.db",
+                std::process::id()
+            )),
+        ]
+        .into_iter()
+        .find(|p| p.exists())
+        .unwrap_or_else(|| dir.join(".berimor/berimor.db"));
         let conn = match rusqlite::Connection::open(&db) {
             Ok(c) => c,
             Err(e) => return format!("journal open: {e}"),
