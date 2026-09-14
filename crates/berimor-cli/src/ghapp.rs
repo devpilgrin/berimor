@@ -261,7 +261,10 @@ mod tests {
                     "{\"id\":1}"
                 };
                 let response = format!(
-                    "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    // Connection: close — иначе ureq переиспользует
+                    // соединение, а стаб ждёт accept второго (Windows
+                    // weekly-CI 2026-09-14: os error 10054).
+                    "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{}",
                     body.len(),
                     body
                 );
