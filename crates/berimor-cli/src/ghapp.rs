@@ -248,9 +248,20 @@ mod tests {
             // 1: access_tokens → JSON с token; 2: comments → 201
             for expected in ["access_tokens", "comments"] {
                 let (mut stream, _) = listener.accept().expect("accept");
-                let mut buf = [0u8; 8192];
-                let n = stream.read(&mut buf).unwrap_or(0);
-                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                // Читаем до конца заголовков: один read() может вернуть
+                // часть запроса (Windows-сегментация, weekly 34831984752).
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .expect("timeout");
+                let mut request = String::new();
+                let mut buf = [0u8; 4096];
+                while !request.contains("\r\n\r\n") {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    request.push_str(&String::from_utf8_lossy(&buf[..n]));
+                }
                 assert!(request.contains(expected), "стаб ждал {expected}");
                 assert!(
                     request.contains("Bearer test-jwt") || request.contains("Bearer inst-token")
