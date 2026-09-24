@@ -158,27 +158,9 @@ impl OpenAiCompatibleProvider {
     /// Сетевой гейт: извлекает хост из `base_url` и проверяет его.
     /// Приватный endpoint без явного opt-in — ошибка ДО любого соединения.
     fn check_network_gate(&self) -> Result<(), ModelError> {
-        // Находка 3.11 аудита: userinfo (`http://user:pass@host/`)
-        // сдвигал разбор — гейт проверял "user", соединение шло на host
-        // (класс SSRF-обхода: гейт и соединение видят РАЗНЫЕ хосты).
-        // Userinfo отрезается по ПОСЛЕДНЕМу '@' до разбора порта.
-        let host_port = self
-            .base_url
-            .split("://")
-            .nth(1)
-            .unwrap_or(&self.base_url)
-            .split('/')
-            .next()
-            .unwrap_or_default();
-        let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
-        let (host, port) = match host_port.rsplit_once(':') {
-            Some((h, p)) => (
-                h.trim_start_matches('[').trim_end_matches(']'),
-                p.parse().unwrap_or(443),
-            ),
-            None => (host_port, 443),
-        };
-        match net_gate::check_host(host, port) {
+        // Разбор base_url (включая отрезание userinfo, находка 3.11) —
+        // общий с провайдерами решений, живёт в net_gate::check_endpoint.
+        match net_gate::check_endpoint(&self.base_url) {
             NetworkDecision::Allow => Ok(()),
             NetworkDecision::ConfirmRequired { reason } if self.allow_private_endpoint => {
                 let _ = reason; // opt-in владельца зафиксирован в конфигурации

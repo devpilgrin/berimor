@@ -460,6 +460,31 @@ pub struct McpServerConfig {
     pub args: Vec<String>,
 }
 
+/// Провайдер решений (System One, протокол TypeSafe `POST /v1/systemone`):
+/// Jev (облако TypeSafe) или Kev (локальный `kev.serve`) — оба говорят
+/// одним протоколом, различаются адресом, моделью и ключом. Секция
+/// опциональна целиком: пустой список — инструмент `decision.ask` не
+/// объявляется модели, остальное поведение не меняется.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DecisionProviderConfig {
+    pub name: String,
+    pub base_url: String,
+    /// `kev-latest` / `jev-latest` — имя модели на стороне провайдера.
+    pub model: String,
+    /// Переменная окружения с ключом (Jev: `TYPESAFE_API_KEY`). Не задана —
+    /// запрос без авторизации (локальный Kev без `KEV_API_KEY`). Задана, но
+    /// пуста — провайдер помечается недоступным, запуск НЕ падает.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Opt-in владельца на приватный адрес (локальный Kev на 127.0.0.1) —
+    /// тот же смысл, что у `providers[].allow_private_endpoint`.
+    #[serde(default)]
+    pub allow_private_endpoint: bool,
+    /// Kev на CPU отвечает секунды на вопрос — дефолт щедрее, чем у SDK (10 с).
+    #[serde(default)]
+    pub request_timeout_secs: Option<u64>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -477,6 +502,8 @@ pub struct Config {
     pub contracts: Vec<ContractConfig>,
     pub memory: MemoryConfig,
     pub mcp_servers: Vec<McpServerConfig>,
+    /// Провайдеры решений Jev/Kev (инструмент `decision.ask`); пусто — выключено.
+    pub decision_providers: Vec<DecisionProviderConfig>,
     /// Имена переменных окружения, чьи ЗНАЧЕНИЯ — секреты этого запуска
     /// (S5, mediation.md §4.3): регистрируются в маскировщике и заменяются
     /// алиасом на всех границах данных. Ключи API провайдеров
@@ -536,6 +563,7 @@ impl Default for Config {
             contracts: Vec::new(),
             memory: MemoryConfig::default(),
             mcp_servers: Vec::new(),
+            decision_providers: Vec::new(),
             secret_envs: Vec::new(),
             auto_confirm: Vec::new(),
             agent: AgentConfig::default(),
@@ -642,6 +670,7 @@ pub struct PartialConfig {
     pub contracts: Vec<ContractConfig>,
     pub memory: Option<MemoryConfig>,
     pub mcp_servers: Vec<McpServerConfig>,
+    pub decision_providers: Vec<DecisionProviderConfig>,
     pub secret_envs: Vec<String>,
     #[serde(default)]
     pub auto_confirm: Vec<String>,
@@ -859,6 +888,9 @@ pub fn merge(global: PartialConfig, local: PartialConfig) -> Config {
         contracts: merge_named(global.contracts, local.contracts, |c| c.name.clone()),
         memory: local.memory.or(global.memory).unwrap_or(defaults.memory),
         mcp_servers: merge_named(global.mcp_servers, local.mcp_servers, |s| s.name.clone()),
+        decision_providers: merge_named(global.decision_providers, local.decision_providers, |p| {
+            p.name.clone()
+        }),
         secret_envs,
         auto_confirm,
         serve: local.serve.or(global.serve).unwrap_or(defaults.serve),

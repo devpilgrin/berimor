@@ -179,6 +179,29 @@ pub(crate) fn tools_catalog(config: &Config) -> Value {
     for server in &config.mcp_servers {
         tools.push(json!({"name": format!("{}.*", server.name), "args": {}, "about": "инструменты MCP-сервера"}));
     }
+    // Без [[decision_providers]] инструмент модели не объявляется: звать его
+    // незачем, а процессы по-прежнему могут (с on_failure: uncertain).
+    if !config.decision_providers.is_empty() {
+        let names: Vec<&str> = config
+            .decision_providers
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        tools.push(json!({
+            "name": "decision.ask",
+            "args": {
+                "state": "строка",
+                "questions": "{id: {type: noul|choice|score, instructions, criteria?}}",
+                "provider": "строка?",
+                "min_confidence": "0..1?",
+                "on_failure": "error|uncertain?"
+            },
+            "about": format!(
+                "типизированное решение с калиброванной вероятностью, без генерации текста (провайдеры: {}); answers.<id>.routed — значение для ветвления",
+                names.join(", ")
+            )
+        }));
+    }
     Value::Array(tools)
 }
 
@@ -231,6 +254,10 @@ fn print_config(config: &Config) {
     eprintln!("  провайдеров: {}", config.providers.len());
     eprintln!("  заглушек инструментов: {}", config.tool_stubs.len());
     eprintln!("  MCP-серверов: {}", config.mcp_servers.len());
+    eprintln!(
+        "  провайдеров решений (Jev/Kev): {}",
+        config.decision_providers.len()
+    );
     let locale = Locale::resolve(config.ui.locale.as_deref());
     eprintln!(
         "  локаль интерфейса: {} ({})",
@@ -242,19 +269,28 @@ fn print_config(config: &Config) {
 fn print_models(config: &Config) {
     if config.providers.is_empty() {
         eprintln!("[berimor] провайдеры не настроены — /models add");
-        return;
+    } else {
+        eprintln!("[berimor] провайдеры моделей:");
+        for provider in &config.providers {
+            let endpoint = if provider.model_path.is_some() {
+                "локальный инференс (GGUF)".to_string()
+            } else {
+                provider.base_url.clone()
+            };
+            eprintln!(
+                "  {} — {} ({:?}), {}",
+                provider.name, provider.model_id, provider.tier, endpoint
+            );
+        }
     }
-    eprintln!("[berimor] провайдеры моделей:");
-    for provider in &config.providers {
-        let endpoint = if provider.model_path.is_some() {
-            "локальный инференс (GGUF)".to_string()
-        } else {
-            provider.base_url.clone()
-        };
-        eprintln!(
-            "  {} — {} ({:?}), {}",
-            provider.name, provider.model_id, provider.tier, endpoint
-        );
+    if !config.decision_providers.is_empty() {
+        eprintln!("[berimor] провайдеры решений (decision.ask):");
+        for provider in &config.decision_providers {
+            eprintln!(
+                "  {} — {}, {}",
+                provider.name, provider.model, provider.base_url
+            );
+        }
     }
 }
 

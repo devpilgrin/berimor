@@ -13,6 +13,7 @@ use std::process::ExitCode;
 mod acp;
 mod agent_dispatch;
 mod agents;
+mod builtin_decision;
 mod builtin_dispatch;
 mod builtin_edit;
 mod builtin_human;

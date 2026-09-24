@@ -544,6 +544,14 @@ pub(crate) fn build_executor_bundle_with_session(
         }
     }
     masker.register_from_env(&config.secret_envs);
+    // Провайдеры решений Jev/Kev: пустая секция — пустой список (режим
+    // «без них»); нет ключа — провайдер недоступен, но запуск не падает.
+    let decision_providers = config
+        .decision_providers
+        .iter()
+        .map(|p| crate::builtin_decision::DecisionProvider::from_config(p, &mut masker))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(RunError::Provider)?;
 
     let mut pool = ModelPool::new();
     // Circuit breaker (волна A): политика из [agent] конфига; 0 сбоев =
@@ -684,7 +692,10 @@ pub(crate) fn build_executor_bundle_with_session(
     // исполняется вложенным циклом со своими потолком/бюджетом/журналом.
     let dispatch: std::sync::Arc<dyn berimor_executors::tool_only::ToolDispatch + Send + Sync> =
         std::sync::Arc::new(crate::agent_dispatch::AgentRunDispatch::new(
-            std::sync::Arc::new(dispatch),
+            std::sync::Arc::new(crate::builtin_decision::DecisionToolDispatch::new(
+                decision_providers,
+                std::sync::Arc::new(dispatch),
+            )),
             crate::agent_dispatch::AgentRunContext {
                 pool: pool.clone(),
                 providers: provider_clients.clone(),

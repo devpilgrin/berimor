@@ -1,0 +1,46 @@
+# Маршрутизация обращения по решению провайдера решений (Jev/Kev,
+# инструмент decision.ask). Вероятность считает провайдер, ветку выбирает
+# код по answers.team.routed. Низкая уверенность (< min_confidence) и
+# отсутствие провайдеров (on_failure: uncertain) дают "uncertain" — такое
+# обращение сначала смотрит человек. Один процесс работает и без Jev/Kev.
+#
+# Вход: --input '{"ticket": {"text": "..."}}'
+process: decision-routing
+version: 1
+steps:
+  - id: decide
+    type: tool
+    tool: decision.ask
+    args:
+      state: "{{state.ticket.text}}"
+      min_confidence: 0.6
+      on_failure: uncertain
+      questions:
+        team:
+          type: choice
+          instructions: "Какой команде передать обращение?"
+          criteria:
+            billing: "оплата, списания, счета, возврат денег"
+            shipping: "доставка и курьеры"
+            technical: "ошибки приложения, вход в аккаунт, SMS-коды"
+  - id: route
+    type: branch
+    on: state.decide.answers.team.routed
+    cases:
+      billing: assign
+      shipping: assign
+      technical: assign
+      uncertain: manual_triage
+  # Неуверенный маршрут: человек подтверждает, обращение уходит в ручную
+  # очередь "uncertain" (следующий шаг получает то же значение routed).
+  - id: manual_triage
+    type: human_gate
+    reason: "провайдер решений не уверен в маршруте обращения: {{state.ticket.text}}"
+  - id: assign
+    type: tool
+    tool: crm.assign_queue
+    args:
+      queue: "{{state.decide.answers.team.routed}}"
+limits:
+  max_steps: 20
+  timeout: 5m

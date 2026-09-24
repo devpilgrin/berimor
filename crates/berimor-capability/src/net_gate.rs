@@ -84,6 +84,31 @@ pub fn check_host(host: &str, port: u16) -> NetworkDecision {
     }
 }
 
+/// Проверка endpoint'а по базовому URL из конфигурации владельца
+/// (`scheme://[userinfo@]host[:port]/path`) — общий разбор для всех
+/// HTTP-клиентов провайдеров, чтобы исправления парсера не расходились.
+/// Находка 3.11 аудита: userinfo (`http://user:pass@host/`) сдвигал
+/// разбор — гейт проверял "user", соединение шло на host (класс
+/// SSRF-обхода). Userinfo отрезается по ПОСЛЕДНЕМУ '@' до разбора порта.
+pub fn check_endpoint(base_url: &str) -> NetworkDecision {
+    let host_port = base_url
+        .split("://")
+        .nth(1)
+        .unwrap_or(base_url)
+        .split('/')
+        .next()
+        .unwrap_or_default();
+    let host_port = host_port.rsplit('@').next().unwrap_or(host_port);
+    let (host, port) = match host_port.rsplit_once(':') {
+        Some((h, p)) => (
+            h.trim_start_matches('[').trim_end_matches(']'),
+            p.parse().unwrap_or(443),
+        ),
+        None => (host_port, 443),
+    };
+    check_host(host, port)
+}
+
 fn is_private(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_private_v4(v4),

@@ -60,6 +60,9 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     // Поручение субагенту (§20.17): само по себе не мутирует; действия
     // ребёнка проходят тот же гейт/подтверждения поштучно.
     "agents.run",
+    // Провайдеры решений Jev/Kev: исполняет обёртка DecisionToolDispatch
+    // (builtin_decision); имя зарезервировано и без [[decision_providers]].
+    "decision.ask",
 ];
 
 /// Политики capability-гейта для встроенных инструментов (S4): mutates
@@ -402,6 +405,10 @@ impl ToolDispatch for BuiltinToolDispatch {
             "memory.search" | "memory.save" => Err(Self::err(
                 tool,
                 "memory.* требует обёртки MemoryToolDispatch — диспетчер собран без неё",
+            )),
+            "decision.ask" => Err(Self::err(
+                tool,
+                "decision.ask требует обёртки DecisionToolDispatch — диспетчер собран без неё",
             )),
             // C9: каталог лент сессий — глобальный слой конфигурации;
             // отсутствие каталога — пустой результат, не ошибка.
