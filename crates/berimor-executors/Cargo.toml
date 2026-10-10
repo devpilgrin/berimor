@@ -21,7 +21,7 @@ oxc_span = "0.142.0"
 schemars = { workspace = true, features = ["preserve_order"] }
 serde_json.workspace = true
 thiserror.workspace = true
-wasmtime = "47.0.2"
+wasmtime = "49.0.2"
 wasmtime-wasi = "47.0.2"
 
 [dev-dependencies]
